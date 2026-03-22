@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ki-rechnungen-app"
+version = "0.1.0"
+description = "Invoice processing tool with OpenAI Vision primary extraction and Tesseract fallback."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "openai>=1.70.0",
+  "PyMuPDF>=1.25.0",
+  "pytesseract>=0.3.10",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[project.scripts]
+ki-rechnungen = "invoice_tool.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["invoice_tool*"]

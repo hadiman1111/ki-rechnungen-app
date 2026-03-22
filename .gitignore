@@ -1,10 +1,17 @@
 
-config.json
-res
-testing
-build
-dist
-OCR to rename file.spec
-pyinstall-command.bat
-Convert to image.spec
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.pyo
+*.pyd
 .DS_Store
+build/
+dist/
+*.egg-info/
+logs/
+runtime/
+testing/output/
+testing/documents/*.pdf
+testing/input/*.pdf
+testing/input/archiv/

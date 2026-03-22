@@ -1,0 +1,9 @@
+duplicate_reason: Inhaltsgleiche Datei bereits in diesem Lauf verarbeitet.
+input_file: /Users/hadi_neu/Desktop/KI-Rechnungen-App/tmp_verification_round2/input/adobe.pdf
+fingerprint: d3f21a02f08396b34761772b156ef55051b848e1cc6d0f8f8e42bdbf87569ef2
+duplicate_reference_type: same-run
+warning: referenced result may originate from an earlier rule version and is not auto-validated by this run.
+historical_source_filename: adobe-duplicate.pdf
+original_reference: /Users/hadi_neu/Desktop/KI-Rechnungen-App/tmp_verification_round2/output/ai/260205_er_ai_adobe-systems-softwa_39.99_vobaai.pdf
+historical_storage_path: /Users/hadi_neu/Desktop/KI-Rechnungen-App/tmp_verification_round2/output/ai/260205_er_ai_adobe-systems-softwa_39.99_vobaai.pdf
+historical_archive_path: /Users/hadi_neu/Desktop/KI-Rechnungen-App/tmp_verification_round2/input/archiv/260322_archiv/adobe-duplicate.pdf

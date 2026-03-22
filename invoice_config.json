@@ -1,0 +1,13 @@
+{
+  "eingangsordner": "./testing/input",
+  "ausgangsordner": "./testing/output",
+  "api_key_pfad": "$HOME/Library/Application Support/KI-Rechnungen-Umbenennen/.env",
+  "archiv_aktiv": true,
+  "regeln_datei": "./office_rules.json",
+  "aktives_preset": "office_default",
+  "openai_model": "gpt-4.1-mini",
+  "stale_lock_seconds": 21600,
+  "runtime_ordner": "./runtime",
+  "log_ordner": "./logs",
+  "zielgroesse_kb": 200
+}
