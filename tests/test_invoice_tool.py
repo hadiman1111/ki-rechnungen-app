@@ -10,6 +10,7 @@ from invoice_tool.config import load_app_config, load_office_rules
 from invoice_tool.extraction import _enrich_from_raw_text
 from invoice_tool.filename_schema import build_filename
 from invoice_tool.models import ExtractedData
+from invoice_tool.normalization import normalize_invoice_date
 from invoice_tool.processing import InvoiceProcessor
 from invoice_tool.routing import (
     apply_final_assignment,
@@ -185,6 +186,57 @@ def test_openai_raw_text_enrichment_fills_missing_amount_and_date() -> None:
     assert enriched.amount_raw == "39.99"
 
 
+def test_abbrev_month_date_normalizes_to_yymmdd() -> None:
+    assert normalize_invoice_date("05-FEB-2026") == "260205"
+
+
+def test_german_month_name_date_normalizes_to_yymmdd() -> None:
+    assert normalize_invoice_date("17 Dezember 2022") == "221217"
+
+
+def test_short_numeric_date_normalizes_to_yymmdd() -> None:
+    assert normalize_invoice_date("17.12.22") == "221217"
+
+
+def test_openai_raw_text_excerpt_date_is_used_when_primary_date_missing() -> None:
+    extracted = ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw="Acme Ltd",
+        amount_raw="19,99",
+        invoice_number_raw="INV-100",
+        raw_text="Invoice number INV-100 invoice date 2026-02-05",
+        source_method="openai",
+    )
+    enriched = _enrich_from_raw_text(extracted)
+    assert enriched.invoice_date_raw == "260205"
+
+
+def test_openai_raw_text_excerpt_date_replaces_invalid_primary_date() -> None:
+    extracted = ExtractedData(
+        invoice_date_raw="not-a-date",
+        supplier_raw="Acme Ltd",
+        amount_raw="19,99",
+        invoice_number_raw="INV-101",
+        raw_text="Invoice number INV-101 Rechnungsdatum 05-FEB-2026",
+        source_method="openai",
+    )
+    enriched = _enrich_from_raw_text(extracted)
+    assert enriched.invoice_date_raw == "260205"
+
+
+def test_ocr_text_date_is_used_when_only_ocr_text_contains_date() -> None:
+    extracted = ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw="Acme Ltd",
+        amount_raw="19,99",
+        invoice_number_raw="INV-102",
+        raw_text="OCR TEXT Rechnungsdatum 17 Dezember 2022",
+        source_method="tesseract",
+    )
+    enriched = _enrich_from_raw_text(extracted)
+    assert enriched.invoice_date_raw == "221217"
+
+
 def test_business_context_ep_overrides_ai() -> None:
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
@@ -269,6 +321,65 @@ def test_transfer_maps_to_ep_account() -> None:
     assert routing.konto == "vobaep"
 
 
+def test_direct_debit_prenotification_maps_to_vobaai_for_somaa_ai() -> None:
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Telekom Deutschland GmbH",
+        amount_raw="49,99",
+        invoice_number_raw="INV-2026-88",
+        raw_text=(
+            "Rechnung SOMAA Architektur Bismarckstrasse 63 "
+            "Der Rechnungsbetrag wird entsprechend der Prenotification von Ihrem Konto abgebucht. "
+            "SEPA Lastschrift IBAN DE02120300000000202051 BIC BYLADEM1001"
+        ),
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key="bismarck",
+        preset=rules.preset,
+    )
+    assert payment.payment_method == "transfer"
+    assert routing.art == "ai"
+    assert routing.konto == "vobaai"
+    assert routing.payment_field == "vobaai"
+
+
+def test_somaa_iban_bic_without_other_payment_text_maps_to_vobaai() -> None:
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Telekom Deutschland GmbH",
+        amount_raw="49,99",
+        invoice_number_raw="INV-2026-89",
+        raw_text=(
+            "Rechnung SOMAA Architektur Bismarckstrasse 63 "
+            "IBAN DE02120300000000202051 BIC BYLADEM1001"
+        ),
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key="bismarck",
+        preset=rules.preset,
+    )
+    assert payment.payment_method == "transfer"
+    assert routing.art == "ai"
+    assert routing.konto == "vobaai"
+    assert routing.payment_field == "vobaai"
+
+
 def test_payment_detection_avoids_short_substring_false_positives() -> None:
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
@@ -288,7 +399,7 @@ def test_payment_detection_avoids_short_substring_false_positives() -> None:
     assert payment.payment_method == "transfer"
 
 
-def test_somaa_invoice_without_clear_payment_stays_unclear_not_card() -> None:
+def test_somaa_invoice_without_payment_info_defaults_to_vobaai() -> None:
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
         invoice_date_raw="17/03/2026",
@@ -313,9 +424,59 @@ def test_somaa_invoice_without_clear_payment_stays_unclear_not_card() -> None:
         street_key="bismarck",
         preset=rules.preset,
     )
+    assert payment.payment_method == "transfer"
+    assert routing.konto == "vobaai"
+    assert routing.payment_field == "vobaai"
+    assert routing.status == "processed"
+
+
+def test_no_somaa_and_no_payment_signals_stays_unklar() -> None:
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Generic Supplier GmbH",
+        amount_raw="19,99",
+        invoice_number_raw="INV-2026-90",
+        raw_text="Invoice INV-2026-90 amount due 19,99 EUR",
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key=None,
+        preset=rules.preset,
+    )
     assert payment.payment_method == "unknown"
     assert routing.payment_field == "unklar"
     assert routing.status == "unklar"
+
+
+def test_ec_card_signal_maps_to_vobaep_for_ep_case() -> None:
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Somaa Event Production",
+        amount_raw="120,00",
+        raw_text="SOMAA Event Production bezahlt per EC-Karte",
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key=None,
+        preset=rules.preset,
+    )
+    assert payment.payment_method == "card"
+    assert routing.konto == "vobaep"
+    assert routing.payment_field == "vobaep"
 
 
 def test_supplier_cleaning_removes_clear_address_suffix(tmp_path: Path) -> None:
@@ -425,7 +586,7 @@ def test_document_is_stored_separately_with_vn_suffix(tmp_path: Path) -> None:
     assert not list(output_dir.glob("*.pdf"))
 
 
-def test_invoice_without_clean_payment_stays_invoice_and_routes_unklar(tmp_path: Path) -> None:
+def test_invoice_without_clean_payment_defaults_somaa_invoice_to_vobaai(tmp_path: Path) -> None:
     config_path, rules_path, input_dir, output_dir, documents_dir = make_test_setup(tmp_path)
     config = load_app_config(config_path)
     rules = load_office_rules(rules_path)
@@ -450,7 +611,10 @@ def test_invoice_without_clean_payment_stays_invoice_and_routes_unklar(tmp_path:
     assert len(results) == 1
     result = results[0]
     assert result.dokumenttyp == "invoice"
-    assert result.storage_file.parent == output_dir / "unklar"
+    assert result.storage_file.parent == output_dir / "ai"
+    assert result.konto == "vobaai"
+    assert result.payment_field == "vobaai"
+    assert result.status == "processed"
     assert "unknown-date" in result.storage_file.name
     assert not list(documents_dir.glob("*.pdf"))
 
@@ -538,9 +702,9 @@ def test_same_content_different_filename_is_reprocessed_with_historical_report(t
     )
     reprocessed_results = second_processor.process_all()
     assert len(reprocessed_results) == 1
-    assert reprocessed_results[0].status == "processed"
+    assert reprocessed_results[0].status == "unklar"
     assert reprocessed_results[0].dokumenttyp == "invoice"
-    assert reprocessed_results[0].storage_file.parent == output_dir / "privat"
+    assert reprocessed_results[0].storage_file.parent == output_dir / "unklar"
     historical_reports = sorted((output_dir / "_duplicate_reports").glob("*historical_reprocess*.txt"))
     assert historical_reports
     report_text = historical_reports[-1].read_text(encoding="utf-8")
@@ -573,7 +737,7 @@ def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> No
     )
     results = processor.process_all()
     assert len(results) == 2
-    assert [result.status for result in results].count("processed") == 1
+    assert [result.status for result in results].count("unklar") == 1
     assert [result.status for result in results].count("duplicate") == 1
     duplicate_result = [result for result in results if result.status == "duplicate"][0]
     report_text = duplicate_result.storage_file.read_text(encoding="utf-8")
@@ -620,6 +784,7 @@ def test_logs_contain_decision_focused_fields(tmp_path: Path) -> None:
     log_text = log_files[-1].read_text(encoding="utf-8")
     assert '"preset_used": "office_default"' in log_text
     assert '"payment_field": "paypal-unklar"' in log_text
+    assert "Payment-Regel 'explicit-paypal' getroffen. Signale: paypal." in log_text
     assert '"archive_path":' in log_text
 
 

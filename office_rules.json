@@ -118,13 +118,42 @@
           },
           {
             "name": "explicit-cash",
-            "text_any": ["bar", "cash", "cash payment"],
+            "text_any": ["bar bezahlt", "barzahlung", "bargeld", "cash", "cash payment"],
             "payment_method": "bar",
             "explicit": true
           },
           {
+            "name": "explicit-direct-debit",
+            "text_any": [
+              "lastschrift",
+              "sepa lastschrift",
+              "sepa-lastschrift",
+              "direct debit",
+              "prenotification",
+              "wird abgebucht",
+              "von ihrem konto abgebucht",
+              "konto abgebucht",
+              "bankeinzug"
+            ],
+            "payment_method": "transfer",
+            "explicit": true
+          },
+          {
+            "name": "iban-bic-direct-debit",
+            "text_any": ["iban", "bic"],
+            "payment_method": "transfer",
+            "explicit": true
+          },
+          {
+            "name": "iban-bic-direct-debit-wording",
+            "text_all": ["iban", "bic"],
+            "text_any": ["lastschrift", "prenotification", "wird abgebucht", "von ihrem konto abgebucht", "bankeinzug"],
+            "payment_method": "transfer",
+            "explicit": true
+          },
+          {
             "name": "explicit-transfer",
-            "text_any": ["ueberweisung", "überweisung", "bank transfer", "sepa", "iban"],
+            "text_any": ["ueberweisung", "überweisung", "bank transfer", "sepa", "iban", "bic"],
             "payment_method": "transfer",
             "explicit": true
           },
@@ -133,6 +162,12 @@
             "text_any": ["ec", "ec-karte", "debit card", "card payment", "karte", "visa", "mastercard", "amex", "american express", "c24"],
             "payment_method": "card",
             "explicit": true
+          },
+          {
+            "name": "somaa-default-bank",
+            "text_any": ["somaa"],
+            "payment_method": "transfer",
+            "explicit": false
           }
         ],
         "final_assignment_rules": [
@@ -168,12 +203,6 @@
             "art_any": ["ep"],
             "output_konto": "vobaep",
             "output_payment_field": "vobaep"
-          },
-          {
-            "name": "private-default",
-            "art_any": ["private"],
-            "output_payment_field": "private",
-            "output_konto": null
           },
           {
             "name": "somaa-unclear-payment",

@@ -196,23 +196,27 @@ def determine_business_context(
 def detect_payment_method(extracted: ExtractedData, preset: ProcessingPreset) -> PaymentDecision:
     search_text = _normalize_search_text(extracted)
     for rule in preset.routing.payment_detection_rules:
-        if rule.text_all and not all(
-            _contains_payment_hint(search_text, text) for text in rule.text_all
-        ):
-            continue
-        if rule.text_any and not any(
-            _contains_payment_hint(search_text, text) for text in rule.text_any
-        ):
-            continue
+        matched_signals: list[str] = []
+        if rule.text_all:
+            all_hits = _matching_payment_hints(search_text, rule.text_all)
+            if len(all_hits) != len(rule.text_all):
+                continue
+            matched_signals.extend(all_hits)
+        if rule.text_any:
+            any_hits = _matching_payment_hints(search_text, rule.text_any)
+            if not any_hits:
+                continue
+            matched_signals.extend(any_hits)
+        signal_text = ", ".join(dict.fromkeys(matched_signals)) if matched_signals else "keine"
         return PaymentDecision(
             payment_method=rule.payment_method,
             explicit=rule.explicit,
-            begruendung=f"Payment-Regel '{rule.name}' getroffen.",
+            begruendung=f"Payment-Regel '{rule.name}' getroffen. Signale: {signal_text}.",
         )
     return PaymentDecision(
         payment_method=preset.routing.default_payment_method,
         explicit=False,
-        begruendung="Keine explizite Payment-Regel getroffen.",
+        begruendung="Keine explizite Payment-Regel getroffen. Signale: keine.",
     )
 
 
@@ -331,3 +335,7 @@ def _contains_payment_hint(search_text: str, hint: str) -> bool:
         return False
     pattern = rf"(?<![a-z0-9]){re.escape(normalized_hint)}(?![a-z0-9])"
     return re.search(pattern, search_text) is not None
+
+
+def _matching_payment_hints(search_text: str, hints: tuple[str, ...]) -> list[str]:
+    return [hint for hint in hints if _contains_payment_hint(search_text, hint)]

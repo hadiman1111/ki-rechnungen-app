@@ -18,8 +18,11 @@ class NormalizationError(RuntimeError):
 
 
 DATE_PATTERNS = (
+    "%y%m%d",
     "%d.%m.%Y",
     "%d.%m.%y",
+    "%d-%m-%Y",
+    "%d-%m-%y",
     "%Y-%m-%d",
     "%d-%b-%Y",
     "%d-%B-%Y",
@@ -212,7 +215,7 @@ def parse_invoice_date_from_text(text: str) -> str | None:
     for line in text.splitlines():
         normalized_line = line.lower()
         matches = re.findall(
-            rf"\b\d{{1,2}}[./]\d{{1,2}}[./]\d{{2,4}}\b|\b\d{{4}}-\d{{2}}-\d{{2}}\b|{month_name_pattern}|{day_month_name_pattern}",
+            rf"\b\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}}\b|\b\d{{4}}-\d{{2}}-\d{{2}}\b|{month_name_pattern}|{day_month_name_pattern}",
             line,
             flags=re.IGNORECASE,
         )
@@ -223,9 +226,7 @@ def parse_invoice_date_from_text(text: str) -> str | None:
         else:
             unlabeled_matches.extend(matches)
 
-    candidates = labeled_matches or []
-    if not candidates and len(set(unlabeled_matches)) == 1:
-        candidates = list(dict.fromkeys(unlabeled_matches))
+    candidates = list(dict.fromkeys(labeled_matches)) or list(dict.fromkeys(unlabeled_matches))
 
     if not candidates:
         return None

@@ -5,7 +5,7 @@
   "archiv_aktiv": true,
   "regeln_datei": "./office_rules.json",
   "aktives_preset": "office_default",
-  "openai_model": "gpt-4.1-mini",
+  "openai_model": "gpt-4.1",
   "stale_lock_seconds": 21600,
   "runtime_ordner": "./runtime",
   "log_ordner": "./logs",
