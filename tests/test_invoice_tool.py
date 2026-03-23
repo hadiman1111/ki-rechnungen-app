@@ -7,7 +7,7 @@ import fitz
 
 from invoice_tool.classification import classify_document_type
 from invoice_tool.config import load_app_config, load_office_rules
-from invoice_tool.extraction import _enrich_from_raw_text
+from invoice_tool.extraction import _enrich_from_raw_text, _extract_json_payload
 from invoice_tool.filename_schema import build_filename
 from invoice_tool.models import ExtractedData
 from invoice_tool.normalization import normalize_invoice_date
@@ -184,6 +184,34 @@ def test_openai_raw_text_enrichment_fills_missing_amount_and_date() -> None:
     enriched = _enrich_from_raw_text(extracted)
     assert enriched.invoice_date_raw == "260205"
     assert enriched.amount_raw == "39.99"
+
+
+def test_extract_json_payload_recovers_expected_object_from_multi_object_response() -> None:
+    payload = _extract_json_payload(
+        """
+        {
+          "betrag": "168997,12 €"
+        },
+        {
+          "invoice_date": "03.09.1977",
+          "supplier": "VVaD",
+          "amount": "168997,12 €",
+          "invoice_number": "INV-250307",
+          "document_name": null,
+          "payment_method": "transfer",
+          "context_markers": [],
+          "document_type_indicators": [],
+          "card_endings": [],
+          "apple_pay_endings": [],
+          "provider_mentions": [],
+          "address_fragments": [],
+          "raw_text_excerpt": "..."
+        }
+        """
+    )
+    assert payload["invoice_date"] == "03.09.1977"
+    assert payload["amount"] == "168997,12 €"
+    assert "betrag" not in payload
 
 
 def test_abbrev_month_date_normalizes_to_yymmdd() -> None:

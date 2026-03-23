@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import json
 import sys
-import time
 from pathlib import Path
 
 from invoice_tool.config import ConfigError, load_app_config, load_office_rules
 from invoice_tool.extraction import ExtractionCoordinator, OpenAIVisionExtractor, TesseractExtractor
 from invoice_tool.processing import InvoiceProcessor, ProcessorError
-
-
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    payload = {
-        "sessionId": "9e8b5c",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    with Path("/Users/hadi_neu/Desktop/KI-Rechnungen-App/.cursor/debug-9e8b5c.log").open(
-        "a", encoding="utf-8"
-    ) as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def main() -> int:
@@ -35,20 +17,6 @@ def main() -> int:
             config.regeln_datei,
             active_preset_override=config.aktives_preset,
         )
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H6",
-            "invoice_tool/__main__.py:main",
-            "Workspace main entry reached",
-            {
-                "moduleFile": __file__,
-                "cwd": str(Path.cwd()),
-                "configPath": str(config_path),
-                "model": config.openai_model,
-            },
-        )
-        # endregion
         try:
             fallback = TesseractExtractor()
         except Exception as exc:  # noqa: BLE001

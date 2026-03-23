@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import shutil
 import tempfile
-import time
 from pathlib import Path
 
 import fitz
@@ -33,20 +31,21 @@ class StructuralExtractionError(ExtractionError):
     pass
 
 
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    payload = {
-        "sessionId": "9e8b5c",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    with Path("/Users/hadi_neu/Desktop/KI-Rechnungen-App/.cursor/debug-9e8b5c.log").open(
-        "a", encoding="utf-8"
-    ) as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+EXPECTED_OPENAI_SCHEMA_KEYS = {
+    "invoice_date",
+    "supplier",
+    "amount",
+    "invoice_number",
+    "document_name",
+    "payment_method",
+    "context_markers",
+    "document_type_indicators",
+    "card_endings",
+    "apple_pay_endings",
+    "provider_mentions",
+    "address_fragments",
+    "raw_text_excerpt",
+}
 
 
 def render_pdf_pages(pdf_path: Path, max_pages: int = 2) -> list[bytes]:
@@ -63,53 +62,41 @@ def render_pdf_pages(pdf_path: Path, max_pages: int = 2) -> list[bytes]:
 def _extract_json_payload(text: str) -> dict:
     text = text.strip()
     if not text:
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H3",
-            "invoice_tool/extraction.py:_extract_json_payload",
-            "OpenAI output empty before JSON parse",
-            {"textLength": 0},
-        )
-        # endregion
         raise StructuralExtractionError("OpenAI-Antwort ist leer.")
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or start >= end:
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H3",
-            "invoice_tool/extraction.py:_extract_json_payload",
-            "OpenAI output missing parseable JSON envelope",
-            {"textLength": len(text), "start": start, "end": end},
-        )
-        # endregion
         raise StructuralExtractionError("OpenAI-Antwort enthaelt kein parsebares JSON.")
     try:
         return json.loads(text[start : end + 1])
     except json.JSONDecodeError as exc:
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H3",
-            "invoice_tool/extraction.py:_extract_json_payload",
-            "OpenAI JSON decode failed",
-            {
-                "textLength": len(text),
-                "error": str(exc),
-                "errorPos": exc.pos,
-                "errorLine": exc.lineno,
-                "errorColumn": exc.colno,
-                "maskedContext": re.sub(
-                    r"[A-Za-z0-9ÄÖÜäöüß]",
-                    "x",
-                    text[max(0, exc.pos - 120) : min(len(text), exc.pos + 120)],
-                ),
-            },
-        )
-        # endregion
+        recovered = _recover_schema_payload(text[start : end + 1])
+        if recovered is not None:
+            return recovered
         raise StructuralExtractionError("OpenAI-Antwort ist kein gueltiges JSON.") from exc
+
+
+def _recover_schema_payload(fragment: str) -> dict | None:
+    decoder = json.JSONDecoder()
+    idx = 0
+    candidates: list[dict] = []
+    while idx < len(fragment):
+        while idx < len(fragment) and fragment[idx] in " \t\r\n,":
+            idx += 1
+        if idx >= len(fragment):
+            break
+        try:
+            value, next_idx = decoder.raw_decode(fragment, idx)
+        except json.JSONDecodeError:
+            break
+        if isinstance(value, dict):
+            candidates.append(value)
+        idx = next_idx
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda item: len(set(item.keys()) & EXPECTED_OPENAI_SCHEMA_KEYS))
+    best_score = len(set(best.keys()) & EXPECTED_OPENAI_SCHEMA_KEYS)
+    return best if best_score else None
 
 
 class OpenAIVisionExtractor:
@@ -121,15 +108,6 @@ class OpenAIVisionExtractor:
         try:
             api_key = load_openai_api_key(self.api_key_path)
         except RuntimeEnvironmentError as exc:
-            # region agent log
-            _debug_log(
-                "15pdf-diagnose",
-                "H1",
-                "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-                "OpenAI API key load failed",
-                {"pdf": pdf_path.name, "model": self.model, "error": str(exc)},
-            )
-            # endregion
             raise StructuralExtractionError(str(exc)) from exc
 
         client = OpenAI(api_key=api_key)
@@ -162,16 +140,6 @@ class OpenAIVisionExtractor:
                     "image_url": f"data:image/png;base64,{base64.b64encode(image).decode('ascii')}",
                 }
             )
-
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H2",
-            "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-            "OpenAI request about to start",
-            {"pdf": pdf_path.name, "model": self.model, "imageCount": len(images), "branch": "vision-json-primary"},
-        )
-        # endregion
         try:
             response = client.responses.create(
                 model=self.model,
@@ -179,36 +147,9 @@ class OpenAIVisionExtractor:
                 max_output_tokens=800,
             )
         except Exception as exc:  # noqa: BLE001
-            # region agent log
-            _debug_log(
-                "15pdf-diagnose",
-                "H2",
-                "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-                "OpenAI request raised exception",
-                {"pdf": pdf_path.name, "model": self.model, "errorType": type(exc).__name__, "error": str(exc)},
-            )
-            # endregion
             raise StructuralExtractionError(f"OpenAI-Vision-Anfrage fehlgeschlagen: {exc}") from exc
 
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H2",
-            "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-            "OpenAI response received",
-            {"pdf": pdf_path.name, "model": self.model, "outputTextLength": len(response.output_text or "")},
-        )
-        # endregion
         payload = _extract_json_payload(response.output_text)
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H3",
-            "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-            "OpenAI payload parsed",
-            {"pdf": pdf_path.name, "keys": sorted(payload.keys())},
-        )
-        # endregion
         extracted = ExtractedData(
             invoice_date_raw=_string_or_none(payload.get("invoice_date")),
             supplier_raw=_string_or_none(payload.get("supplier")),
@@ -226,32 +167,7 @@ class OpenAIVisionExtractor:
             source_method="openai",
         )
         extracted = _enrich_from_raw_text(extracted)
-        # region agent log
-        _debug_log(
-            "15pdf-diagnose",
-            "H4",
-            "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-            "OpenAI extraction normalized before structural check",
-            {
-                "pdf": pdf_path.name,
-                "invoiceDateRaw": extracted.invoice_date_raw,
-                "hasSupplier": bool(extracted.supplier_raw),
-                "amountRaw": extracted.amount_raw,
-                "hasRawText": bool(extracted.raw_text),
-                "meaningful": _has_meaningful_content(extracted),
-            },
-        )
-        # endregion
         if not _has_meaningful_content(extracted):
-            # region agent log
-            _debug_log(
-                "15pdf-diagnose",
-                "H4",
-                "invoice_tool/extraction.py:OpenAIVisionExtractor.extract",
-                "OpenAI extraction rejected by structural validation",
-                {"pdf": pdf_path.name},
-            )
-            # endregion
             raise StructuralExtractionError("OpenAI-Daten sind technisch verwertbar, aber inhaltlich leer.")
 
         return extracted
@@ -310,15 +226,6 @@ class ExtractionCoordinator:
         try:
             return self.primary.extract(pdf_path)
         except StructuralExtractionError as primary_error:
-            # region agent log
-            _debug_log(
-                "15pdf-diagnose",
-                "H5",
-                "invoice_tool/extraction.py:ExtractionCoordinator.extract",
-                "Fallback path activated after primary extraction failure",
-                {"pdf": pdf_path.name, "error": str(primary_error), "fallbackAvailable": self.fallback is not None},
-            )
-            # endregion
             log(
                 f"OpenAI-Vision war technisch oder strukturell unzureichend, Tesseract-Fallback wird versucht: {primary_error}"
             )
