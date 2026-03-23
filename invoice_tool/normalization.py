@@ -167,10 +167,10 @@ def normalize_invoice_with_fallbacks(
             invoice_date = normalize_invoice_date(extracted.invoice_date_raw)
         except NormalizationError:
             invoice_date = fallbacks.invoice_date or "unknown-date"
-            warnings.append("Rechnungsdatum unbrauchbar, Fallback verwendet.")
+            warnings.append("Rechnungsdatum unbrauchbar, Ersatzwert gesetzt.")
     else:
         invoice_date = fallbacks.invoice_date or "unknown-date"
-        warnings.append("Rechnungsdatum fehlt, Fallback verwendet.")
+        warnings.append("Rechnungsdatum fehlt, Ersatzwert gesetzt.")
 
     if extracted.supplier_raw:
         try:
@@ -179,20 +179,20 @@ def normalize_invoice_with_fallbacks(
             )
         except NormalizationError:
             supplier = fallbacks.supplier or "unknown-supplier"
-            warnings.append("Rechnungssteller unbrauchbar, Fallback verwendet.")
+            warnings.append("Rechnungssteller unbrauchbar, Ersatzwert gesetzt.")
     else:
         supplier = fallbacks.supplier or "unknown-supplier"
-        warnings.append("Rechnungssteller fehlt, Fallback verwendet.")
+        warnings.append("Rechnungssteller fehlt, Ersatzwert gesetzt.")
 
     if extracted.amount_raw:
         try:
             amount = normalize_amount(extracted.amount_raw)
         except NormalizationError:
             amount = fallbacks.amount or "unknown-amount"
-            warnings.append("Betrag unbrauchbar, Fallback verwendet.")
+            warnings.append("Betrag unbrauchbar, Ersatzwert gesetzt.")
     else:
         amount = fallbacks.amount or "unknown-amount"
-        warnings.append("Betrag fehlt, Fallback verwendet.")
+        warnings.append("Betrag fehlt, Ersatzwert gesetzt.")
 
     return NormalizedInvoice(invoice_date=invoice_date, supplier=supplier, amount=amount), warnings
 
