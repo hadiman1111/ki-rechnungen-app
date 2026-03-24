@@ -18,7 +18,7 @@ from invoice_tool.routing import (
     detect_payment_method,
     resolve_account,
 )
-from invoice_tool.state import DirectoryLock, load_processed_state
+from invoice_tool.state import DirectoryLock, load_processed_state, save_processed_state
 
 
 class StubExtractor:
@@ -741,6 +741,85 @@ def test_same_content_different_filename_is_reprocessed_with_historical_report(t
     assert "previous_storage_path:" in report_text
 
 
+def test_reprocessing_same_result_keeps_single_active_file(tmp_path: Path) -> None:
+    config_path, rules_path, input_dir, output_dir, _documents_dir = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "same.pdf"
+    pdf_bytes = create_pdf(original_pdf, pages=1)
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Acme Ltd",
+        amount_raw="10,00",
+        invoice_number_raw="INV-1",
+        raw_text="Invoice",
+        source_method="openai",
+    )
+    first_processor = InvoiceProcessor(config, StubExtractor(extracted), office_rules=rules)
+    first_results = first_processor.process_all()
+    assert len(first_results) == 1
+    first_active = first_results[0].storage_file
+    assert first_active.exists()
+
+    rerun_pdf = input_dir / "same.pdf"
+    rerun_pdf.write_bytes(pdf_bytes)
+    second_processor = InvoiceProcessor(config, StubExtractor(extracted), office_rules=rules)
+    second_results = second_processor.process_all()
+    assert len(second_results) == 1
+    assert second_results[0].storage_file == first_active
+    assert first_active.exists()
+    assert len(list(first_active.parent.glob(f"{first_active.stem}*.pdf"))) == 1
+    assert not list((output_dir / "_history").rglob(first_active.name))
+
+    report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "active output: unchanged" in report_text
+
+
+def test_updated_active_file_is_moved_to_history(tmp_path: Path) -> None:
+    config_path, rules_path, input_dir, output_dir, _documents_dir = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "same.pdf"
+    pdf_bytes = create_pdf(original_pdf, pages=1)
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Acme Ltd",
+        amount_raw="10,00",
+        invoice_number_raw="INV-1",
+        raw_text="Invoice",
+        source_method="openai",
+    )
+    first_processor = InvoiceProcessor(config, StubExtractor(extracted), office_rules=rules)
+    first_results = first_processor.process_all()
+    first_active = first_results[0].storage_file
+    legacy_active = first_active.with_name(f"{first_active.stem}_7{first_active.suffix}")
+    first_active.rename(legacy_active)
+
+    state_file = config.runtime_ordner / "state" / "processed_state.json"
+    state = load_processed_state(state_file)
+    fingerprint = first_results[0].fingerprint
+    state[fingerprint]["storage_file"] = str(legacy_active)
+    save_processed_state(state_file, state)
+
+    rerun_pdf = input_dir / "same.pdf"
+    rerun_pdf.write_bytes(pdf_bytes)
+    second_processor = InvoiceProcessor(config, StubExtractor(extracted), office_rules=rules)
+    second_results = second_processor.process_all()
+    assert len(second_results) == 1
+    updated_active = second_results[0].storage_file
+    assert updated_active == first_active
+    assert updated_active.exists()
+    assert not legacy_active.exists()
+
+    history_files = list((output_dir / "_history").rglob(legacy_active.name))
+    assert history_files
+
+    report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "active output: updated" in report_text
+
+
 def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> None:
     config_path, rules_path, input_dir, output_dir, _documents_dir = make_test_setup(tmp_path)
     config = load_app_config(config_path)
@@ -814,6 +893,37 @@ def test_logs_contain_decision_focused_fields(tmp_path: Path) -> None:
     assert '"payment_field": "paypal-unklar"' in log_text
     assert "Payment-Regel 'explicit-paypal' getroffen. Signale: paypal." in log_text
     assert '"archive_path":' in log_text
+
+
+def test_run_report_contains_summary_and_fallback_count(tmp_path: Path) -> None:
+    config_path, rules_path, input_dir, output_dir, _documents_dir = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "report.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA Architektur",
+                amount_raw="10,00",
+                invoice_number_raw="INV-1",
+                raw_text="Invoice SOMAA Architektur lastschrift",
+                source_method="tesseract",
+                fallback_used=True,
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    report_path = output_dir / "_runs" / processor.run_logger.run_id / "report.txt"
+    report_text = report_path.read_text(encoding="utf-8")
+    assert f"Run ID: {processor.run_logger.run_id}" in report_text
+    assert "Processed: 1" in report_text
+    assert "System Fallbacks: 1" in report_text
+    assert "processed successfully" in report_text
+    assert "system fallback used" in report_text
 
 
 def test_top_level_only_input_scan_ignores_archive_contents(tmp_path: Path) -> None:

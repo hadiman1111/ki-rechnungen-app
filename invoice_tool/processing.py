@@ -106,6 +106,12 @@ class InvoiceProcessor:
                     results.append(result)
             except ProcessorError as exc:
                 self.log(str(exc))
+        report_path = self.run_logger.write_run_report(
+            self.config.ausgangsordner,
+            preset=self.office_rules.active_preset,
+            input_count=len(pdf_files),
+        )
+        self.log(f"Run-Report geschrieben: {report_path}")
         return results
 
     def _process_one(self, pdf_path: Path) -> ProcessResult | None:
@@ -164,6 +170,7 @@ class InvoiceProcessor:
                 fallback_used=None,
                 preset_used=self.office_rules.active_preset,
                 status="failed",
+                output_action=None,
                 error=str(exc),
             )
             raise ProcessorError(f"Fehler bei der Verarbeitung von {pdf_path.name}: {exc}") from exc
@@ -250,8 +257,11 @@ class InvoiceProcessor:
 
         target_folder = self.config.ausgangsordner / routing.zielordner
         target_folder.mkdir(parents=True, exist_ok=True)
-        output_target = unique_target_path(target_folder / filename)
-        shutil.copy2(pdf_path, output_target)
+        output_target, output_action = self._write_active_output(
+            pdf_path,
+            target_folder / filename,
+            historical_match=historical_match,
+        )
 
         archive_target = self._archive_original(pdf_path)
         self._remember_processed(
@@ -302,6 +312,7 @@ class InvoiceProcessor:
             fallback_used=bool(extracted.fallback_used),
             preset_used=self.office_rules.active_preset,
             status=routing.status,
+            output_action=output_action,
             error=None,
         )
         return ProcessResult(
@@ -337,8 +348,11 @@ class InvoiceProcessor:
             f"{document_date}_{self.preset.dokumente.prefix}_{descriptive_name}_"
             f"{self.preset.dokumente.suffix_placeholder}.pdf"
         )
-        output_target = unique_target_path(self.preset.dokumente.basis_pfad / filename)
-        shutil.copy2(pdf_path, output_target)
+        output_target, output_action = self._write_active_output(
+            pdf_path,
+            self.preset.dokumente.basis_pfad / filename,
+            historical_match=historical_match,
+        )
 
         archive_target = self._archive_original(pdf_path)
         self._remember_processed(
@@ -385,6 +399,7 @@ class InvoiceProcessor:
             fallback_used=bool(extracted.fallback_used),
             preset_used=self.office_rules.active_preset,
             status="document",
+            output_action=output_action,
             error=None,
         )
         return ProcessResult(
@@ -466,6 +481,7 @@ class InvoiceProcessor:
             fallback_used=False,
             preset_used=self.office_rules.active_preset,
             status="duplicate",
+            output_action="new",
             error=None,
         )
         return ProcessResult(
@@ -521,6 +537,91 @@ class InvoiceProcessor:
         archive_target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(pdf_path), str(archive_target))
         return archive_target
+
+    def _write_active_output(
+        self,
+        source_pdf: Path,
+        desired_path: Path,
+        *,
+        historical_match: dict | None,
+    ) -> tuple[Path, str]:
+        desired_path.parent.mkdir(parents=True, exist_ok=True)
+        previous_active = self._existing_active_storage(historical_match)
+
+        if previous_active is not None and previous_active.exists():
+            if previous_active.resolve() == desired_path.resolve():
+                self._move_related_variants_to_history(desired_path, keep_path=desired_path)
+                return previous_active, "unchanged"
+            self._move_to_history(previous_active)
+            self._move_related_variants_to_history(desired_path)
+            shutil.copy2(source_pdf, desired_path)
+            return desired_path, "updated"
+
+        if self._move_related_variants_to_history(desired_path):
+            shutil.copy2(source_pdf, desired_path)
+            return desired_path, "updated"
+
+        shutil.copy2(source_pdf, desired_path)
+        return desired_path, "new"
+
+    def _existing_active_storage(self, historical_match: dict | None) -> Path | None:
+        if historical_match is None:
+            return None
+        storage_file = historical_match.get("storage_file")
+        if not isinstance(storage_file, str) or not storage_file:
+            return None
+        candidate = Path(storage_file)
+        if self._is_active_output(candidate):
+            return candidate
+        return None
+
+    def _is_active_output(self, path: Path) -> bool:
+        return self._path_is_within(path, self.config.ausgangsordner) or self._path_is_within(
+            path, self.preset.dokumente.basis_pfad
+        )
+
+    def _path_is_within(self, path: Path, base: Path) -> bool:
+        try:
+            path.resolve().relative_to(base.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _move_to_history(self, active_path: Path) -> Path:
+        history_root = self.config.ausgangsordner / "_history" / self.run_logger.run_id
+        history_root.mkdir(parents=True, exist_ok=True)
+        relative_path = self._history_relative_path(active_path)
+        history_target = unique_target_path(history_root / relative_path)
+        history_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(active_path), str(history_target))
+        return history_target
+
+    def _move_related_variants_to_history(
+        self, desired_path: Path, *, keep_path: Path | None = None
+    ) -> bool:
+        moved_any = False
+        pattern = f"{desired_path.stem}*{desired_path.suffix}"
+        keep_resolved = keep_path.resolve() if keep_path is not None and keep_path.exists() else None
+        for candidate in sorted(desired_path.parent.glob(pattern)):
+            if not candidate.is_file():
+                continue
+            if keep_resolved is not None and candidate.resolve() == keep_resolved:
+                continue
+            self._move_to_history(candidate)
+            moved_any = True
+        return moved_any
+
+    def _history_relative_path(self, active_path: Path) -> Path:
+        resolved_active = active_path.resolve()
+        output_root = self.config.ausgangsordner.resolve()
+        documents_root = self.preset.dokumente.basis_pfad.resolve()
+        try:
+            return resolved_active.relative_to(output_root)
+        except ValueError:
+            try:
+                return Path("documents") / resolved_active.relative_to(documents_root)
+            except ValueError:
+                return Path(active_path.name)
 
     def _ensure_run_archive_dir(self) -> Path:
         if self.run_archive_dir is not None:
@@ -603,6 +704,7 @@ class InvoiceProcessor:
         fallback_used: bool | None,
         preset_used: str,
         status: str,
+        output_action: str | None,
         error: str | None,
     ) -> None:
         self.run_logger.log_file_summary(
@@ -621,6 +723,7 @@ class InvoiceProcessor:
                 "fallback_used": fallback_used,
                 "preset_used": preset_used,
                 "status": status,
+                "output_action": output_action,
                 "error": error,
             }
         )
