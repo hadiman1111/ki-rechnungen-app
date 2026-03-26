@@ -12,6 +12,7 @@ dependencies = [
   "openai>=1.70.0",
   "PyMuPDF>=1.25.0",
   "pytesseract>=0.3.10",
+  "flet",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ dev = [
 
 [project.scripts]
 ki-rechnungen = "invoice_tool.__main__:main"
+ki-rechnungen-ui = "invoice_tool.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

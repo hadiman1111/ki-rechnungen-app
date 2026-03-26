@@ -773,7 +773,7 @@ def test_reprocessing_same_result_keeps_single_active_file(tmp_path: Path) -> No
 
     report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
     report_text = report_path.read_text(encoding="utf-8")
-    assert "active output: unchanged" in report_text
+    assert "Datei unverändert übernommen" in report_text
 
 
 def test_updated_active_file_is_moved_to_history(tmp_path: Path) -> None:
@@ -817,7 +817,7 @@ def test_updated_active_file_is_moved_to_history(tmp_path: Path) -> None:
 
     report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
     report_text = report_path.read_text(encoding="utf-8")
-    assert "active output: updated" in report_text
+    assert "Bestehende Datei aktualisiert" in report_text
 
 
 def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> None:
@@ -922,8 +922,8 @@ def test_run_report_contains_summary_and_fallback_count(tmp_path: Path) -> None:
     assert f"Run ID: {processor.run_logger.run_id}" in report_text
     assert "Processed: 1" in report_text
     assert "System Fallbacks: 1" in report_text
-    assert "processed successfully" in report_text
-    assert "system fallback used" in report_text
+    assert "Rechnung korrekt verarbeitet" in report_text
+    assert "System-Fallback verwendet" in report_text
 
 
 def test_top_level_only_input_scan_ignores_archive_contents(tmp_path: Path) -> None:
