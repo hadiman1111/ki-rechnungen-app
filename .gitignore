@@ -17,3 +17,12 @@ testing/documents/*.pdf
 testing/input/*.pdf
 testing/input/archiv/
 .cursor/
+
+# Local invoice archives and real PDF collections (never commit originals)
+260425_archiv Rechnungen/
+TESTRECHNUNGEN/
+SONSTIGES - NICHT PROGRAMMRELEVANT!!!/
+
+# Node.js artifacts from UI framework evaluation
+package-lock.json
+node_modules/
