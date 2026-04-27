@@ -28,6 +28,7 @@ from invoice_tool.routing import (
     detect_street,
     detect_payment_method,
     resolve_account,
+    resolve_priority_routing,
 )
 from invoice_tool.state import (
     DirectoryLock,
@@ -37,6 +38,7 @@ from invoice_tool.state import (
     path_token,
     save_processed_state,
 )
+from invoice_tool.trace import DecisionTrace, TraceWriter, mask_sensitive
 
 
 class ProcessorError(RuntimeError):
@@ -83,10 +85,12 @@ class InvoiceProcessor:
         self.state_file = self.state_dir / "processed_state.json"
         self.run_archive_dir: Path | None = None
         self.run_seen_fingerprints: dict[str, Path] = {}
+        self._trace_writer = TraceWriter()
 
     def process_all(self) -> list[ProcessResult]:
         self.run_archive_dir = None
         self.run_seen_fingerprints = {}
+        self._trace_writer = TraceWriter()
         pdf_files = sorted(
             path
             for path in self.config.eingangsordner.iterdir()
@@ -112,6 +116,10 @@ class InvoiceProcessor:
             input_count=len(pdf_files),
         )
         self.log(f"Run-Report geschrieben: {report_path}")
+        trace_dir = self.config.ausgangsordner / "_runs" / self.run_logger.run_id
+        jsonl_path, csv_path = self._trace_writer.flush(trace_dir)
+        self.log(f"Decision-Trace geschrieben: {jsonl_path}")
+        self.log(f"Routing-Summary geschrieben: {csv_path}")
         return results
 
     def _process_one(self, pdf_path: Path) -> ProcessResult | None:
@@ -233,15 +241,21 @@ class InvoiceProcessor:
         )
         account_decision = resolve_account(extracted, self.preset)
         street_key = detect_street(extracted, self.preset)
-        art, art_reason = determine_business_context(extracted, account_decision, self.preset)
+        art, art_reason = determine_business_context(extracted, account_decision, self.preset, street_key)
         payment_decision = detect_payment_method(extracted, self.preset)
-        routing = apply_final_assignment(
-            art=art,
-            payment_decision=payment_decision,
-            account_decision=account_decision,
-            street_key=street_key,
-            preset=self.preset,
-        )
+
+        priority_routing = resolve_priority_routing(extracted, account_decision, street_key, self.preset)
+        if priority_routing is not None:
+            routing = priority_routing
+            art_reason = f"{art_reason}; Prioritaetsregel: {priority_routing.begruendung}"
+        else:
+            routing = apply_final_assignment(
+                art=art,
+                payment_decision=payment_decision,
+                account_decision=account_decision,
+                street_key=street_key,
+                preset=self.preset,
+            )
 
         filename = build_filename(
             self.preset.filename_schema,
@@ -255,7 +269,11 @@ class InvoiceProcessor:
             },
         )
 
-        target_folder = self.config.ausgangsordner / routing.zielordner
+        # Defensive guard: routing.zielordner must never be empty.
+        # If it is (due to a misconfigured rule), fall back to the art folder,
+        # then to "unklar", to prevent creating an unnamed or root-level folder.
+        folder_name = routing.zielordner or routing.art or "unklar"
+        target_folder = self.config.ausgangsordner / folder_name
         target_folder.mkdir(parents=True, exist_ok=True)
         output_target, output_action = self._write_active_output(
             pdf_path,
@@ -314,6 +332,67 @@ class InvoiceProcessor:
             status=routing.status,
             output_action=output_action,
             error=None,
+        )
+        # Determine which output_route_rule was used (best-effort: match by folder+status)
+        output_route_rule_name: str | None = None
+        for orr in self.preset.routing.output_route_rules:
+            folder_match = not orr.art_any or routing.art in set(orr.art_any)
+            pf_match = not orr.payment_field_any or routing.payment_field in set(orr.payment_field_any)
+            if folder_match and pf_match and self.preset.routing.zielordner.get(orr.zielordner) == routing.zielordner:
+                output_route_rule_name = orr.name
+                break
+
+        self._trace_writer.record(
+            DecisionTrace(
+                run_id=self.run_logger.run_id,
+                original_filename=pdf_path.name,
+                final_filename=output_target.name,
+                source_path=str(pdf_path),
+                target_path=str(output_target),
+                archive_path=str(archive_target),
+                document_type="invoice",
+                classification_reason=mask_sensitive(classification.begruendung),
+                extracted_invoice_date=normalized.invoice_date,
+                extracted_supplier=mask_sensitive(normalized.supplier),
+                extracted_amount=normalized.amount,
+                extraction_method=extracted.source_method,
+                fallback_used=bool(extracted.fallback_used),
+                detected_street_key=street_key,
+                business_context_art=art,
+                business_context_reason=mask_sensitive(art_reason),
+                account_konto=account_decision.konto,
+                account_payment_field=account_decision.payment_field,
+                account_match_source=account_decision.begruendung.split(":")[0].strip()
+                if ":" in account_decision.begruendung
+                else None,
+                account_match_reason=mask_sensitive(account_decision.begruendung),
+                account_matched_rule=account_decision.matched_rule,
+                detected_payment_method=payment_decision.payment_method,
+                payment_rule_name=_extract_rule_name(payment_decision.begruendung),
+                payment_explicit=payment_decision.explicit,
+                payment_signals=_extract_signals(payment_decision.begruendung),
+                priority_rule_name=_extract_rule_name(priority_routing.begruendung)
+                if priority_routing is not None
+                else None,
+                final_assignment_rule_name=_extract_rule_name(routing.begruendung)
+                if priority_routing is None
+                else None,
+                final_art=routing.art,
+                final_konto=routing.konto,
+                final_payment_field=routing.payment_field,
+                final_status=routing.status,
+                output_route_rule_name=output_route_rule_name,
+                final_output_folder=routing.zielordner,
+                filename_fields_used=[
+                    f.quelle or f.wert or ""
+                    for f in self.preset.filename_schema.felder
+                    if f.aktiv
+                ],
+                normalization_warnings=normalization_warnings,
+                conflicts=[account_decision.begruendung]
+                if account_decision.ist_widerspruechlich
+                else [],
+            )
         )
         return ProcessResult(
             input_file=pdf_path,
@@ -401,6 +480,46 @@ class InvoiceProcessor:
             status="document",
             output_action=output_action,
             error=None,
+        )
+        self._trace_writer.record(
+            DecisionTrace(
+                run_id=self.run_logger.run_id,
+                original_filename=pdf_path.name,
+                final_filename=output_target.name,
+                source_path=str(pdf_path),
+                target_path=str(output_target),
+                archive_path=str(archive_target),
+                document_type="document",
+                classification_reason=mask_sensitive(classification.begruendung),
+                extracted_invoice_date=document_date,
+                extracted_supplier=mask_sensitive(extracted.supplier_raw),
+                extracted_amount=mask_sensitive(extracted.amount_raw),
+                extraction_method=extracted.source_method,
+                fallback_used=bool(extracted.fallback_used),
+                detected_street_key=None,
+                business_context_art=None,
+                business_context_reason=None,
+                account_konto=None,
+                account_payment_field=None,
+                account_match_source=None,
+                account_match_reason=None,
+                account_matched_rule=None,
+                detected_payment_method=None,
+                payment_rule_name=None,
+                payment_explicit=None,
+                payment_signals=None,
+                priority_rule_name=None,
+                final_assignment_rule_name=None,
+                final_art=None,
+                final_konto=None,
+                final_payment_field=None,
+                final_status="document",
+                output_route_rule_name=None,
+                final_output_folder=str(self.preset.dokumente.basis_pfad.name),
+                filename_fields_used=[],
+                normalization_warnings=[],
+                conflicts=[],
+            )
         )
         return ProcessResult(
             input_file=pdf_path,
@@ -730,3 +849,21 @@ class InvoiceProcessor:
 
     def log(self, message: str) -> None:
         self.run_logger.log(message)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for trace extraction (no side effects, pure string ops)
+# ---------------------------------------------------------------------------
+
+def _extract_rule_name(begruendung: str) -> str | None:
+    """Extract rule name from begruendung strings like \"Regel 'foo' getroffen.\"."""
+    import re
+    match = re.search(r"'([^']+)'", begruendung)
+    return match.group(1) if match else None
+
+
+def _extract_signals(begruendung: str) -> str | None:
+    """Extract signal list from payment begruendung strings like \"Signale: x, y.\"."""
+    import re
+    match = re.search(r"Signale:\s*(.+?)\.?\s*$", begruendung)
+    return match.group(1).strip() if match else None

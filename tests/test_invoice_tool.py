@@ -11,7 +11,8 @@ from invoice_tool.extraction import _enrich_from_raw_text, _extract_json_payload
 from invoice_tool.filename_schema import build_filename
 from invoice_tool.models import ExtractedData
 from invoice_tool.normalization import normalize_invoice_date
-from invoice_tool.processing import InvoiceProcessor
+from invoice_tool.processing import InvoiceProcessor, _extract_rule_name, _extract_signals
+from invoice_tool.trace import DecisionTrace, TraceWriter, mask_sensitive
 from invoice_tool.routing import (
     apply_final_assignment,
     determine_business_context,
@@ -480,7 +481,10 @@ def test_no_somaa_and_no_payment_signals_stays_unklar() -> None:
     )
     assert payment.payment_method == "unknown"
     assert routing.payment_field == "unklar"
-    assert routing.status == "unklar"
+    # art=private + payment_field=unklar → private-keep-folder-despite-unclear-attributes
+    # → folder=private, status=processed (not unklar), payment_field stays unklar
+    assert routing.status == "processed"
+    assert routing.zielordner == "private"
 
 
 def test_ec_card_signal_maps_to_vobaep_for_ep_case() -> None:
@@ -730,9 +734,10 @@ def test_same_content_different_filename_is_reprocessed_with_historical_report(t
     )
     reprocessed_results = second_processor.process_all()
     assert len(reprocessed_results) == 1
-    assert reprocessed_results[0].status == "unklar"
+    # art=private + payment_field=unklar → private-keep-folder → private, status=processed
+    assert reprocessed_results[0].status == "processed"
     assert reprocessed_results[0].dokumenttyp == "invoice"
-    assert reprocessed_results[0].storage_file.parent == output_dir / "unklar"
+    assert reprocessed_results[0].storage_file.parent == output_dir / "private"
     historical_reports = sorted((output_dir / "_duplicate_reports").glob("*historical_reprocess*.txt"))
     assert historical_reports
     report_text = historical_reports[-1].read_text(encoding="utf-8")
@@ -844,7 +849,8 @@ def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> No
     )
     results = processor.process_all()
     assert len(results) == 2
-    assert [result.status for result in results].count("unklar") == 1
+    # art=private + payment_field=unklar → private-keep-folder → processed, not unklar
+    assert [result.status for result in results].count("processed") == 1
     assert [result.status for result in results].count("duplicate") == 1
     duplicate_result = [result for result in results if result.status == "duplicate"][0]
     report_text = duplicate_result.storage_file.read_text(encoding="utf-8")
@@ -978,12 +984,12 @@ def test_state_records_processed_content_by_fingerprint(tmp_path: Path) -> None:
 def test_office_rules_support_active_preset_override(tmp_path: Path) -> None:
     rules_data = json.loads(Path("office_rules.json").read_text(encoding="utf-8"))
     rules_data["presets"]["alt"] = json.loads(json.dumps(rules_data["presets"]["office_default"]))
-    rules_data["presets"]["alt"]["routing"]["zielordner"]["privat"] = "private-alt"
+    rules_data["presets"]["alt"]["routing"]["zielordner"]["private"] = "private-alt"
     rules_path = tmp_path / "rules.json"
     rules_path.write_text(json.dumps(rules_data), encoding="utf-8")
     loaded = load_office_rules(rules_path, active_preset_override="alt")
     assert loaded.active_preset == "alt"
-    assert loaded.preset.routing.zielordner["privat"] == "private-alt"
+    assert loaded.preset.routing.zielordner["private"] == "private-alt"
 
 
 def test_directory_lock_removes_stale_lock(tmp_path: Path) -> None:
@@ -993,3 +999,1360 @@ def test_directory_lock_removes_stale_lock(tmp_path: Path) -> None:
     with DirectoryLock(lock_path, stale_after_seconds=1):
         assert lock_path.exists()
     assert not lock_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Stage-1 regression tests
+# ---------------------------------------------------------------------------
+
+from invoice_tool.classification import _score_invoice_likeness
+from invoice_tool.normalization import parse_invoice_date_from_text
+from invoice_tool.routing import resolve_priority_routing, detect_street
+
+
+def test_bestellung_with_accounting_indicators_classified_as_invoice() -> None:
+    """A document titled 'Bestellung' with VAT, billing address, line items etc. must be invoice."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Some Shop GmbH",
+        amount_raw="119,00",
+        raw_text=(
+            "Bestellung Rechnungsanschrift: Musterstr. 1, 70197 Stuttgart "
+            "Bestellnummer: ORD-2026-42 MwSt. 19% 19,00 EUR Nettobetrag 100,00 EUR "
+            "Bruttobetrag 119,00 EUR Zahlungsart: Kreditkarte"
+        ),
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "invoice", classification.begruendung
+
+
+def test_marketing_page_with_price_is_not_invoice() -> None:
+    """A marketing page with a single price mention must stay as generic document."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw=None,
+        amount_raw="9,99",
+        raw_text="Unser neues Produkt ab nur 9,99 EUR kaufen Sie jetzt!",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "document"
+
+
+def test_address_only_document_is_not_invoice() -> None:
+    """Billing address alone (without 'rechnung' substring) must not become an invoice."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw="Somebody",
+        amount_raw=None,
+        # Use English "Billing Address" to avoid the German 'rechnung' keyword substring
+        raw_text="Billing Address: Main Street 1, 70197 Stuttgart",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    # score=1 (billing-address) < threshold 3 → document
+    assert classification.dokumenttyp == "document"
+
+
+def test_card_statement_with_account_holder_is_invoice_like() -> None:
+    """A card statement with account holder, statement date, and transaction list is invoice-like."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.03.2026",
+        supplier_raw="SOMAA Architektur",
+        amount_raw="2450,00",
+        raw_text=(
+            "Kreditkartenabrechnung Karteninhaber: Max Muster "
+            "Abrechnungszeitraum 01.02.2026-28.02.2026 "
+            "SOMAA Architektur Bismarckstrasse 63 Stuttgart "
+            "MwSt. 0,00 Gesamtbetrag 2450,00 EUR IBAN DE90600901000252831004"
+        ),
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "invoice", classification.begruendung
+
+
+def test_roete_private_address_routes_to_private_not_unklar(tmp_path: Path) -> None:
+    """Tax-advisor invoice sent to Rötestraße (private address) must route to private, not unklar."""
+    config_path, rules_path, input_dir, output_dir, _docs_dir = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "steuerberater.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="Steuerberater GmbH",
+                amount_raw="350,00",
+                invoice_number_raw="INV-2026-10",
+                raw_text=(
+                    "Rechnung Steuerberater GmbH "
+                    "Rechnungsempfaenger: Kunde Roetestrasse 12 70197 Stuttgart "
+                    "MwSt. 19% Gesamtbetrag 350,00 EUR"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.status == "processed", f"Expected processed, got {result.status}"
+    assert result.storage_file.parent.name == "private", f"Expected private folder, got {result.storage_file}"
+
+
+def test_somaa_with_roete_address_stays_ai_not_private(tmp_path: Path) -> None:
+    """A SOMAA document that also mentions Rötestraße must stay AI (text_none_any guard)."""
+    config_path, rules_path, input_dir, _output_dir, _docs_dir = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "somaa_roete.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA Architektur",
+                amount_raw="1200,00",
+                invoice_number_raw="INV-2026-99",
+                raw_text=(
+                    "Rechnung SOMAA Architektur Roetestrasse 12 70197 Stuttgart "
+                    "MwSt. 19% card payment Gesamtbetrag 1200,00 EUR"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    # SOMAA text_none_any guard prevents roete-private from firing → business context wins
+    # Check the parent folder name rather than full path (which starts with /private/ on macOS)
+    assert result.storage_file.parent.name != "private", (
+        f"SOMAA document wrongly routed to private folder: {result.storage_file}"
+    )
+
+
+def test_ep_produktion_alias_classified_as_ep() -> None:
+    """SOMAA Event Produktion (German spelling) must classify as ep, not ai."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Eventservice GmbH",
+        amount_raw="500,00",
+        raw_text="Rechnung SOMAA Event Produktion Veranstaltung 2026",
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    assert art == "ep"
+
+
+def test_ai_business_category_preserved_when_paid_via_non_amex_private_card() -> None:
+    """AI business document paid with a non-Amex private card: art stays ai, payment → unklar."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Somaa Architektur GmbH",
+        amount_raw="800,00",
+        raw_text="SOMAA Architektur karte",
+        card_endings=["3375"],  # Barclays Visa private card ending
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key=None,
+        preset=rules.preset,
+    )
+    # Business category must stay ai; private card → payment unklar (not private)
+    assert routing.art == "ai", f"Expected ai, got {routing.art}"
+    assert routing.payment_field == "unklar", f"Expected unklar, got {routing.payment_field}"
+
+
+def test_ep_business_category_preserved_when_paid_via_private_card() -> None:
+    """EP business document paid with a configured private card must stay in ep."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Somaa Event Production",
+        amount_raw="600,00",
+        raw_text="SOMAA Event Production karte",
+        card_endings=["3375"],  # barclays visa private card ending
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key=None,
+        preset=rules.preset,
+    )
+    assert routing.art == "ep", f"Expected ep, got {routing.art}"
+    assert routing.payment_field == "private"
+
+
+def test_explicit_rechnungsdatum_has_priority_over_datum_fallback() -> None:
+    """Explicit RECHNUNGSDATUM field must beat generic Datum: line."""
+    text = (
+        "Datum: 24. März 2026 um 16:17\n"
+        "Rechnungsdatum 27.03.2026\n"
+        "Verlängert sich am 24. April 2026"
+    )
+    result = parse_invoice_date_from_text(text)
+    assert result == "260327", f"Expected 260327, got {result}"
+
+
+def test_rechnung_heading_date_beats_datum_fallback() -> None:
+    """A date directly after 'Rechnung' heading must beat generic Datum: line."""
+    text = (
+        "Datum: 24. März 2026 um 16:17\n"
+        "Rechnung\n"
+        "5. April 2026\n"
+        "Verlängert sich am 24. April 2026"
+    )
+    result = parse_invoice_date_from_text(text)
+    assert result == "260405", f"Expected 260405, got {result}"
+
+
+def test_renewal_date_not_used_as_invoice_date() -> None:
+    """'Verlängert sich am' date must be ignored; earlier Datum used only as fallback."""
+    text = (
+        "Datum: 5. April 2026\n"
+        "Verlängert sich am 24. April 2026"
+    )
+    result = parse_invoice_date_from_text(text)
+    # renewal date suppressed; fallback Datum date must be used
+    assert result == "260405", f"Expected 260405, got {result}"
+    assert result != "260424", "Renewal date must not be used as invoice date"
+
+
+def test_german_ordinal_date_format_extracted_and_normalized() -> None:
+    """'24. März 2026' (ordinal dot + space) must be extracted and normalized correctly."""
+    text = "Rechnungsdatum 24. März 2026"
+    result = parse_invoice_date_from_text(text)
+    assert result == "260324", f"Expected 260324, got {result}"
+
+
+def test_normalize_invoice_date_ordinal_dot() -> None:
+    """normalize_invoice_date must handle '24. März 2026' with ordinal dot."""
+    assert normalize_invoice_date("24. März 2026") == "260324"
+    assert normalize_invoice_date("5. April 2026") == "260405"
+
+
+def test_iban_ending_in_text_can_resolve_account() -> None:
+    """A document containing a configured IBAN (vobaai) must resolve to vobaai account."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Telekom Deutschland GmbH",
+        amount_raw="49,99",
+        invoice_number_raw="INV-99",
+        raw_text=(
+            "SOMAA Architektur Bismarckstrasse 63 "
+            "IBAN DE90600901000252831004 BIC SSKMDEMMXXX"
+        ),
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    # IBAN ending 1004 is configured for vobaai
+    assert account.konto == "vobaai", f"Expected vobaai, got {account.konto}"
+
+
+# ---------------------------------------------------------------------------
+# Stage-1b regression tests – Amex routing and business-category consistency
+# ---------------------------------------------------------------------------
+
+
+def test_amex_monthly_statement_routes_to_amex_folder_not_private(tmp_path: Path) -> None:
+    """Test A: Amex monthly statement with SOMAA+Bismarck context → amex folder, ai category."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "amex_statement.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.03.2026",
+                supplier_raw="American Express",
+                amount_raw="2450,00",
+                raw_text=(
+                    "American Express Business Platinum Card Monatsabrechnung "
+                    "SOMAA ARCH & INNENAR BISMARCKSTRASSE 63 Stuttgart "
+                    "Karten-Nr. xxxx-xxxxxx-01005 "
+                    "Gesamtbetrag 2450,00 EUR"
+                ),
+                card_endings=["1005"],
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.storage_file.parent.name == "amex", (
+        f"Expected amex folder, got {result.storage_file.parent.name}"
+    )
+    assert result.payment_field == "amex", f"Expected amex payment, got {result.payment_field}"
+    assert result.art == "ai", f"Expected ai category, got {result.art}"
+    assert result.status == "processed"
+    # Filename must not say "private"
+    assert "private" not in result.storage_file.name, (
+        f"Filename must not contain 'private': {result.storage_file.name}"
+    )
+
+
+def test_apple_receipt_american_express_routes_to_amex(tmp_path: Path) -> None:
+    """Test B: Apple receipt with 'American Express •••• 1005' + Bismarck → amex folder."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "apple_amex.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="05.04.2026",
+                supplier_raw="Apple",
+                amount_raw="0,99",
+                raw_text=(
+                    "Rechnung Bismarckstrasse 63 Stuttgart "
+                    "American Express •••• 1005 "
+                    "Betrag 0,99 EUR"
+                ),
+                card_endings=["1005"],
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.storage_file.parent.name == "amex", (
+        f"Expected amex folder, got {result.storage_file.parent.name}"
+    )
+    assert result.payment_field == "amex"
+    assert "private" not in result.storage_file.name
+
+
+def test_abbuchung_von_amex_routes_to_amex(tmp_path: Path) -> None:
+    """Test C: 'ABBUCHUNG VON Amex .... 1005' with Bismarck context → amex folder."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "abbuchung_amex.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="10.04.2026",
+                supplier_raw="Metzgerei Beispiel",
+                amount_raw="45,80",
+                raw_text=(
+                    "Rechnung Bismarckstrasse 63 Stuttgart "
+                    "ABBUCHUNG VON Amex .... 1005 "
+                    "Betrag 45,80 EUR"
+                ),
+                card_endings=["1005"],
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.storage_file.parent.name == "amex"
+    assert result.payment_field == "amex"
+    assert "private" not in result.storage_file.name
+
+
+def test_amex_card_ending_gives_amex_payment_field() -> None:
+    """Test A/B (unit): Amex card ending 1005 resolves to amex payment_field, not private."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.03.2026",
+        supplier_raw="American Express",
+        amount_raw="2450,00",
+        raw_text="American Express Business Platinum Card SOMAA Architektur Bismarckstrasse 63",
+        card_endings=["1005"],
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, _ = determine_business_context(extracted, account, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art=art,
+        payment_decision=payment,
+        account_decision=account,
+        street_key="bismarck",
+        preset=rules.preset,
+    )
+    assert routing.payment_field == "amex", f"Expected amex, got {routing.payment_field}"
+    assert routing.art == "ai", f"Expected ai, got {routing.art}"
+    assert routing.status == "processed"
+
+
+def test_bismarck_without_somaa_gives_ai_category() -> None:
+    """Test D/F (unit): Bismarck address alone (no SOMAA) → business category ai via street art."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="dm Drogerie",
+        amount_raw="25,40",
+        raw_text="Gutschrift Bismarckstrasse 63 Stuttgart Betrag 25,40 EUR",
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    street_key = detect_street(extracted, rules.preset)
+    art, reason = determine_business_context(extracted, account, rules.preset, street_key)
+    assert art == "ai", f"Expected ai from bismarck street, got {art}: {reason}"
+
+
+def test_bismarck_without_somaa_filename_uses_ai_category(tmp_path: Path) -> None:
+    """Test F: dm credit/Gutschrift with Bismarck, no payment → unklar folder but er_ai in filename."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "dm_gutschrift.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="15.03.2026",
+                supplier_raw="dm Drogerie",
+                amount_raw="25,40",
+                invoice_number_raw="GS-2026-42",
+                raw_text=(
+                    "Gutschrift Bismarckstrasse 63 Stuttgart "
+                    "Gesamtbetrag 25,40 EUR"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    # Filename category segment must be ai, not private
+    assert "_er_ai_" in result.storage_file.name, (
+        f"Filename must contain '_er_ai_', got: {result.storage_file.name}"
+    )
+    assert "_er_private_" not in result.storage_file.name
+
+
+# ---------------------------------------------------------------------------
+# Config-correction tests – verifying corrected card/Apple-Pay ending mappings
+# ---------------------------------------------------------------------------
+
+
+def _resolve(raw_text: str = "", card_endings: list | None = None, apple_pay_endings: list | None = None):
+    """Helper: resolve account from ExtractedData using the real office_rules.json."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw=None,
+        amount_raw=None,
+        raw_text=raw_text,
+        card_endings=card_endings or [],
+        apple_pay_endings=apple_pay_endings or [],
+        source_method="openai",
+    )
+    return resolve_account(extracted, rules.preset)
+
+
+def test_c24_physical_card_ending_8692_routes_private() -> None:
+    acct = _resolve(card_endings=["8692"])
+    assert acct.payment_field == "private"
+    assert acct.art_override == "private"
+    assert acct.matched_rule == "c24-private"
+
+
+def test_c24_girocard_ending_0495_routes_private() -> None:
+    acct = _resolve(card_endings=["0495"])
+    assert acct.payment_field == "private"
+    assert acct.matched_rule == "c24-private"
+
+
+def test_c24_apple_pay_4924_routes_private() -> None:
+    acct = _resolve(apple_pay_endings=["4924"])
+    assert acct.payment_field == "private"
+    assert acct.matched_rule == "c24-private"
+
+
+def test_visa_physical_card_ending_3375_routes_private() -> None:
+    acct = _resolve(card_endings=["3375"])
+    assert acct.payment_field == "private"
+    assert acct.matched_rule == "visa-private"
+
+
+def test_visa_apple_pay_1081_routes_private() -> None:
+    acct = _resolve(apple_pay_endings=["1081"])
+    assert acct.payment_field == "private"
+    assert acct.matched_rule == "visa-private"
+
+
+def test_amex_physical_1005_routes_amex() -> None:
+    acct = _resolve(card_endings=["1005"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_amex_physical_1013_routes_amex() -> None:
+    acct = _resolve(card_endings=["1013"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_amex_physical_1000_routes_amex() -> None:
+    """Amex ht private card ending 1000 must route to amex payment, not private."""
+    acct = _resolve(card_endings=["1000"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_amex_apple_pay_4141_routes_amex() -> None:
+    acct = _resolve(apple_pay_endings=["4141"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_amex_apple_pay_6276_routes_amex() -> None:
+    acct = _resolve(apple_pay_endings=["6276"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_amex_apple_pay_4385_routes_amex() -> None:
+    """Amex ht private Apple Pay ending 4385 must route to amex."""
+    acct = _resolve(apple_pay_endings=["4385"])
+    assert acct.payment_field == "amex"
+    assert acct.matched_rule == "amex"
+
+
+def test_vobaep_physical_4879_routes_vobaep() -> None:
+    acct = _resolve(card_endings=["4879"])
+    assert acct.payment_field == "vobaep"
+    assert acct.art_override == "ep"
+    assert acct.matched_rule == "vobaep"
+
+
+def test_vobaep_apple_pay_4561_routes_vobaep() -> None:
+    acct = _resolve(apple_pay_endings=["4561"])
+    assert acct.payment_field == "vobaep"
+    assert acct.art_override == "ep"
+    assert acct.matched_rule == "vobaep"
+
+
+def test_vobaai_physical_7166_routes_vobaai() -> None:
+    """VobaAI Visa physical card ending 7166 must route to vobaai/ai."""
+    acct = _resolve(card_endings=["7166"])
+    assert acct.payment_field == "vobaai", f"Expected vobaai, got {acct.payment_field}"
+    assert acct.art_override == "ai"
+    assert acct.matched_rule == "vobaai"
+
+
+def test_vobaai_apple_pay_6281_routes_vobaai() -> None:
+    """VobaAI virtual debit Apple Pay ending 6281 must route to vobaai/ai."""
+    acct = _resolve(apple_pay_endings=["6281"])
+    assert acct.payment_field == "vobaai", f"Expected vobaai, got {acct.payment_field}"
+    assert acct.art_override == "ai"
+    assert acct.matched_rule == "vobaai"
+
+
+def test_old_vobaai_ending_4861_no_longer_matches() -> None:
+    """Obsolete vobaAI card ending 4861 must not match any configured account."""
+    acct = _resolve(card_endings=["4861"])
+    assert acct.payment_field is None, "4861 must not resolve to any configured account"
+
+
+def test_volksbank_remseck_provider_hint_matches_vobaai() -> None:
+    """Provider hint 'Volksbank Remseck' must resolve to vobaai (with ai zuweisungs-hinweis)."""
+    acct = _resolve(raw_text="Volksbank Remseck eG artificial intelligence SOMAA Architektur")
+    assert acct.payment_field == "vobaai"
+    assert acct.matched_rule == "vobaai"
+
+
+def test_vobaai_payment_field_explicit_rule_routes_to_ai_folder() -> None:
+    """vobaai payment_field must always resolve to 'ai' folder via explicit output_route_rule."""
+    rules = load_office_rules(Path("office_rules.json"))
+    from invoice_tool.routing import resolve_output_route
+    folder, status = resolve_output_route(art="ai", payment_field="vobaai", preset=rules.preset)
+    assert folder == "ai", f"vobaai must route to 'ai' folder, got '{folder}'"
+    assert status == "processed"
+
+
+def test_vobaep_payment_field_explicit_rule_routes_to_ep_folder() -> None:
+    """vobaep payment_field must always resolve to 'ep' folder via explicit output_route_rule."""
+    rules = load_office_rules(Path("office_rules.json"))
+    from invoice_tool.routing import resolve_output_route
+    folder, status = resolve_output_route(art="ep", payment_field="vobaep", preset=rules.preset)
+    assert folder == "ep", f"vobaep must route to 'ep' folder, got '{folder}'"
+    assert status == "processed"
+
+
+def test_vobaai_folder_name_never_empty() -> None:
+    """resolve_output_route must never return an empty folder name for vobaai."""
+    rules = load_office_rules(Path("office_rules.json"))
+    from invoice_tool.routing import resolve_output_route
+    folder, _ = resolve_output_route(art="ai", payment_field="vobaai", preset=rules.preset)
+    assert folder, "Folder name must not be empty for vobaai"
+    assert folder == "ai"
+
+
+def test_vobaai_integration_folder_is_ai_not_empty(tmp_path: Path) -> None:
+    """Integration: a transfer-ai document with vobaai payment must be stored in output/ai/."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "vodafone.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="05.03.2026",
+                supplier_raw="Vodafone GmbH",
+                amount_raw="55,61",
+                invoice_number_raw="INV-2026-VF",
+                raw_text="Rechnung SOMAA Architektur IBAN DE90600901000252831004 BIC lastschrift",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.payment_field == "vobaai", f"Expected vobaai payment, got {result.payment_field}"
+    assert result.storage_file.parent.name == "ai", (
+        f"Expected 'ai' folder, got '{result.storage_file.parent.name}'"
+    )
+    assert result.storage_file.parent.name != "", "Output folder name must not be empty"
+    assert "_er_ai_" in result.storage_file.name, (
+        f"Filename must contain '_er_ai_': {result.storage_file.name}"
+    )
+    assert result.storage_file.name.endswith("_vobaai.pdf"), (
+        f"Filename must end with vobaai: {result.storage_file.name}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage-1c: Cursor / Anysphere → amex payment route
+# ---------------------------------------------------------------------------
+
+
+def test_cursor_pro_invoice_routes_to_amex_not_vobaai(tmp_path: Path) -> None:
+    """Cursor Pro invoice: art=ai (Bismarck), payment_field=amex, folder=amex, not vobaai."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "cursor_pro.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="06.04.2026",
+                supplier_raw="Cursor / Anysphere Inc",
+                amount_raw="23.80",
+                invoice_number_raw="INV-BE0KJYS5-0009",
+                raw_text=(
+                    "Cursor Pro Invoice "
+                    "Anysphere Inc 2261 Market Street San Francisco CA "
+                    "Bill to SOMAA Architektur Bismarckstraße 63 70197 Stuttgart "
+                    "haditan@somaa.de hi@cursor.com "
+                    "Cursor Pro subscription 23.80 USD"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.payment_field == "amex", f"Expected amex, got {result.payment_field}"
+    assert result.art == "ai", f"Expected ai category, got {result.art}"
+    assert result.storage_file.parent.name == "amex", (
+        f"Expected amex folder, got '{result.storage_file.parent.name}'"
+    )
+    assert result.storage_file.name.endswith("_amex.pdf"), (
+        f"Filename must end with amex: {result.storage_file.name}"
+    )
+    assert "vobaai" not in result.storage_file.name, (
+        f"vobaai must not appear in filename: {result.storage_file.name}"
+    )
+
+
+def test_cursor_usage_invoice_routes_to_amex_not_vobaai(tmp_path: Path) -> None:
+    """Cursor Usage invoice: art=ai (Bismarck), payment_field=amex, folder=amex, not vobaai."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "cursor_usage.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="07.04.2026",
+                supplier_raw="Cursor / Anysphere Inc",
+                amount_raw="70.22",
+                invoice_number_raw="INV-BE0KJYS5-0010",
+                raw_text=(
+                    "Cursor Usage Invoice "
+                    "Anysphere Inc 2261 Market Street San Francisco "
+                    "Bill to SOMAA Architektur & Innenarchitektur Bismarckstraße 63 70197 Stuttgart "
+                    "haditan@somaa.de hi@cursor.com "
+                    "Cursor Usage 70.22 USD"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.payment_field == "amex", f"Expected amex, got {result.payment_field}"
+    assert result.art == "ai", f"Expected ai category, got {result.art}"
+    assert result.storage_file.parent.name == "amex", (
+        f"Expected amex folder, got '{result.storage_file.parent.name}'"
+    )
+    assert "vobaai" not in result.storage_file.name
+
+
+def test_generic_ai_invoice_without_cursor_stays_vobaai(tmp_path: Path) -> None:
+    """Negative guard: plain AI invoice with Bismarck but no Cursor/Anysphere must NOT become amex."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "strato.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.03.2026",
+                supplier_raw="Strato GmbH",
+                amount_raw="36.00",
+                invoice_number_raw="INV-2026-STRATO",
+                raw_text=(
+                    "Rechnung Strato AG "
+                    "SOMAA Architektur Bismarckstraße 63 Stuttgart "
+                    "Lastschrift IBAN DE90600901000252831004"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    # Generic transfer AI invoice: must route to ai folder with vobaai, not amex
+    assert result.payment_field == "vobaai", f"Expected vobaai for generic AI invoice, got {result.payment_field}"
+    assert result.storage_file.parent.name == "ai", (
+        f"Expected ai folder for generic invoice, got '{result.storage_file.parent.name}'"
+    )
+    assert "amex" not in result.storage_file.name
+
+
+def test_vodafone_vobaai_iban_routes_to_ai_not_private(tmp_path: Path) -> None:
+    """Test E: Vodafone+SOMAA+Bismarck with masked vobaAI IBAN ending → ai/vobaai route."""
+    config_path, rules_path, input_dir, _output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    original_pdf = input_dir / "vodafone_voba.pdf"
+    create_pdf(original_pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.03.2026",
+                supplier_raw="Vodafone GmbH",
+                amount_raw="49,99",
+                invoice_number_raw="VOD-2026-1",
+                raw_text=(
+                    "Rechnung SOMAA Architektur Bismarckstrasse 63 Stuttgart "
+                    "Lastschrift von IBAN DE90600901000252831004"
+                ),
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    # Bismarck + SOMAA + vobaai IBAN → ai folder with vobaai payment
+    assert result.storage_file.parent.name == "ai", (
+        f"Expected ai folder, got {result.storage_file.parent.name}"
+    )
+    assert result.payment_field == "vobaai", f"Expected vobaai, got {result.payment_field}"
+    assert "_er_private_" not in result.storage_file.name
+
+
+# ---------------------------------------------------------------------------
+# Decision-Trace tests
+# ---------------------------------------------------------------------------
+
+
+def test_decision_trace_created_for_processed_invoice(tmp_path: Path) -> None:
+    """A decision_trace.jsonl is created in the _runs/<run_id>/ folder after a run."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "trace_invoice.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="Acme Ltd",
+                amount_raw="19,99",
+                invoice_number_raw="INV-99",
+                raw_text="Invoice SOMAA Architektur lastschrift IBAN DE90600901000252831004",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    assert trace_path.exists(), f"Expected decision_trace.jsonl at {trace_path}"
+    lines = [l for l in trace_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(lines) == 1
+
+
+def test_decision_trace_contains_required_fields(tmp_path: Path) -> None:
+    """The decision trace must contain all required routing/classification fields."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "fields.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA Architektur",
+                amount_raw="50,00",
+                invoice_number_raw="INV-1",
+                raw_text="Rechnung SOMAA Architektur lastschrift IBAN DE90600901000252831004",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    entry = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    for key in [
+        "final_art",
+        "final_payment_field",
+        "final_output_folder",
+        "document_type",
+        "business_context_reason",
+        "final_filename",
+        "original_filename",
+    ]:
+        assert key in entry, f"Missing required trace field: {key}"
+
+
+def test_decision_trace_contains_final_art(tmp_path: Path) -> None:
+    """Trace must record final art/category."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "art.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA GmbH",
+                amount_raw="10,00",
+                invoice_number_raw="INV-1",
+                raw_text="Rechnung SOMAA Architektur IBAN DE90600901000252831004",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    entry = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["final_art"] == results[0].art
+
+
+def test_decision_trace_contains_final_payment_field(tmp_path: Path) -> None:
+    """Trace must record final payment_field, matching the processed result."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "pf.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA GmbH",
+                amount_raw="10,00",
+                invoice_number_raw="INV-1",
+                raw_text="Rechnung SOMAA Architektur IBAN DE90600901000252831004",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    entry = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["final_payment_field"] == results[0].payment_field
+
+
+def test_decision_trace_contains_output_folder(tmp_path: Path) -> None:
+    """Trace must record the final output folder name."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "folder.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="SOMAA GmbH",
+                amount_raw="10,00",
+                invoice_number_raw="INV-1",
+                raw_text="Rechnung SOMAA Architektur IBAN DE90600901000252831004",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    entry = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["final_output_folder"] == results[0].storage_file.parent.name
+
+
+def test_decision_trace_contains_rule_names(tmp_path: Path) -> None:
+    """Trace must contain non-null payment_rule_name for deterministic payment detection."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "rules.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="American Express",
+                amount_raw="2450,00",
+                invoice_number_raw="AMEX-2026-01",  # force invoice classification
+                raw_text="Rechnung American Express SOMAA Architektur Bismarckstrasse 63",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    lines = [l for l in trace_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    invoice_entries = [json.loads(l) for l in lines if json.loads(l).get("document_type") == "invoice"]
+    assert invoice_entries, "Expected at least one invoice trace entry"
+    entry = invoice_entries[0]
+    assert entry.get("payment_rule_name"), "payment_rule_name must be present for explicit amex detection"
+
+
+def test_decision_trace_does_not_expose_full_iban(tmp_path: Path) -> None:
+    """Full IBANs must not appear verbatim in the trace; only masked endings allowed."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "iban.pdf", pages=1)
+    full_iban = "DE90600901000252831004"
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="Volksbank Remseck eG",
+                amount_raw="49,99",
+                invoice_number_raw="INV-1",
+                raw_text=f"Rechnung SOMAA Architektur IBAN {full_iban} Lastschrift",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    raw = trace_path.read_text(encoding="utf-8")
+    assert full_iban not in raw, f"Full IBAN {full_iban} must not appear in trace"
+
+
+def test_decision_trace_does_not_expose_full_card_number(tmp_path: Path) -> None:
+    """Full card numbers (16 digits) must not appear verbatim in the trace."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "card.pdf", pages=1)
+    full_card = "4111222233331005"
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="American Express",
+                amount_raw="120,00",
+                raw_text=f"American Express Karte {full_card} SOMAA Architektur",
+                card_endings=["1005"],
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    raw = trace_path.read_text(encoding="utf-8")
+    assert full_card not in raw, f"Full card number {full_card} must not appear in trace"
+
+
+def test_routing_summary_csv_created(tmp_path: Path) -> None:
+    """routing_summary.csv must be created alongside the JSONL trace."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    create_pdf(input_dir / "csv.pdf", pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="20.03.2026",
+                supplier_raw="Acme",
+                amount_raw="10,00",
+                invoice_number_raw="INV-1",
+                raw_text="Invoice SOMAA",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    csv_path = output_dir / "_runs" / run_id / "routing_summary.csv"
+    assert csv_path.exists(), "routing_summary.csv must be created"
+    content = csv_path.read_text(encoding="utf-8")
+    assert "payment_field" in content
+    assert "art" in content
+
+
+def test_mask_sensitive_replaces_iban() -> None:
+    assert "DE90600901000252831004" not in (mask_sensitive("IBAN DE90600901000252831004") or "")
+    assert "1004" in (mask_sensitive("IBAN DE90600901000252831004") or "")
+
+
+def test_mask_sensitive_replaces_card_number() -> None:
+    masked = mask_sensitive("Karte 4111222233331005 bezahlt")
+    assert "4111222233331005" not in (masked or "")
+    assert "1005" in (masked or "")
+
+
+def test_mask_sensitive_leaves_short_numbers_intact() -> None:
+    assert mask_sensitive("Betrag 199,00 EUR") == "Betrag 199,00 EUR"
+
+
+def test_extract_rule_name_parses_begruendung() -> None:
+    assert _extract_rule_name("Payment-Regel 'explicit-amex' getroffen.") == "explicit-amex"
+    assert _extract_rule_name("Keine Regel getroffen.") is None
+
+
+def test_extract_signals_parses_begruendung() -> None:
+    assert _extract_signals("Payment-Regel 'x' getroffen. Signale: iban, bic.") == "iban, bic"
+    assert _extract_signals("Signale: keine.") == "keine"
+
+
+# ---------------------------------------------------------------------------
+# Policy: private-keep-folder-despite-unclear-attributes
+# ---------------------------------------------------------------------------
+
+
+def test_private_with_unklar_payment_routes_to_private_folder(tmp_path: Path) -> None:
+    """Core policy: art=private + payment_field=unklar → folder private, not unklar.
+
+    This covers the Haaga-Mandant-19112 real-world case: no SOMAA, no Bismarck,
+    transfer payment detected but no configured account → ultimate-fallback would
+    previously send to unklar despite art=private.
+    """
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    pdf = input_dir / "private_unklar.pdf"
+    create_pdf(pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.04.2026",
+                supplier_raw="Steuerberater GmbH",
+                amount_raw="595,30",
+                invoice_number_raw="INV-PRIVATE-1",
+                raw_text="Rechnung Steuerberater GmbH Überweisung bitte",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.art == "private", f"Expected art=private, got {result.art}"
+    assert result.storage_file.parent.name == "private", (
+        f"Expected folder 'private', got '{result.storage_file.parent.name}'"
+    )
+
+
+def test_private_with_unklar_payment_field_stays_unklar(tmp_path: Path) -> None:
+    """payment_field must remain unklar even though the folder becomes private."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    pdf = input_dir / "private_pf.pdf"
+    create_pdf(pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.04.2026",
+                supplier_raw="Steuerberater GmbH",
+                amount_raw="595,30",
+                invoice_number_raw="INV-PRIVATE-2",
+                raw_text="Rechnung Steuerberater GmbH Überweisung bitte",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    # payment_field stays unklar — only the folder is corrected to private
+    assert result.payment_field == "unklar", (
+        f"payment_field must remain unklar, got {result.payment_field}"
+    )
+    assert result.storage_file.parent.name == "private", (
+        f"Despite unklar payment, folder must be private for private art, got {result.storage_file.parent.name}"
+    )
+
+
+def test_private_with_transfer_payment_routes_to_private(tmp_path: Path) -> None:
+    """art=private + transfer payment (no account match) → folder private."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    pdf = input_dir / "private_transfer.pdf"
+    create_pdf(pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="15.03.2026",
+                supplier_raw="Freelancer XY",
+                amount_raw="200,00",
+                invoice_number_raw="INV-PRIV-3",
+                raw_text="Rechnung Überweisung",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.storage_file.parent.name == "private"
+
+
+def test_private_keep_folder_rule_name_visible_in_trace(tmp_path: Path) -> None:
+    """The output_route_rule must reference the policy name for UI traceability."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    pdf = input_dir / "private_trace.pdf"
+    create_pdf(pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="01.04.2026",
+                supplier_raw="Anwalt GmbH",
+                amount_raw="300,00",
+                invoice_number_raw="INV-PRIV-TRACE",
+                raw_text="Rechnung Anwalt GmbH Überweisung",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    processor.process_all()
+    run_id = processor.run_logger.run_id
+    trace_path = output_dir / "_runs" / run_id / "decision_trace.jsonl"
+    lines = [l for l in trace_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    invoice_entries = [json.loads(l) for l in lines if json.loads(l).get("document_type") == "invoice"]
+    assert invoice_entries
+    entry = invoice_entries[0]
+    assert entry.get("output_route_rule_name") == "private-keep-folder-despite-unclear-attributes", (
+        f"Expected policy rule name in trace, got: {entry.get('output_route_rule_name')}"
+    )
+
+
+def test_control_ai_with_unklar_payment_stays_unklar_folder(tmp_path: Path) -> None:
+    """Control test: art=ai + payment_field=unklar must still go to unklar folder (dm case)."""
+    config_path, rules_path, input_dir, output_dir, _docs = make_test_setup(tmp_path)
+    config = load_app_config(config_path)
+    rules = load_office_rules(rules_path)
+    pdf = input_dir / "ai_unklar.pdf"
+    create_pdf(pdf, pages=1)
+    processor = InvoiceProcessor(
+        config,
+        StubExtractor(
+            ExtractedData(
+                invoice_date_raw="09.02.2026",
+                supplier_raw="dm Drogerie",
+                amount_raw="24,75",
+                invoice_number_raw="GS-3456908",
+                raw_text="Gutschrift Bismarckstrasse 63 Stuttgart",
+                source_method="openai",
+            )
+        ),
+        office_rules=rules,
+    )
+    results = processor.process_all()
+    assert len(results) == 1
+    result = results[0]
+    assert result.art == "ai", f"Expected art=ai, got {result.art}"
+    assert result.storage_file.parent.name == "unklar", (
+        f"ai+unklar must remain in unklar folder, got '{result.storage_file.parent.name}'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Street detection: Rötestr. abbreviation matching
+# ---------------------------------------------------------------------------
+
+
+def test_roetest_abbreviation_detected_as_roete_street() -> None:
+    """'Rötestr.' (abbreviated, with dot) must be detected as street key 'roete'."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.04.2026",
+        supplier_raw="Steuerberater GmbH",
+        amount_raw="595,30",
+        invoice_number_raw="INV-260085",
+        raw_text=(
+            "Herrn\n"
+            "Alexander Tandawardaja\n"
+            "Rötestr. 58\n"
+            "70197 Stuttgart"
+        ),
+        source_method="openai",
+    )
+    street = detect_street(extracted, rules.preset)
+    assert street == "roete", f"Expected street=roete for 'Rötestr. 58', got: {street!r}"
+
+
+def test_roetest_abbreviation_gives_private_art() -> None:
+    """Rötestr. abbreviation → art=private via street art mapping."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.04.2026",
+        supplier_raw="Steuerberater GmbH",
+        amount_raw="595,30",
+        invoice_number_raw="INV-260085",
+        raw_text=(
+            "Herrn\n"
+            "Alexander Tandawardaja\n"
+            "Rötestr. 58\n"
+            "70197 Stuttgart"
+        ),
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    street = detect_street(extracted, rules.preset)
+    art, reason = determine_business_context(extracted, account, rules.preset, street)
+    assert art == "private", f"Expected art=private from Rötestr. street, got {art}: {reason}"
+
+
+def test_roetest_with_sender_address_still_detects_recipient_roete() -> None:
+    """Recipient Rötestr. 58 wins even when sender address Eduard-Steinle-Str. also present."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.04.2026",
+        supplier_raw="Haaga & Partner mbB Steuerberatungsgesellschaft",
+        amount_raw="595,30",
+        invoice_number_raw="INV-260085",
+        raw_text=(
+            "HAAGA & PARTNER mbB, Eduard-Steinle-Str. 46, 70619 Stuttgart\n"
+            "Herrn\n"
+            "Alexander Tandawardaja\n"
+            "Rötestr. 58\n"
+            "70197 Stuttgart\n"
+            "Rechnung über 595,30 EUR"
+        ),
+        source_method="openai",
+    )
+    street = detect_street(extracted, rules.preset)
+    assert street == "roete", (
+        f"Recipient Rötestr. must be detected despite sender address Eduard-Steinle-Str., got: {street!r}"
+    )
+
+
+def test_roetestr_dot_variant_does_not_match_bismarck() -> None:
+    """Rötestr. abbreviation variants must NOT match Bismarckstraße text."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="SOMAA Architektur",
+        amount_raw="100,00",
+        invoice_number_raw="INV-1",
+        raw_text="SOMAA Architektur Bismarckstrasse 63 70197 Stuttgart Rechnung",
+        source_method="openai",
+    )
+    street = detect_street(extracted, rules.preset)
+    assert street == "bismarck", f"Bismarck text must give bismarck, got: {street!r}"

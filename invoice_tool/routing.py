@@ -55,9 +55,25 @@ def _rule_matches_provider_hint(search_text: str, rule) -> list[Match]:
     ]
 
 
+def _extract_iban_endings_from_text(text: str) -> list[str]:
+    """Extract last-4-digit endings from IBAN-formatted strings in text."""
+    import re as _re
+    endings: set[str] = set()
+    # Full IBAN pattern: DE90600901000252831004 → ending "1004"
+    for match in _re.finditer(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b", text.upper()):
+        iban = match.group(0)
+        if len(iban) >= 4:
+            endings.add(iban[-4:])
+    # Masked IBAN: "DE...xxxx 1004" or "****1004"
+    for match in _re.finditer(r"(?:[Xx*]{2,})\s*(\d{4})\b", text):
+        endings.add(match.group(1))
+    return list(endings)
+
+
 def resolve_account(extracted: ExtractedData, preset: ProcessingPreset) -> AccountDecision:
     search_text = _normalize_search_text(extracted)
-    source_matches: dict[str, list[Match]] = {"card": [], "apple": [], "provider": []}
+    iban_endings_in_text = _extract_iban_endings_from_text(extracted.raw_text)
+    source_matches: dict[str, list[Match]] = {"card": [], "apple": [], "iban": [], "provider": []}
 
     for rule in preset.routing.konten:
         for ending in extracted.card_endings:
@@ -84,11 +100,23 @@ def resolve_account(extracted: ExtractedData, preset: ProcessingPreset) -> Accou
                         clue=ending,
                     )
                 )
+        for ending in iban_endings_in_text:
+            if ending in rule.iban_endungen:
+                source_matches["iban"].append(
+                    Match(
+                        rule_name=rule.name,
+                        konto=rule.konto,
+                        payment_field=rule.payment_field,
+                        art_override=rule.art_override,
+                        source="iban",
+                        clue=f"iban-ending:{ending}",
+                    )
+                )
         source_matches["provider"].extend(_rule_matches_provider_hint(search_text, rule))
 
     contradiction = False
     trusted_match: Match | None = None
-    for source in ("card", "apple", "provider"):
+    for source in ("card", "apple", "iban", "provider"):
         matches = source_matches[source]
         unique_rules = {match.rule_name for match in matches}
         if len(unique_rules) == 1 and matches:
@@ -158,12 +186,20 @@ def resolve_priority_routing(
     for rule in preset.routing.prioritaetsregeln:
         if not _priority_rule_matches(rule, search_text, account_decision, street_key):
             continue
+        # For private-art rules without an explicit account match, prefer "private"
+        # as the payment_field to avoid routing to the unklar folder via output_route_rules
+        if account_decision.payment_field is not None:
+            payment_field = account_decision.payment_field
+        elif rule.art == "private":
+            payment_field = "private"
+        else:
+            payment_field = preset.routing.unklar_konto
         return RoutingDecision(
             art=rule.art,
             zielordner=preset.routing.zielordner[rule.zielordner],
             status=rule.status,
             konto=account_decision.konto,
-            payment_field=account_decision.payment_field or preset.routing.unklar_konto,
+            payment_field=payment_field,
             street_key=street_key,
             begruendung=f"Prioritaetsregel '{rule.name}' hat Standardrouting ueberschrieben.",
         )
@@ -174,6 +210,7 @@ def determine_business_context(
     extracted: ExtractedData,
     account_decision: AccountDecision,
     preset: ProcessingPreset,
+    street_key: str | None = None,
 ) -> tuple[str, str]:
     search_text = _normalize_search_text(extracted)
     for rule in preset.routing.business_context_rules:
@@ -189,6 +226,15 @@ def determine_business_context(
 
     if account_decision.art_override and account_decision.art_override != "private":
         return account_decision.art_override, "Art aus Kontozuordnung abgeleitet."
+
+    # Use the street rule's configured art as fallback when no other context is found
+    if street_key is not None:
+        for street_rule in preset.routing.strassen:
+            if street_rule.key == street_key and street_rule.art is not None:
+                return (
+                    street_rule.art,
+                    f"Strassenadresse '{street_key}' liefert Geschaeftskontext.",
+                )
 
     return preset.routing.default_art, f"Kein Business-Kontext erkannt, Default={preset.routing.default_art}."
 
@@ -287,17 +333,23 @@ def apply_final_assignment(
     )
 
 
+_FALLBACK_FOLDER = "unklar"
+
+
 def resolve_output_route(*, art: str, payment_field: str, preset: ProcessingPreset) -> tuple[str, str]:
     for rule in preset.routing.output_route_rules:
         if rule.art_any and art not in set(rule.art_any):
             continue
         if rule.payment_field_any and payment_field not in set(rule.payment_field_any):
             continue
-        return preset.routing.zielordner[rule.zielordner], rule.status
-    return (
-        preset.routing.zielordner[preset.routing.default_zielordner],
-        preset.routing.default_status,
-    )
+        folder_name = preset.routing.zielordner.get(rule.zielordner, "")
+        if not folder_name:
+            # Misconfigured rule: zielordner key missing or empty — use art as folder if valid
+            folder_name = art if art and art in preset.routing.zielordner.values() else _FALLBACK_FOLDER
+        return folder_name, rule.status
+
+    default_folder = preset.routing.zielordner.get(preset.routing.default_zielordner, _FALLBACK_FOLDER)
+    return default_folder or _FALLBACK_FOLDER, preset.routing.default_status
 
 
 def _priority_rule_matches(
@@ -312,6 +364,10 @@ def _priority_rule_matches(
         return False
     if rule.text_any and not any(
         normalize_for_matching(text) in search_text for text in rule.text_any
+    ):
+        return False
+    if rule.text_none_any and any(
+        normalize_for_matching(text) in search_text for text in rule.text_none_any
     ):
         return False
     if rule.provider_any and not any(

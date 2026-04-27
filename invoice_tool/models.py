@@ -55,6 +55,7 @@ class AccountRule:
     apple_pay_endungen: tuple[str, ...] = ()
     anbieter_hinweise: tuple[str, ...] = ()
     zuweisungs_hinweise: tuple[str, ...] = ()
+    iban_endungen: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class StreetRule:
     key: str
     varianten: tuple[str, ...]
     fuzzy_threshold: float
+    art: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class PriorityRouteRule:
     text_any: tuple[str, ...] = ()
     provider_any: tuple[str, ...] = ()
     street_any: tuple[str, ...] = ()
+    text_none_any: tuple[str, ...] = ()
     require_no_clear_payment: bool = False
     zielordner: str = ""
     art: str = ""
@@ -91,6 +94,8 @@ class ClassificationRules:
     invoice_keywords: tuple[str, ...]
     document_keywords: tuple[str, ...]
     internal_invoice_keywords: tuple[str, ...]
+    invoice_like_indicators: tuple[str, ...] = ()
+    invoice_like_threshold: int = 3
 
 
 @dataclass(frozen=True)

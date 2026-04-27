@@ -41,7 +41,9 @@
           "eigenbeleg",
           "interner beleg",
           "internal form"
-        ]
+        ],
+        "invoice_like_indicators": [],
+        "invoice_like_threshold": 3
       },
       "routing": {
         "unklar_konto": "unklar",
@@ -51,26 +53,33 @@
         "default_zielordner": "unklar",
         "default_status": "unklar",
         "zielordner": {
-          "privat": "privat",
+          "private": "private",
           "ai": "ai",
           "ep": "ep",
-          "unklar": "unklar"
+          "unklar": "unklar",
+          "amex": "amex"
         },
         "strassen": [
           {
             "key": "roete",
+            "art": "private",
             "varianten": [
               "roetestrasse",
               "roete strasse",
               "roete-strasse",
               "rötestrasse",
               "röte strasse",
-              "rotestrasse"
+              "rotestrasse",
+              "rötestr",
+              "roetestr",
+              "rötestr.",
+              "roetestr."
             ],
             "fuzzy_threshold": 0.84
           },
           {
             "key": "bismarck",
+            "art": "ai",
             "varianten": [
               "bismarckstrasse",
               "bismarck strasse",
@@ -82,19 +91,23 @@
         ],
         "prioritaetsregeln": [
           {
-            "name": "somaa-bismarck-no-clear-payment",
-            "text_all": ["somaa"],
-            "street_any": ["bismarck"],
-            "require_no_clear_payment": true,
-            "zielordner": "ai",
-            "art": "ai",
+            "name": "roete-private-address",
+            "text_all": [],
+            "text_any": [],
+            "provider_any": [],
+            "street_any": ["roete"],
+            "text_none_any": ["somaa"],
+            "require_no_clear_payment": false,
+            "zielordner": "private",
+            "art": "private",
             "status": "processed"
           }
         ],
         "business_context_rules": [
           {
             "name": "somaa-event-production",
-            "text_all": ["somaa", "event", "production"],
+            "text_all": ["somaa", "event"],
+            "text_any": ["production", "produktion"],
             "art": "ep"
           },
           {
@@ -110,6 +123,17 @@
           }
         ],
         "payment_detection_rules": [
+          {
+            "name": "explicit-amex",
+            "text_any": [
+              "american express",
+              "abbuchung von amex",
+              "american express business",
+              "american express monatsabrechnung"
+            ],
+            "payment_method": "amex",
+            "explicit": true
+          },
           {
             "name": "explicit-paypal",
             "text_any": ["paypal", "pay pal"],
@@ -159,8 +183,21 @@
           },
           {
             "name": "explicit-ec-card",
-            "text_any": ["ec", "ec-karte", "debit card", "card payment", "karte", "visa", "mastercard", "amex", "american express", "c24"],
+            "text_any": ["ec", "ec-karte", "debit card", "card payment", "karte", "visa", "mastercard", "c24"],
             "payment_method": "card",
+            "explicit": true
+          },
+          {
+            "name": "cursor-anysphere-amex",
+            "text_any": [
+              "anysphere",
+              "cursor pro",
+              "cursor usage",
+              "hi@cursor.com",
+              "hi cursor com",
+              "cursor.com"
+            ],
+            "payment_method": "amex",
             "explicit": true
           },
           {
@@ -171,6 +208,44 @@
           }
         ],
         "final_assignment_rules": [
+          {
+            "name": "amex-account-route",
+            "account_payment_field_any": ["amex"],
+            "use_account_art": false,
+            "use_account_konto": false,
+            "use_account_payment_field": false,
+            "output_konto": null,
+            "output_payment_field": "amex"
+          },
+          {
+            "name": "amex-payment-detected",
+            "payment_method_any": ["amex"],
+            "use_account_art": false,
+            "use_account_konto": false,
+            "use_account_payment_field": false,
+            "output_konto": null,
+            "output_payment_field": "amex"
+          },
+          {
+            "name": "ep-private-card-preserve-category",
+            "art_any": ["ep"],
+            "account_payment_field_any": ["private"],
+            "use_account_art": false,
+            "use_account_konto": false,
+            "use_account_payment_field": false,
+            "output_konto": null,
+            "output_payment_field": "private"
+          },
+          {
+            "name": "ai-private-card-preserve-category",
+            "art_any": ["ai"],
+            "account_payment_field_any": ["private"],
+            "use_account_art": false,
+            "use_account_konto": false,
+            "use_account_payment_field": false,
+            "output_konto": null,
+            "output_payment_field": "unklar"
+          },
           {
             "name": "use-detected-account-output",
             "account_payment_field_any": ["vobaai", "vobaep", "private"],
@@ -218,6 +293,31 @@
         ],
         "output_route_rules": [
           {
+            "name": "amex-to-amex",
+            "payment_field_any": ["amex"],
+            "zielordner": "amex",
+            "status": "processed"
+          },
+          {
+            "name": "vobaai-to-ai",
+            "payment_field_any": ["vobaai"],
+            "zielordner": "ai",
+            "status": "processed"
+          },
+          {
+            "name": "vobaep-to-ep",
+            "payment_field_any": ["vobaep"],
+            "zielordner": "ep",
+            "status": "processed"
+          },
+          {
+            "name": "private-keep-folder-despite-unclear-attributes",
+            "art_any": ["private"],
+            "payment_field_any": ["unklar"],
+            "zielordner": "private",
+            "status": "processed"
+          },
+          {
             "name": "unklar-to-unklar",
             "payment_field_any": ["unklar", "paypal-unklar"],
             "zielordner": "unklar",
@@ -236,9 +336,9 @@
             "status": "processed"
           },
           {
-            "name": "private-to-privat",
+            "name": "private-to-private",
             "art_any": ["private"],
-            "zielordner": "privat",
+            "zielordner": "private",
             "status": "processed"
           }
         ],
@@ -248,8 +348,9 @@
             "konto": null,
             "payment_field": "private",
             "art_override": "private",
-            "karten_endungen": ["8692", "4924", "0495"],
-            "apple_pay_endungen": [],
+            "karten_endungen": ["8692", "0495"],
+            "apple_pay_endungen": ["4924"],
+            "iban_endungen": [],
             "anbieter_hinweise": ["c24"],
             "zuweisungs_hinweise": []
           },
@@ -258,19 +359,25 @@
             "konto": null,
             "payment_field": "private",
             "art_override": "private",
-            "karten_endungen": ["3375", "1081"],
-            "apple_pay_endungen": [],
+            "karten_endungen": ["3375"],
+            "apple_pay_endungen": ["1081"],
+            "iban_endungen": [],
             "anbieter_hinweise": ["barclays", "visa"],
             "zuweisungs_hinweise": []
           },
           {
-            "name": "amex-private",
+            "name": "amex",
             "konto": null,
-            "payment_field": "private",
-            "art_override": "private",
-            "karten_endungen": ["1005", "4141", "1013", "6276"],
-            "apple_pay_endungen": [],
-            "anbieter_hinweise": ["amex", "american express"],
+            "payment_field": "amex",
+            "art_override": null,
+            "karten_endungen": ["1005", "1013", "1000"],
+            "apple_pay_endungen": ["4141", "6276", "4385"],
+            "iban_endungen": [],
+            "anbieter_hinweise": [
+              "american express",
+              "anysphere",
+              "cursor"
+            ],
             "zuweisungs_hinweise": []
           },
           {
@@ -278,8 +385,9 @@
             "konto": "vobaep",
             "payment_field": "vobaep",
             "art_override": "ep",
-            "karten_endungen": ["4879", "4561"],
-            "apple_pay_endungen": [],
+            "karten_endungen": ["4879"],
+            "apple_pay_endungen": ["4561"],
+            "iban_endungen": ["0004"],
             "anbieter_hinweise": ["voba", "volksbanken raiffeisenbanken"],
             "zuweisungs_hinweise": ["ep", "expense", "expenses"]
           },
@@ -288,9 +396,10 @@
             "konto": "vobaai",
             "payment_field": "vobaai",
             "art_override": "ai",
-            "karten_endungen": ["4861", "6281"],
-            "apple_pay_endungen": [],
-            "anbieter_hinweise": ["voba", "volksbanken raiffeisenbanken"],
+            "karten_endungen": ["7166"],
+            "apple_pay_endungen": ["6281"],
+            "iban_endungen": ["1004"],
+            "anbieter_hinweise": ["voba", "volksbanken raiffeisenbanken", "volksbank remseck"],
             "zuweisungs_hinweise": ["ai", "artificial intelligence"]
           }
         ]

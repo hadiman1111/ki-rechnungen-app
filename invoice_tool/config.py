@@ -160,6 +160,7 @@ def _parse_preset(preset_key: str, preset_raw: dict, base_dir: Path) -> Processi
                 apple_pay_endungen=tuple(item.get("apple_pay_endungen", [])),
                 anbieter_hinweise=tuple(item.get("anbieter_hinweise", [])),
                 zuweisungs_hinweise=tuple(item.get("zuweisungs_hinweise", [])),
+                iban_endungen=tuple(item.get("iban_endungen", [])),
             )
         )
 
@@ -172,6 +173,7 @@ def _parse_preset(preset_key: str, preset_raw: dict, base_dir: Path) -> Processi
                 key=str(item.get("key", "")),
                 varianten=tuple(item.get("varianten", [])),
                 fuzzy_threshold=float(item.get("fuzzy_threshold", 0.84)),
+                art=item.get("art") or None,
             )
         )
 
@@ -230,6 +232,8 @@ def _parse_preset(preset_key: str, preset_raw: dict, base_dir: Path) -> Processi
             internal_invoice_keywords=tuple(
                 classification_raw.get("internal_invoice_keywords", [])
             ),
+            invoice_like_indicators=tuple(classification_raw.get("invoice_like_indicators", [])),
+            invoice_like_threshold=int(classification_raw.get("invoice_like_threshold", 3)),
         ),
         routing=RoutingRules(
             unklar_konto=str(routing_raw.get("unklar_konto", "unklar")),
@@ -292,6 +296,7 @@ def _parse_priority_rules(raw_rules: list[dict]) -> list[PriorityRouteRule]:
                 text_any=tuple(item.get("text_any", [])),
                 provider_any=tuple(item.get("provider_any", [])),
                 street_any=tuple(item.get("street_any", [])),
+                text_none_any=tuple(item.get("text_none_any", [])),
                 require_no_clear_payment=bool(item.get("require_no_clear_payment", False)),
                 zielordner=str(item.get("zielordner", "")),
                 art=str(item.get("art", "")),

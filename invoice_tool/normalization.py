@@ -60,6 +60,31 @@ DATE_LABEL_PATTERNS = (
     r"datum",
 )
 
+# Explicit invoice-date labels that beat all other candidates
+_HIGH_PRIORITY_DATE_LABELS = (
+    r"rechnungsdatum",
+    r"invoice\s*date",
+    r"receipt\s*date",
+    r"issue\s*date",
+    r"belegdatum",
+)
+
+# Generic date labels used only as fallback (lower priority than heading detection)
+_FALLBACK_DATE_LABELS = (r"\bdatum\b",)
+
+# Lines whose dates must be ignored (renewal/cancellation/copyright)
+_NEGATIVE_DATE_LINE_LABELS = (
+    r"verlang(?:er|rt)\s*(?:sich\s*)?am",
+    r"naechste\s*(?:zahlung|abbuchung|rechnung|faelligkeit)",
+    r"verlaengert\s*sich",
+    r"\brenewal\b",
+    r"refund\s*period",
+    r"cancellation\s*period",
+    r"kuendigungsfrist",
+    r"copyright\s*\d{4}",
+    r"\(c\)\s*\d{4}",
+)
+
 AMOUNT_LABEL_PATTERNS = (
     r"gesamt",
     r"gesamtbetrag",
@@ -132,6 +157,8 @@ def normalize_invoice_date(value: str) -> str:
     lowered = candidate.lower()
     for german, english in GERMAN_MONTHS.items():
         lowered = re.sub(rf"\b{re.escape(german)}\b", english, lowered)
+    # Normalize ordinal dot in German dates: "24. March 2026" → "24 March 2026"
+    lowered = re.sub(r"\b(\d{1,2})\.\s+([a-z])", r"\1 \2", lowered)
     candidate = re.sub(r"\s{2,}", " ", lowered).strip()
     for pattern in DATE_PATTERNS:
         try:
@@ -197,9 +224,30 @@ def normalize_invoice_with_fallbacks(
     return NormalizedInvoice(invoice_date=invoice_date, supplier=supplier, amount=amount), warnings
 
 
-def parse_invoice_date_from_text(text: str) -> str | None:
-    labeled_matches: list[str] = []
-    unlabeled_matches: list[str] = []
+def _normalize_line_for_label(line: str) -> str:
+    """Lowercase + German-umlaut replacement for label pattern matching."""
+    lowered = line.lower()
+    for src, tgt in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        lowered = lowered.replace(src, tgt)
+    return lowered
+
+
+def _has_negative_date_label(normalized_line: str) -> bool:
+    return any(re.search(p, normalized_line) for p in _NEGATIVE_DATE_LINE_LABELS)
+
+
+def _is_invoice_heading_line(normalized_line: str) -> bool:
+    """True for standalone invoice/receipt headings like 'Rechnung' (not Rechnungsnummer etc.)."""
+    stripped = normalized_line.strip()
+    if not re.search(r"\brechnung\b", stripped):
+        return False
+    # Exclude lines that are labels or compound terms
+    if re.search(r"\b(?:nummer|nr\.?|datum|adresse|empfaenger|anschrift|betrag|steller)\b", stripped):
+        return False
+    return True
+
+
+def _find_dates_in_line(line: str) -> list[str]:
     month_name_pattern = (
         r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
         r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
@@ -211,22 +259,66 @@ def parse_invoice_date_from_text(text: str) -> str | None:
         r"januar|februar|maerz|märz|april|mai|juni|juli|august|september|oktober|november|dezember)"
         r"[ -]\d{2,4}\b"
     )
+    # Additional pattern for German ordinal style: "24. März 2026" (dot + space separator)
+    german_ordinal_pattern = (
+        r"\b\d{1,2}\.\s+(?:januar|februar|maerz|märz|april|mai|juni|juli|august|"
+        r"september|oktober|november|dezember|"
+        r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+        r"\s+\d{4}\b"
+    )
+    return re.findall(
+        rf"\b\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}}\b|\b\d{{4}}-\d{{2}}-\d{{2}}\b"
+        rf"|{month_name_pattern}|{day_month_name_pattern}|{german_ordinal_pattern}",
+        line,
+        flags=re.IGNORECASE,
+    )
 
-    for line in text.splitlines():
-        normalized_line = line.lower()
-        matches = re.findall(
-            rf"\b\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}}\b|\b\d{{4}}-\d{{2}}-\d{{2}}\b|{month_name_pattern}|{day_month_name_pattern}",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if not matches:
+
+def parse_invoice_date_from_text(text: str) -> str | None:
+    # Priority 1: explicit invoice-date labels (Rechnungsdatum, Invoice Date, …)
+    explicit_matches: list[str] = []
+    # Priority 2: date on or immediately after an invoice heading line ("Rechnung")
+    heading_matches: list[str] = []
+    # Priority 3: generic date label ("Datum:") — fallback only
+    labeled_matches: list[str] = []
+    # Priority 4: any other date in the document
+    unlabeled_matches: list[str] = []
+
+    lines = text.splitlines()
+    prev_line_was_heading = False
+
+    for line in lines:
+        normalized = _normalize_line_for_label(line)
+
+        # Skip lines with renewal / cancellation / copyright date labels
+        if _has_negative_date_label(normalized):
+            prev_line_was_heading = False
             continue
-        if any(label in normalized_line for label in DATE_LABEL_PATTERNS):
-            labeled_matches.extend(matches)
-        else:
-            unlabeled_matches.extend(matches)
 
-    candidates = list(dict.fromkeys(labeled_matches)) or list(dict.fromkeys(unlabeled_matches))
+        dates = _find_dates_in_line(line)
+
+        if not dates:
+            prev_line_was_heading = _is_invoice_heading_line(normalized)
+            continue
+
+        if any(re.search(p, normalized) for p in _HIGH_PRIORITY_DATE_LABELS):
+            explicit_matches.extend(dates)
+        elif _is_invoice_heading_line(normalized) or prev_line_was_heading:
+            heading_matches.extend(dates)
+        elif any(re.search(p, normalized) for p in _FALLBACK_DATE_LABELS):
+            labeled_matches.extend(dates)
+        else:
+            unlabeled_matches.extend(dates)
+
+        prev_line_was_heading = _is_invoice_heading_line(normalized)
+
+    candidates = (
+        list(dict.fromkeys(explicit_matches))
+        or list(dict.fromkeys(heading_matches))
+        or list(dict.fromkeys(labeled_matches))
+        or list(dict.fromkeys(unlabeled_matches))
+    )
 
     if not candidates:
         return None
