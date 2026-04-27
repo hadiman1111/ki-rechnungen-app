@@ -1,0 +1,369 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "office_rules.schema.json",
+  "title": "OfficeRules",
+  "description": "JSON-Schema für office_rules.json – beschreibt die aktuell gültige Konfigurationsstruktur.",
+  "type": "object",
+  "required": ["active_preset", "presets"],
+  "additionalProperties": false,
+  "properties": {
+    "active_preset": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Schlüssel des aktiven Presets aus dem presets-Objekt."
+    },
+    "presets": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Benannte Verarbeitungs-Presets.",
+      "additionalProperties": { "$ref": "#/$defs/Preset" }
+    }
+  },
+  "$defs": {
+    "ArtEnum": {
+      "type": "string",
+      "enum": ["ai", "ep", "private", "unklar"],
+      "description": "Bekannte Rechnungsart-Werte."
+    },
+    "ZielordnerEnum": {
+      "type": "string",
+      "enum": ["ai", "ep", "private", "unklar", "amex"],
+      "description": "Bekannte Zielordner-Werte."
+    },
+    "StatusEnum": {
+      "type": "string",
+      "enum": ["processed", "unklar"],
+      "description": "Bekannte Status-Werte nach Routing."
+    },
+    "StringList": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "Preset": {
+      "type": "object",
+      "required": [
+        "dateiname_schema",
+        "invoice_fallbacks",
+        "classification",
+        "routing",
+        "archivierung",
+        "dokumente",
+        "duplicate_handling",
+        "supplier_cleaning"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "dateiname_schema": { "$ref": "#/$defs/DateinameSchema" },
+        "invoice_fallbacks": { "$ref": "#/$defs/InvoiceFallbacks" },
+        "classification": { "$ref": "#/$defs/Classification" },
+        "routing": { "$ref": "#/$defs/Routing" },
+        "archivierung": { "$ref": "#/$defs/Archivierung" },
+        "dokumente": { "$ref": "#/$defs/Dokumente" },
+        "duplicate_handling": { "$ref": "#/$defs/DuplicateHandling" },
+        "supplier_cleaning": { "$ref": "#/$defs/SupplierCleaning" }
+      }
+    },
+    "DateinameSchema": {
+      "type": "object",
+      "required": ["separator", "max_laenge", "erweiterung", "felder"],
+      "additionalProperties": false,
+      "properties": {
+        "separator": { "type": "string" },
+        "max_laenge": { "type": "integer", "minimum": 1 },
+        "erweiterung": { "type": "string", "pattern": "^\\." },
+        "felder": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DateinamesFeld" }
+        }
+      }
+    },
+    "DateinamesFeld": {
+      "type": "object",
+      "required": ["typ", "aktiv"],
+      "additionalProperties": false,
+      "properties": {
+        "typ": {
+          "type": "string",
+          "enum": ["datum", "literal", "wert"],
+          "description": "Typ des Dateinamenfeldes."
+        },
+        "aktiv": { "type": "boolean" },
+        "quelle": { "type": "string" },
+        "wert": { "type": "string" },
+        "format": { "type": "string" }
+      }
+    },
+    "InvoiceFallbacks": {
+      "type": "object",
+      "required": ["invoice_date", "supplier", "amount", "konto"],
+      "additionalProperties": false,
+      "properties": {
+        "invoice_date": { "type": ["string", "null"] },
+        "supplier": { "type": ["string", "null"] },
+        "amount": { "type": ["string", "null"] },
+        "konto": { "type": ["string", "null"] }
+      }
+    },
+    "Classification": {
+      "type": "object",
+      "required": ["invoice_keywords", "document_keywords", "internal_invoice_keywords"],
+      "additionalProperties": false,
+      "properties": {
+        "invoice_keywords": { "$ref": "#/$defs/StringList" },
+        "document_keywords": { "$ref": "#/$defs/StringList" },
+        "internal_invoice_keywords": { "$ref": "#/$defs/StringList" },
+        "invoice_like_indicators": { "$ref": "#/$defs/StringList" },
+        "invoice_like_threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Schwellwert für invoice-like-Erkennung."
+        }
+      }
+    },
+    "Routing": {
+      "type": "object",
+      "required": [
+        "unklar_konto",
+        "default_art",
+        "default_payment_method",
+        "default_payment_field",
+        "default_zielordner",
+        "default_status",
+        "zielordner",
+        "strassen",
+        "prioritaetsregeln",
+        "business_context_rules",
+        "payment_detection_rules",
+        "final_assignment_rules",
+        "output_route_rules",
+        "konten"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "unklar_konto": { "type": "string" },
+        "default_art": { "$ref": "#/$defs/ArtEnum" },
+        "default_payment_method": { "type": "string" },
+        "default_payment_field": { "type": "string" },
+        "default_zielordner": { "$ref": "#/$defs/ZielordnerEnum" },
+        "default_status": { "$ref": "#/$defs/StatusEnum" },
+        "zielordner": {
+          "type": "object",
+          "description": "Mapping von logischem Zielordner-Key auf Ordnernamen.",
+          "additionalProperties": { "type": "string" }
+        },
+        "strassen": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StrassenRegel" }
+        },
+        "prioritaetsregeln": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PrioritaetsRegel" }
+        },
+        "business_context_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BusinessContextRegel" }
+        },
+        "payment_detection_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PaymentDetectionRegel" }
+        },
+        "final_assignment_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FinalAssignmentRegel" }
+        },
+        "output_route_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OutputRouteRegel" }
+        },
+        "konten": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/KontoRegel" }
+        }
+      }
+    },
+    "StrassenRegel": {
+      "type": "object",
+      "required": ["key", "art", "varianten", "fuzzy_threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "art": { "$ref": "#/$defs/ArtEnum" },
+        "varianten": { "$ref": "#/$defs/StringList" },
+        "fuzzy_threshold": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Fuzzy-Matching-Schwellwert (0..1)."
+        }
+      }
+    },
+    "PrioritaetsRegel": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "text_all": { "$ref": "#/$defs/StringList" },
+        "text_any": { "$ref": "#/$defs/StringList" },
+        "provider_any": { "$ref": "#/$defs/StringList" },
+        "street_any": { "$ref": "#/$defs/StringList" },
+        "text_none_any": { "$ref": "#/$defs/StringList" },
+        "require_no_clear_payment": { "type": "boolean", "default": false },
+        "zielordner": { "$ref": "#/$defs/ZielordnerEnum" },
+        "art": { "$ref": "#/$defs/ArtEnum" },
+        "status": { "$ref": "#/$defs/StatusEnum" }
+      }
+    },
+    "BusinessContextRegel": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "text_all": { "$ref": "#/$defs/StringList" },
+        "text_any": { "$ref": "#/$defs/StringList" },
+        "art": { "$ref": "#/$defs/ArtEnum" }
+      }
+    },
+    "PaymentDetectionRegel": {
+      "type": "object",
+      "required": ["name", "payment_method", "explicit"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "text_all": { "$ref": "#/$defs/StringList" },
+        "text_any": { "$ref": "#/$defs/StringList" },
+        "payment_method": { "type": "string", "minLength": 1 },
+        "explicit": { "type": "boolean" }
+      }
+    },
+    "FinalAssignmentRegel": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "payment_method_any": { "$ref": "#/$defs/StringList" },
+        "art_any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ArtEnum" },
+          "default": []
+        },
+        "account_payment_field_any": { "$ref": "#/$defs/StringList" },
+        "account_konto_any": { "$ref": "#/$defs/StringList" },
+        "output_art": {
+          "oneOf": [
+            { "$ref": "#/$defs/ArtEnum" },
+            { "type": "null" }
+          ]
+        },
+        "output_konto": { "type": ["string", "null"] },
+        "output_payment_field": { "type": ["string", "null"] },
+        "use_account_art": { "type": "boolean", "default": false },
+        "use_account_konto": { "type": "boolean", "default": false },
+        "use_account_payment_field": { "type": "boolean", "default": false }
+      }
+    },
+    "OutputRouteRegel": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "art_any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ArtEnum" },
+          "default": []
+        },
+        "payment_field_any": { "$ref": "#/$defs/StringList" },
+        "zielordner": { "$ref": "#/$defs/ZielordnerEnum" },
+        "status": { "$ref": "#/$defs/StatusEnum" }
+      }
+    },
+    "KontoRegel": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "konto": { "type": ["string", "null"] },
+        "payment_field": { "type": ["string", "null"] },
+        "art_override": {
+          "oneOf": [
+            { "$ref": "#/$defs/ArtEnum" },
+            { "type": "null" }
+          ]
+        },
+        "karten_endungen": { "$ref": "#/$defs/StringList" },
+        "apple_pay_endungen": { "$ref": "#/$defs/StringList" },
+        "iban_endungen": { "$ref": "#/$defs/StringList" },
+        "anbieter_hinweise": { "$ref": "#/$defs/StringList" },
+        "zuweisungs_hinweise": { "$ref": "#/$defs/StringList" }
+      }
+    },
+    "Archivierung": {
+      "type": "object",
+      "required": ["basis_ordnername", "lauf_ordner_suffix"],
+      "additionalProperties": false,
+      "properties": {
+        "basis_ordnername": { "type": "string", "minLength": 1 },
+        "lauf_ordner_suffix": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Dokumente": {
+      "type": "object",
+      "required": ["basis_pfad", "dateiname"],
+      "additionalProperties": false,
+      "properties": {
+        "basis_pfad": { "type": "string", "minLength": 1 },
+        "dateiname": { "$ref": "#/$defs/DokumenteDateiname" }
+      }
+    },
+    "DokumenteDateiname": {
+      "type": "object",
+      "required": ["prefix", "suffix_placeholder", "fallback_name", "max_woerter", "schlagwoerter"],
+      "additionalProperties": false,
+      "properties": {
+        "prefix": { "type": "string" },
+        "suffix_placeholder": { "type": "string" },
+        "fallback_name": { "type": "string", "minLength": 1 },
+        "max_woerter": { "type": "integer", "minimum": 1 },
+        "schlagwoerter": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DokumentSchlagwort" }
+        }
+      }
+    },
+    "DokumentSchlagwort": {
+      "type": "object",
+      "required": ["name", "hinweise"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "hinweise": { "$ref": "#/$defs/StringList" }
+      }
+    },
+    "DuplicateHandling": {
+      "type": "object",
+      "required": ["report_folder", "report_extension"],
+      "additionalProperties": false,
+      "properties": {
+        "report_folder": { "type": "string", "minLength": 1 },
+        "report_extension": { "type": "string", "pattern": "^\\." }
+      }
+    },
+    "SupplierCleaning": {
+      "type": "object",
+      "required": ["remove_suffix_patterns"],
+      "additionalProperties": false,
+      "properties": {
+        "remove_suffix_patterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Regex-Muster als reine Strings – keine fachliche Veränderung durch Schema."
+        }
+      }
+    }
+  }
+}
