@@ -2272,6 +2272,43 @@ def test_control_ai_with_unklar_payment_stays_unklar_folder(tmp_path: Path) -> N
     )
 
 
+def test_control_ep_with_unklar_payment_stays_unklar_folder() -> None:
+    """Control test: art=ep + payment_method=unknown → somaa-unclear-payment → folder unklar.
+
+    Verifies that the private-keep-folder exception does NOT apply to ep:
+    ep + unklar payment → unklar folder, not ep folder.
+    Uses neutral text (no SOMAA, no payment keywords) so account and payment
+    detection return empty results; art=ep is passed explicitly to apply_final_assignment.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="10.04.2026",
+        supplier_raw="Event GmbH",
+        amount_raw="500,00",
+        raw_text="Event GmbH Rechnung",
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    payment = detect_payment_method(extracted, rules.preset)
+    routing = apply_final_assignment(
+        art="ep",
+        payment_decision=payment,
+        account_decision=account,
+        street_key=None,
+        preset=rules.preset,
+    )
+    assert payment.payment_method == "unknown", (
+        f"Expected no payment detected, got {payment.payment_method}"
+    )
+    assert routing.art == "ep", f"Expected art=ep, got {routing.art}"
+    assert routing.payment_field == "unklar", (
+        f"Expected payment_field=unklar, got {routing.payment_field}"
+    )
+    assert routing.zielordner == "unklar", (
+        f"ep+unklar must go to unklar folder, got {routing.zielordner!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Street detection: Rötestr. abbreviation matching
 # ---------------------------------------------------------------------------
