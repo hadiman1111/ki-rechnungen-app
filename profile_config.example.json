@@ -1,0 +1,233 @@
+{
+  "schema_version": "1.0",
+  "profile_name": "Büro Standardprofil",
+  "description": "Profil für die Verarbeitung von Bürorechnungen. Enthält Konten, Karten, Adressen und Ablageregeln.",
+
+  "categories": [
+    {
+      "id": "ai",
+      "label": "Architektur & Innenarchitektur",
+      "description": "Rechnungen der SOMAA Architektur / Innenarchitektur GmbH"
+    },
+    {
+      "id": "ep",
+      "label": "Event Production",
+      "description": "Rechnungen der SOMAA Event Production GmbH"
+    },
+    {
+      "id": "private",
+      "label": "Privat",
+      "description": "Private Rechnungen ohne Geschäftsbezug"
+    },
+    {
+      "id": "unklar",
+      "label": "Unklar",
+      "description": "Rechnungen ohne eindeutige Kategorie – zur manuellen Prüfung"
+    }
+  ],
+
+  "folders": [
+    {
+      "id": "ai",
+      "label": "Architektur & Innenarchitektur",
+      "folder_name": "ai"
+    },
+    {
+      "id": "ep",
+      "label": "Event Production",
+      "folder_name": "ep"
+    },
+    {
+      "id": "private",
+      "label": "Privat",
+      "folder_name": "private"
+    },
+    {
+      "id": "amex",
+      "label": "American Express",
+      "folder_name": "amex"
+    },
+    {
+      "id": "unklar",
+      "label": "Unklar",
+      "folder_name": "unklar"
+    }
+  ],
+
+  "account_card_profiles": [
+    {
+      "id": "amex",
+      "label": "American Express Geschäftskarte",
+      "category": "unklar",
+      "payment_field": "amex",
+      "target_folder": "amex",
+      "card_endings": ["1005", "1013", "1000"],
+      "apple_pay_endings": ["4141", "6276", "4385"],
+      "iban_endings": [],
+      "provider_hints": ["american express", "anysphere", "cursor"],
+      "assignment_hints": [],
+      "enabled": true
+    },
+    {
+      "id": "vobaai",
+      "label": "Volksbank AI-Geschäftskonto",
+      "category": "ai",
+      "payment_field": "vobaai",
+      "target_folder": "ai",
+      "card_endings": ["7166"],
+      "apple_pay_endings": ["6281"],
+      "iban_endings": ["1004"],
+      "provider_hints": ["voba", "volksbanken raiffeisenbanken", "volksbank remseck"],
+      "assignment_hints": ["ai", "artificial intelligence"],
+      "enabled": true
+    },
+    {
+      "id": "vobaep",
+      "label": "Volksbank EP-Geschäftskonto",
+      "category": "ep",
+      "payment_field": "vobaep",
+      "target_folder": "ep",
+      "card_endings": ["4879"],
+      "apple_pay_endings": ["4561"],
+      "iban_endings": ["0004"],
+      "provider_hints": ["voba", "volksbanken raiffeisenbanken"],
+      "assignment_hints": ["ep", "expense", "expenses"],
+      "enabled": true
+    },
+    {
+      "id": "c24-private",
+      "label": "C24 Privatkarte",
+      "category": "private",
+      "payment_field": "private",
+      "target_folder": "private",
+      "card_endings": ["8692", "0495"],
+      "apple_pay_endings": ["4924"],
+      "iban_endings": [],
+      "provider_hints": ["c24"],
+      "assignment_hints": [],
+      "enabled": true
+    },
+    {
+      "id": "visa-private",
+      "label": "Visa Privatkarte (Barclays)",
+      "category": "private",
+      "payment_field": "private",
+      "target_folder": "private",
+      "card_endings": ["3375"],
+      "apple_pay_endings": ["1081"],
+      "iban_endings": [],
+      "provider_hints": ["barclays", "visa"],
+      "assignment_hints": [],
+      "enabled": true
+    }
+  ],
+
+  "address_profiles": [
+    {
+      "id": "roete-private",
+      "label": "Rötestraße – Privat",
+      "category": "private",
+      "canonical_address": {
+        "street": "Rötestraße",
+        "house_number": "58",
+        "postal_code": null,
+        "city": null
+      },
+      "applies_to": "any",
+      "exclude_if_text_contains": ["somaa"],
+      "matching_mode": "normal",
+      "advanced_variants": [],
+      "enabled": true
+    },
+    {
+      "id": "bismarck-ai",
+      "label": "Bismarckstraße – Architektur & Innenarchitektur",
+      "category": "ai",
+      "canonical_address": {
+        "street": "Bismarckstraße",
+        "house_number": null,
+        "postal_code": null,
+        "city": null
+      },
+      "applies_to": "any",
+      "exclude_if_text_contains": [],
+      "matching_mode": "normal",
+      "advanced_variants": [],
+      "enabled": true
+    }
+  ],
+
+  "naming_profile": {
+    "separator": "_",
+    "max_length": 50,
+    "fields": [
+      { "key": "invoice_date", "label": "Datum (JJMMTT)", "enabled": true },
+      { "key": "literal_er",   "label": "Literal 'er'",   "enabled": true },
+      { "key": "art",          "label": "Kategorie",       "enabled": true },
+      { "key": "supplier",     "label": "Lieferant",       "enabled": true },
+      { "key": "amount",       "label": "Betrag",          "enabled": true },
+      { "key": "payment_field","label": "Zahlungsfeld",    "enabled": true }
+    ],
+    "fallback_values": {
+      "invoice_date": "unknown-date",
+      "supplier": "unknown-supplier",
+      "amount": "unknown-amount"
+    }
+  },
+
+  "review_policy": {
+    "unclear_folder": "unklar",
+    "business_unclear_payment_goes_to_unclear": true,
+    "private_unclear_attributes_stay_private": true,
+    "require_user_review_for_unclear": false,
+    "review_flags_enabled": true
+  },
+
+  "vendor_profiles": [
+    {
+      "id": "cursor-anysphere",
+      "label": "Cursor / Anysphere",
+      "recognition_hints": ["anysphere", "cursor pro", "cursor usage", "hi@cursor.com", "cursor.com"],
+      "payment_field": "amex",
+      "enabled": true
+    }
+  ],
+
+  "business_context_profiles": [
+    {
+      "id": "somaa-event-production",
+      "label": "SOMAA Event Production",
+      "required_keywords": ["somaa", "event"],
+      "optional_keywords": ["production", "produktion"],
+      "category": "ep",
+      "enabled": true
+    },
+    {
+      "id": "somaa-architektur-innenarchitektur",
+      "label": "SOMAA Architektur & Innenarchitektur",
+      "required_keywords": ["somaa"],
+      "optional_keywords": ["architektur", "innenarchitektur", "architecture", "interior"],
+      "category": "ai",
+      "enabled": true
+    },
+    {
+      "id": "somaa-unspecified",
+      "label": "SOMAA (allgemein)",
+      "required_keywords": [],
+      "optional_keywords": ["somaa"],
+      "category": "ai",
+      "enabled": true
+    }
+  ],
+
+  "classification_profile": {
+    "invoice_keywords": ["rechnung", "invoice"],
+    "document_keywords": [
+      "spendenbescheinigung",
+      "donation confirmation",
+      "donation receipt",
+      "steuerbescheid"
+    ],
+    "internal_invoice_keywords": ["eigenbeleg", "interner beleg", "internal form"]
+  }
+}
