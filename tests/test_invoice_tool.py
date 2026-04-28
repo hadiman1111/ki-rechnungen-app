@@ -176,6 +176,74 @@ def test_english_invoice_classified_as_invoice() -> None:
     assert classification.dokumenttyp == "invoice"
 
 
+def test_iban_ending_in_fitz_supplement_resolves_account() -> None:
+    """IBAN-Endung aus Fitz-Text (Seite 2) ermöglicht Konto-Zuordnung.
+
+    Simuliert den Adobe-Fall: OpenAI's raw_text_excerpt enthält die IBAN nicht,
+    aber nach Ergänzung des Fitz-Textes (der die SEPA-Mandatsseite mit
+    DE***...***1004 enthält) findet resolve_account die Endung 1004 = vobaai.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    # Vor Fitz-Ergänzung: raw_text ohne IBAN → kein Account
+    extracted_without_fitz = ExtractedData(
+        invoice_date_raw="05.04.2026",
+        supplier_raw="Adobe Systems Software Ireland Ltd",
+        amount_raw="39.99",
+        raw_text="Rechnungsanschrift Alexander Tandawardaja 70197 GERMANY",
+        source_method="openai",
+    )
+    account_before = resolve_account(extracted_without_fitz, rules.preset)
+    assert account_before.konto is None, "Ohne IBAN kein Account erwartet"
+
+    # Nach Fitz-Ergänzung: raw_text enthält SEPA-Mandatsseite mit IBAN
+    fitz_supplement = (
+        "Name des Zahlungspflichtigen: Alexander Tandawardaja\n"
+        "E-Mail-Adresse: office@somaa.de\n"
+        "IBAN: DE****************1004\n"
+    )
+    extracted_with_fitz = ExtractedData(
+        invoice_date_raw="05.04.2026",
+        supplier_raw="Adobe Systems Software Ireland Ltd",
+        amount_raw="39.99",
+        raw_text="Rechnungsanschrift Alexander Tandawardaja 70197 GERMANY\n" + fitz_supplement,
+        source_method="openai",
+    )
+    account_after = resolve_account(extracted_with_fitz, rules.preset)
+    assert account_after.konto == "vobaai", (
+        f"IBAN-Endung 1004 muss vobaai liefern, war: {account_after.konto!r}"
+    )
+    assert "1004" in account_after.begruendung, (
+        f"Begründung muss IBAN-Endung enthalten: {account_after.begruendung}"
+    )
+
+
+def test_somaa_email_in_fitz_supplement_enables_business_context() -> None:
+    """'office@somaa.de' im ergänzten Fitz-Text liefert SOMAA-Business-Kontext.
+
+    Wenn OpenAI 'SOMAA' nicht in context_markers schreibt (wegen neuer Prompt-
+    Beschränkung), aber die Fitz-Ergänzung die E-Mail office@somaa.de enthält,
+    muss somaa-unspecified greifen und art=ai liefern.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="05.04.2026",
+        supplier_raw="Adobe Systems Software Ireland Ltd",
+        amount_raw="39.99",
+        raw_text=(
+            "Rechnungsanschrift Alexander Tandawardaja 70197 GERMANY\n"
+            "E-Mail-Adresse: office@somaa.de\n"
+            "IBAN: DE****************1004\n"
+        ),
+        context_markers=[],  # OpenAI hat kein SOMAA in context_markers gesetzt
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, reason = determine_business_context(extracted, account, rules.preset)
+    assert art == "ai", (
+        f"'somaa' aus office@somaa.de muss Business-Kontext ai liefern, war: {art!r} ({reason})"
+    )
+
+
 def test_openai_raw_text_enrichment_fills_missing_amount_and_date() -> None:
     extracted = ExtractedData(
         invoice_date_raw=None,

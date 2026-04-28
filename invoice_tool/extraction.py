@@ -173,6 +173,19 @@ class OpenAIVisionExtractor:
             source_method="openai",
         )
         extracted = _enrich_from_raw_text(extracted)
+
+        # Supplement raw_text with full fitz-extracted page text so that IBAN
+        # endings and address details on any page are reliably available for
+        # account resolution and street detection. OpenAI's raw_text_excerpt
+        # is non-deterministic and may omit pages (e.g. SEPA mandate on page 2).
+        with fitz.open(pdf_path) as _doc:
+            _fitz_text = "\n".join(
+                _doc.load_page(i).get_text()
+                for i in range(min(2, len(_doc)))
+            )
+        if _fitz_text.strip():
+            extracted.raw_text = ((extracted.raw_text or "") + "\n" + _fitz_text).strip()
+
         if not _has_meaningful_content(extracted):
             raise StructuralExtractionError("OpenAI-Daten sind technisch verwertbar, aber inhaltlich leer.")
 
