@@ -212,8 +212,22 @@ def determine_business_context(
     preset: ProcessingPreset,
     street_key: str | None = None,
 ) -> tuple[str, str]:
-    search_text = _normalize_search_text(extracted)
+    enriched_text = _normalize_search_text(extracted)
+    # "raw_text" mode: document-derived fields only, excluding AI-hallucinated
+    # interpretation fields (context_markers, provider_mentions, document_type_indicators).
+    # Includes raw_text excerpt, address_fragments, payment_method_raw, and supplier_raw
+    # because these are populated from actual document content by both Tesseract and OpenAI.
+    document_text = normalize_for_matching(" ".join(filter(None, [
+        extracted.raw_text or "",
+        extracted.payment_method_raw or "",
+        " ".join(extracted.address_fragments),
+        extracted.supplier_raw or "",
+    ])))
+
     for rule in preset.routing.business_context_rules:
+        search_text = (
+            document_text if rule.match_source == "raw_text" else enriched_text
+        )
         if rule.text_all and not all(
             normalize_for_matching(text) in search_text for text in rule.text_all
         ):
@@ -222,7 +236,8 @@ def determine_business_context(
             normalize_for_matching(text) in search_text for text in rule.text_any
         ):
             continue
-        return rule.art, f"Business-Context-Regel '{rule.name}' getroffen."
+        source_note = " [match_source=raw_text]" if rule.match_source == "raw_text" else ""
+        return rule.art, f"Business-Context-Regel '{rule.name}' getroffen.{source_note}"
 
     if account_decision.art_override and account_decision.art_override != "private":
         return account_decision.art_override, "Art aus Kontozuordnung abgeleitet."

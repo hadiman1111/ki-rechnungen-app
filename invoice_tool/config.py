@@ -318,6 +318,7 @@ def _parse_business_context_rules(raw_rules: list[dict]) -> list[BusinessContext
                 text_all=tuple(item.get("text_all", [])),
                 text_any=tuple(item.get("text_any", [])),
                 art=str(item.get("art", "")),
+                match_source=str(item.get("match_source", "enriched_text")),
             )
         )
     return rules

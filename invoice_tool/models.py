@@ -104,6 +104,7 @@ class BusinessContextRule:
     text_all: tuple[str, ...] = ()
     text_any: tuple[str, ...] = ()
     art: str = ""
+    match_source: str = "enriched_text"
 
 
 @dataclass(frozen=True)

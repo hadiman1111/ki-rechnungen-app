@@ -108,6 +108,7 @@
             "name": "somaa-event-production",
             "text_all": ["somaa", "event"],
             "text_any": ["production", "produktion"],
+            "match_source": "raw_text",
             "art": "ep"
           },
           {

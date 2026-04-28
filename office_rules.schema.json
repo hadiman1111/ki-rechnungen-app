@@ -223,6 +223,12 @@
         "name": { "type": "string", "minLength": 1 },
         "text_all": { "$ref": "#/$defs/StringList" },
         "text_any": { "$ref": "#/$defs/StringList" },
+        "match_source": {
+          "type": "string",
+          "enum": ["enriched_text", "raw_text"],
+          "default": "enriched_text",
+          "description": "Welche Textquelle für text_all/text_any verwendet wird. enriched_text (Default) = alle Felder inkl. KI-Interpretation. raw_text = nur dokumentabgeleitete Felder (raw_text, address_fragments, payment_method_raw, supplier_raw) ohne halluzinationsanfällige context_markers/provider_mentions."
+        },
         "art": { "$ref": "#/$defs/ArtEnum" }
       }
     },

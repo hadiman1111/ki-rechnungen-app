@@ -194,6 +194,60 @@ def test_openai_raw_text_enrichment_fills_missing_amount_and_date() -> None:
     assert enriched.amount_raw == "39.99"
 
 
+def test_openai_payload_address_fragments_captures_recipient_company_name() -> None:
+    """address_fragments muss den vollständigen Empfänger-Firmennamen enthalten.
+
+    Simuliert eine OpenAI-Antwort, in der 'address_fragments' den Empfänger
+    'SOMAA Event & Produktion' enthält (wie bei Haaga-Steuerberater-Rechnungen).
+    Stellt sicher, dass der Firmenname verlustfrei in ExtractedData landet
+    und für das Routing per document_text verfügbar ist.
+    """
+    payload = _extract_json_payload(
+        """
+        {
+          "invoice_date": "01.04.2026",
+          "supplier": "HAAGA & PARTNER mbB",
+          "amount": "1.068,38",
+          "invoice_number": "260084",
+          "document_name": null,
+          "payment_method": "transfer",
+          "context_markers": [],
+          "document_type_indicators": [],
+          "card_endings": [],
+          "apple_pay_endings": [],
+          "provider_mentions": ["haaga", "somaa"],
+          "address_fragments": [
+            "SOMAA Event & Produktion",
+            "Bismarckstr. 63",
+            "70197 Stuttgart",
+            "HAAGA & PARTNER mbB",
+            "Eduard-Steinle-Str. 46",
+            "70619 Stuttgart"
+          ],
+          "raw_text_excerpt": "Rechnungsbetrag 1.068,38 EUR Rechnungsnummer 260084"
+        }
+        """
+    )
+    assert "SOMAA Event & Produktion" in payload["address_fragments"], (
+        "Empfänger-Firmenname muss in address_fragments erhalten bleiben"
+    )
+    # Prüfe dass die address_fragments in ExtractedData korrekt landen
+    extracted = ExtractedData(
+        invoice_date_raw=payload.get("invoice_date"),
+        supplier_raw=payload.get("supplier"),
+        amount_raw=payload.get("amount"),
+        raw_text=payload.get("raw_text_excerpt") or "",
+        address_fragments=[s.strip().lower() for s in payload.get("address_fragments", []) if s.strip()],
+        source_method="openai",
+    )
+    assert any("event" in f for f in extracted.address_fragments), (
+        "'event' muss in address_fragments.lower() vorhanden sein für EP-Routing"
+    )
+    assert any("produktion" in f for f in extracted.address_fragments), (
+        "'produktion' muss in address_fragments vorhanden sein für EP-Routing"
+    )
+
+
 def test_extract_json_payload_recovers_expected_object_from_multi_object_response() -> None:
     payload = _extract_json_payload(
         """
@@ -2590,3 +2644,83 @@ def test_supplier_aliases_loaded_from_office_rules() -> None:
     aliases = rules.preset.supplier_cleaning.supplier_aliases
     assert aliases.get("ecasypark") == "easypark"
     assert aliases.get("deine-rechnungsadresse") == "dm-drogerie-markt"
+
+
+# ---------------------------------------------------------------------------
+# BusinessContextRule.match_source – Quellen-gesteuertes Matching
+# ---------------------------------------------------------------------------
+
+
+def test_business_context_rule_raw_text_source_ignores_ai_context_markers() -> None:
+    """KI-Zusatzfelder dürfen EP nicht allein auslösen.
+
+    Die somaa-event-production-Regel nutzt match_source=raw_text. Wenn 'event'
+    und 'production' nur in context_markers (OpenAI-Halluzination) stehen, aber
+    nicht im tatsächlichen PDF-Rohtext, darf die EP-Regel nicht greifen.
+
+    Entspricht dem Vodafone-260205-Fall: SOMAA + Bismarck-Adresse im Rohtext,
+    aber kein 'event'/'produktion' im PDF selbst.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="05.02.2026",
+        supplier_raw="Vodafone West GmbH",
+        amount_raw="53,43",
+        raw_text="SOMAA Alexander Tandawardaja Bismarckstrasse 63 70197 Stuttgart",
+        context_markers=["event", "production"],  # simulierte KI-Halluzination
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, reason = determine_business_context(
+        extracted, account, rules.preset, street_key="bismarck"
+    )
+    assert art == "ai", (
+        f"Halluzinierter EP-Kontext in context_markers darf nicht EP auslösen, "
+        f"war: {art!r} ({reason})"
+    )
+
+
+def test_business_context_rule_raw_text_source_matches_real_event_produktion_text() -> None:
+    """Echter EP-Kontext in Dokumentfeldern wird korrekt als EP klassifiziert.
+
+    Entspricht dem Haaga-260084-Fall: 'SOMAA Event & Produktion' steht in den
+    address_fragments (OpenAI extrahiert Empfängeradresse dahin). raw_text-Modus
+    schließt address_fragments ein, aber nicht context_markers/provider_mentions.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.04.2026",
+        supplier_raw="HAAGA & PARTNER mbB",
+        amount_raw="1068,38",
+        raw_text="Rechnungsbetrag 1.068,38 EUR Rechnungsnummer 260084",  # nur Excerpt
+        address_fragments=["SOMAA Event & Produktion", "Bismarckstr. 63", "70197 Stuttgart"],
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, reason = determine_business_context(extracted, account, rules.preset)
+    assert art == "ep", (
+        f"'SOMAA Event & Produktion' in address_fragments muss EP bleiben, war: {art!r} ({reason})"
+    )
+
+
+def test_business_context_rule_default_match_source_uses_enriched_text() -> None:
+    """Regeln ohne match_source (Default enriched_text) matchen weiter wie bisher.
+
+    Die somaa-architektur-innenarchitektur-Regel hat match_source=enriched_text.
+    Sie soll auch dann greifen, wenn 'architektur' nur in context_markers steht.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="01.02.2026",
+        supplier_raw="Test GmbH",
+        amount_raw="100,00",
+        raw_text="SOMAA Bismarckstrasse 63 Stuttgart",  # kein 'architektur' im Rohtext
+        context_markers=["architektur", "innenarchitektur"],  # nur in KI-Feldern
+        source_method="openai",
+    )
+    account = resolve_account(extracted, rules.preset)
+    art, reason = determine_business_context(extracted, account, rules.preset)
+    assert art == "ai", (
+        f"Default enriched_text muss context_markers einbeziehen → ai erwartet, "
+        f"war: {art!r} ({reason})"
+    )
