@@ -10,7 +10,14 @@ from invoice_tool.config import load_app_config, load_office_rules
 from invoice_tool.extraction import _enrich_from_raw_text, _extract_json_payload
 from invoice_tool.filename_schema import build_filename
 from invoice_tool.models import ExtractedData
-from invoice_tool.normalization import normalize_invoice_date
+from invoice_tool.normalization import (
+    normalize_invoice_date,
+    parse_invoice_date_from_text,
+    parse_amount_from_text,
+    parse_supplier_from_text,
+    clean_supplier_text,
+)
+from invoice_tool.models import SupplierCleaningRules
 from invoice_tool.processing import InvoiceProcessor, _extract_rule_name, _extract_signals
 from invoice_tool.trace import DecisionTrace, TraceWriter, mask_sensitive
 from invoice_tool.routing import (
@@ -2393,3 +2400,193 @@ def test_roetestr_dot_variant_does_not_match_bismarck() -> None:
     )
     street = detect_street(extracted, rules.preset)
     assert street == "bismarck", f"Bismarck text must give bismarck, got: {street!r}"
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix tests: Tesseract-Extraktion (6 Bugs)
+# ---------------------------------------------------------------------------
+
+
+# Bug 1 + 2: Betragsextraktion -----------------------------------------------
+
+def test_amount_totalling_not_confused_with_total() -> None:
+    """'totalling:' in a line-item description must not match as a Total label."""
+    text = (
+        "64 token-based usage calls to gpt-5.4-medium, totalling: $236.41. Input 1  $236.41  19%  $236.41\n"
+        "Subtotal\n"
+        "Total excluding tax\n"
+        "Total\n"
+        "Amount due\n"
+        "$100.68\n"
+        "$100.68\n"
+        "$119.81\n"
+        "$119.81 USD\n"
+    )
+    assert parse_amount_from_text(text) == "119.81"
+
+
+def test_amount_label_and_value_on_separate_lines() -> None:
+    """When Total / Amount due appear on their own lines, the value on the next
+    line must be paired via look-ahead."""
+    text = (
+        "Subtotal\n"
+        "Total\n"
+        "Amount due\n"
+        "$50.00\n"
+        "$59.50\n"
+        "$59.50 USD\n"
+    )
+    assert parse_amount_from_text(text) == "59.50"
+
+
+def test_amount_priority_amount_due_beats_subtotal() -> None:
+    """'Amount due' (tier 0) must win over 'Subtotal' (tier 2) on same line."""
+    text = (
+        "Subtotal $40.86\n"
+        "Total excluding tax $40.86\n"
+        "Total $48.62\n"
+        "Amount due $48.62 USD\n"
+    )
+    assert parse_amount_from_text(text) == "48.62"
+
+
+def test_amount_gesamtsumme_brutto_beats_netto() -> None:
+    """Plain 'Gesamtsumme' (tier 1) must beat 'Gesamtsumme (Netto)' (tier 2)."""
+    text = (
+        "Gesamtsumme (Netto): 199,15 €\n"
+        "Gesamtsumme: 213,10 €\n"
+    )
+    assert parse_amount_from_text(text) == "213.10"
+
+
+# Bug 3: "Marz" (OCR Umlaut-Verlust) ----------------------------------------
+
+def test_date_marz_ocr_umlaut_loss_recognized() -> None:
+    """Tesseract drops the umlaut: 'Marz' must still be recognised as März."""
+    assert normalize_invoice_date("5. Marz 2026") == "260305"
+    assert normalize_invoice_date("23. Marz 2026") == "260323"
+
+
+def test_date_parse_marz_from_tesseract_text() -> None:
+    """parse_invoice_date_from_text must find '5. Marz 2026' after 'Rechnung' heading."""
+    text = (
+        "Von:\n"
+        "Rechnung\n"
+        "\n"
+        "5. Marz 2026\n"
+    )
+    assert parse_invoice_date_from_text(text) == "260305"
+
+
+# Bug 4: Datum in ausgedruckten E-Mails --------------------------------------
+
+def test_date_email_timestamp_with_uhrzeit_ignored() -> None:
+    """A line containing 'um HH:MM' is a send-timestamp and must be skipped."""
+    text = (
+        "Datum:\n"
+        "6. Marz 2026 um 06:12\n"
+        "Rechnung\n"
+        "\n"
+        "5. Marz 2026\n"
+    )
+    result = parse_invoice_date_from_text(text)
+    assert result == "260305", f"Should pick invoice date 260305, not email timestamp, got {result!r}"
+
+
+def test_date_heading_proximity_bridges_blank_line() -> None:
+    """A blank line between 'Rechnung' and the date must not break heading-match."""
+    text = (
+        "Rechnung\n"
+        "\n"
+        "23. Marz 2026\n"
+    )
+    assert parse_invoice_date_from_text(text) == "260323"
+
+
+def test_date_email_at_timestamp_ignored() -> None:
+    """English 'at HH:MM' timestamp must also be suppressed."""
+    text = (
+        "Invoice\n"
+        "\n"
+        "March 6, 2026 at 06:12\n"
+        "Invoice\n"
+        "\n"
+        "March 5, 2026\n"
+    )
+    result = parse_invoice_date_from_text(text)
+    assert result == "260305", f"Expected 260305, got {result!r}"
+
+
+# Bug 5: Lieferant – E-Mail-Header-Labels ------------------------------------
+
+def test_supplier_von_colon_is_skipped() -> None:
+    """'Von:' (email header label) must not be returned as supplier."""
+    text = (
+        "Von:\n"
+        "Betreff:\n"
+        "Datum:\n"
+        "\n"
+        "An:\n"
+        "\n"
+        "iCloud\n"
+    )
+    result = parse_supplier_from_text(text)
+    assert result == "icloud", f"Expected 'icloud', got {result!r}"
+
+
+def test_supplier_email_address_line_is_skipped() -> None:
+    """A line containing '@' (email address) must be skipped."""
+    text = (
+        "Von:\n"
+        "apple@email.apple.com\n"
+        "Figma Inc\n"
+    )
+    result = parse_supplier_from_text(text)
+    assert result == "figma-inc", f"Expected 'figma-inc', got {result!r}"
+
+
+def test_supplier_rechnungsadresse_label_is_skipped() -> None:
+    """'Deine Rechnungsadresse' must not be returned as supplier name."""
+    text = (
+        "Deine Rechnungsadresse\n"
+        "dm-drogerie-markt GmbH\n"
+    )
+    result = parse_supplier_from_text(text)
+    assert result is not None and "rechnungsadresse" not in result
+
+
+# Bug 6: Supplier-Alias-Map --------------------------------------------------
+
+def test_supplier_alias_ecasypark_corrected() -> None:
+    """OCR reads 'ECasyPark' → slug 'ecasypark' → alias map returns 'easypark'."""
+    rules = SupplierCleaningRules(
+        remove_suffix_patterns=(),
+        supplier_aliases={"ecasypark": "easypark"},
+    )
+    assert clean_supplier_text("ECasyPark", rules) == "easypark"
+
+
+def test_supplier_alias_dm_corrected() -> None:
+    """'deine-rechnungsadresse' slug → alias map returns 'dm-drogerie-markt'."""
+    rules = SupplierCleaningRules(
+        remove_suffix_patterns=(),
+        supplier_aliases={"deine-rechnungsadresse": "dm-drogerie-markt"},
+    )
+    assert clean_supplier_text("Deine Rechnungsadresse", rules) == "dm-drogerie-markt"
+
+
+def test_supplier_alias_no_match_unchanged() -> None:
+    """A supplier not in the alias map passes through unchanged."""
+    rules = SupplierCleaningRules(
+        remove_suffix_patterns=(),
+        supplier_aliases={"ecasypark": "easypark"},
+    )
+    assert clean_supplier_text("Figma Inc", rules) == "Figma Inc"
+
+
+def test_supplier_aliases_loaded_from_office_rules() -> None:
+    """office_rules.json must contain at least the two known aliases."""
+    rules = load_office_rules(Path("office_rules.json"))
+    aliases = rules.preset.supplier_cleaning.supplier_aliases
+    assert aliases.get("ecasypark") == "easypark"
+    assert aliases.get("deine-rechnungsadresse") == "dm-drogerie-markt"

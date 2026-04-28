@@ -439,7 +439,12 @@
         "remove_suffix_patterns": [
           "\\\\b(?:elisabethenstr(?:asse)?|bismarckstr(?:asse)?|roetestr(?:asse)?|r\\u00f6testr(?:asse)?)\\\\b.*$",
           "\\\\b(?:strasse|straße|weg|allee|platz)\\\\s+\\d+[a-z]?\\\\b.*$"
-        ]
+        ],
+        "supplier_aliases": {
+          "ecasypark": "easypark",
+          "deine-rechnungsadresse": "dm-drogerie-markt",
+          "deine-rechnungsadres": "dm-drogerie-markt"
+        }
       }
     }
   }

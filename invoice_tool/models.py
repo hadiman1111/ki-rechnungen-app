@@ -142,6 +142,7 @@ class OutputRouteRule:
 @dataclass(frozen=True)
 class SupplierCleaningRules:
     remove_suffix_patterns: tuple[str, ...]
+    supplier_aliases: dict[str, str]
 
 
 @dataclass(frozen=True)

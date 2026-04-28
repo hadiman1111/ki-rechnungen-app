@@ -41,6 +41,7 @@ GERMAN_MONTHS = {
     "februar": "february",
     "maerz": "march",
     "märz": "march",
+    "marz": "march",   # OCR umlaut-loss: Tesseract reads "März" as "Marz"
     "april": "april",
     "mai": "may",
     "juni": "june",
@@ -72,7 +73,7 @@ _HIGH_PRIORITY_DATE_LABELS = (
 # Generic date labels used only as fallback (lower priority than heading detection)
 _FALLBACK_DATE_LABELS = (r"\bdatum\b",)
 
-# Lines whose dates must be ignored (renewal/cancellation/copyright)
+# Lines whose dates must be ignored (renewal/cancellation/copyright/email-timestamps)
 _NEGATIVE_DATE_LINE_LABELS = (
     r"verlang(?:er|rt)\s*(?:sich\s*)?am",
     r"naechste\s*(?:zahlung|abbuchung|rechnung|faelligkeit)",
@@ -83,6 +84,10 @@ _NEGATIVE_DATE_LINE_LABELS = (
     r"kuendigungsfrist",
     r"copyright\s*\d{4}",
     r"\(c\)\s*\d{4}",
+    # Email send-timestamps carry a time component — not an invoice date.
+    r"\bum\s+\d{1,2}:\d{2}\b",          # German: "6. März 2026 um 06:12"
+    r"\bat\s+\d{1,2}:\d{2}\b",           # English: "March 6, 2026 at 06:12"
+    r"\d{1,2}:\d{2}\s*(?:uhr|am|pm)\b",  # "12:00 Uhr", "12:00 am"
 )
 
 AMOUNT_LABEL_PATTERNS = (
@@ -91,7 +96,31 @@ AMOUNT_LABEL_PATTERNS = (
     r"rechnungsbetrag",
     r"betrag",
     r"summe",
-    r"total",
+    r"\btotal\b",
+)
+
+# Ordered tiers for amount extraction: lower index = higher priority.
+# Each entry: (compiled_pattern, tier).
+_AMOUNT_LABEL_TIERS: tuple[tuple[re.Pattern[str], int], ...] = tuple(
+    (re.compile(p, re.IGNORECASE), t)
+    for p, t in (
+        (r"\bamount\s+due\b", 0),
+        (r"\bzu\s+zahlend\b", 0),
+        (r"\btotal\s+incl", 1),
+        (r"\bgesamtbetrag\b", 1),
+        (r"\brechnungsbetrag\b", 1),
+        # plain "Gesamtsumme" (without "Netto") → tier 1; "Gesamtsumme (Netto)" caught later
+        (r"\bgesamtsumme\b(?!.*\bnetto\b)", 1),
+        # plain "Total" (not "Total excl…" / "Total ohne…") → tier 1
+        (r"\btotal\b(?!\s*excl|\s*excluding|\s*without|\s*zzgl|\s*ohne|\s*netto)", 1),
+        (r"\bsubtotal\b", 2),
+        (r"\bzwischensumme\b", 2),
+        (r"\bgesamtsumme\b", 2),   # catch-all for "Gesamtsumme (Netto)"
+        (r"\bgesamt\b", 3),
+        (r"\bsumme\b", 3),
+        (r"\bbetrag\b", 3),
+        (r"\btotal\b", 4),         # catch-all for "Total excl. tax" etc.
+    )
 )
 
 
@@ -122,6 +151,13 @@ def clean_supplier_text(value: str, rules: SupplierCleaningRules | None = None) 
             if updated and updated != cleaned:
                 cleaned = updated
                 break
+        if rules.supplier_aliases:
+            try:
+                slug = normalize_supplier_name(cleaned)
+            except NormalizationError:
+                slug = ""
+            if slug in rules.supplier_aliases:
+                return rules.supplier_aliases[slug]
     return cleaned
 
 
@@ -256,12 +292,13 @@ def _find_dates_in_line(line: str) -> list[str]:
     day_month_name_pattern = (
         r"\b\d{1,2}[ -](?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
         r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
-        r"januar|februar|maerz|märz|april|mai|juni|juli|august|september|oktober|november|dezember)"
+        r"januar|februar|maerz|märz|marz|april|mai|juni|juli|august|september|oktober|november|dezember)"
         r"[ -]\d{2,4}\b"
     )
-    # Additional pattern for German ordinal style: "24. März 2026" (dot + space separator)
+    # Additional pattern for German ordinal style: "24. März 2026" (dot + space separator).
+    # Includes "marz" for Tesseract OCR umlaut-loss ("März" → "Marz").
     german_ordinal_pattern = (
-        r"\b\d{1,2}\.\s+(?:januar|februar|maerz|märz|april|mai|juni|juli|august|"
+        r"\b\d{1,2}\.\s+(?:januar|februar|maerz|märz|marz|april|mai|juni|juli|august|"
         r"september|oktober|november|dezember|"
         r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
         r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
@@ -278,40 +315,57 @@ def _find_dates_in_line(line: str) -> list[str]:
 def parse_invoice_date_from_text(text: str) -> str | None:
     # Priority 1: explicit invoice-date labels (Rechnungsdatum, Invoice Date, …)
     explicit_matches: list[str] = []
-    # Priority 2: date on or immediately after an invoice heading line ("Rechnung")
+    # Priority 2: date on or within _HEADING_PROXIMITY lines after an invoice heading
     heading_matches: list[str] = []
     # Priority 3: generic date label ("Datum:") — fallback only
     labeled_matches: list[str] = []
     # Priority 4: any other date in the document
     unlabeled_matches: list[str] = []
 
+    # How many lines after a heading line still count as "heading context".
+    # A value of 3 bridges a blank separator line that Tesseract often inserts
+    # between "Rechnung" and the date on printed-email PDFs.
+    _HEADING_PROXIMITY = 3
+
     lines = text.splitlines()
-    prev_line_was_heading = False
+    heading_proximity_remaining = 0
 
     for line in lines:
         normalized = _normalize_line_for_label(line)
 
-        # Skip lines with renewal / cancellation / copyright date labels
+        # Skip lines with renewal / cancellation / copyright / timestamp labels
         if _has_negative_date_label(normalized):
-            prev_line_was_heading = False
+            heading_proximity_remaining = 0
             continue
 
         dates = _find_dates_in_line(line)
 
+        is_heading = _is_invoice_heading_line(normalized)
+
         if not dates:
-            prev_line_was_heading = _is_invoice_heading_line(normalized)
+            if is_heading:
+                heading_proximity_remaining = _HEADING_PROXIMITY
+            elif heading_proximity_remaining > 0:
+                heading_proximity_remaining -= 1
+            else:
+                heading_proximity_remaining = 0
             continue
 
         if any(re.search(p, normalized) for p in _HIGH_PRIORITY_DATE_LABELS):
             explicit_matches.extend(dates)
-        elif _is_invoice_heading_line(normalized) or prev_line_was_heading:
+        elif is_heading or heading_proximity_remaining > 0:
             heading_matches.extend(dates)
         elif any(re.search(p, normalized) for p in _FALLBACK_DATE_LABELS):
             labeled_matches.extend(dates)
         else:
             unlabeled_matches.extend(dates)
 
-        prev_line_was_heading = _is_invoice_heading_line(normalized)
+        if is_heading:
+            heading_proximity_remaining = _HEADING_PROXIMITY
+        elif heading_proximity_remaining > 0:
+            heading_proximity_remaining -= 1
+        else:
+            heading_proximity_remaining = 0
 
     candidates = (
         list(dict.fromkeys(explicit_matches))
@@ -331,22 +385,67 @@ def parse_invoice_date_from_text(text: str) -> str | None:
     return None
 
 
+def _get_amount_tier(line_lower: str) -> int | None:
+    """Return the priority tier of a line's amount label (0 = highest), or None."""
+    for pattern, tier in _AMOUNT_LABEL_TIERS:
+        if pattern.search(line_lower):
+            return tier
+    return None
+
+
 def parse_amount_from_text(text: str) -> str | None:
-    labeled_candidates: list[str] = []
+    """Extract the most relevant invoice amount using priority tiers.
+
+    Labels and their values are often on separate lines in Tesseract output
+    (table columns split across lines). A look-ahead / sequential-pairing
+    strategy is used: pending label tiers are consumed in order as orphan
+    amount lines are encountered below them.
+    """
+    _AMOUNT_RE = re.compile(r"\b\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})\b|\b\d+(?:\.\d{2})\b")
+
+    lines = text.splitlines()
+    tiered_candidates: list[tuple[int, str]] = []
     generic_candidates: list[str] = []
+    pending_tiers: list[int] = []
 
-    for line in text.splitlines():
-        amounts = re.findall(r"\b\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})\b|\b\d+(?:\.\d{2})\b", line)
-        if not amounts:
-            continue
-        if any(label in line.lower() for label in AMOUNT_LABEL_PATTERNS):
-            labeled_candidates.extend(amounts)
-        else:
-            generic_candidates.extend(amounts)
+    for line in lines:
+        line_lower = line.lower()
+        amounts = _AMOUNT_RE.findall(line)
+        tier = _get_amount_tier(line_lower)
 
-    candidates = labeled_candidates or generic_candidates
+        if tier is not None:
+            if amounts:
+                # Label and amount on the same line — clear any stale pending state.
+                pending_tiers.clear()
+                for a in amounts:
+                    tiered_candidates.append((tier, a))
+            else:
+                # Label without amount: queue for sequential pairing with
+                # the next orphan amount line(s).
+                pending_tiers.append(tier)
+        elif amounts:
+            if pending_tiers:
+                # Consume the oldest pending label for the first amount found.
+                consumed_tier = pending_tiers.pop(0)
+                for a in amounts:
+                    tiered_candidates.append((consumed_tier, a))
+            else:
+                generic_candidates.extend(amounts)
+        # Empty lines do not reset pending_tiers — label blocks can span blank lines.
+
+    if tiered_candidates:
+        tiered_candidates.sort(key=lambda x: x[0])
+        best_tier = tiered_candidates[0][0]
+        for t, raw in tiered_candidates:
+            if t != best_tier:
+                break
+            try:
+                return normalize_amount(raw)
+            except (NormalizationError, InvalidOperation):
+                continue
+
     normalized: list[tuple[Decimal, str]] = []
-    for candidate in candidates:
+    for candidate in generic_candidates:
         try:
             value = normalize_amount(candidate)
             normalized.append((Decimal(value), value))
@@ -360,18 +459,31 @@ def parse_amount_from_text(text: str) -> str | None:
     return normalized[0][1]
 
 
+# Single-word email header labels (matched after stripping all non-alpha characters).
+_EMAIL_HEADER_BARE_WORDS = frozenset({
+    "von", "an", "betreff", "from", "to", "subject", "date", "cc", "bcc",
+})
+
+# Patterns that disqualify a line as a supplier name (word-boundary checks).
+_INVALID_SUPPLIER_PATTERNS = (
+    r"\brechnung\b",
+    r"\binvoice\b",
+    r"\breceipt\b",
+    r"\bdocument\b",
+    r"\bpage\b",
+    r"\bseite\b",
+    r"\btax\b",
+    r"\bnotice\b",
+    r"\brechnungsadresse\b",
+    r"\bbilling\s+address\b",
+    r"\brechnungsanschrift\b",
+)
+
+
 def parse_supplier_from_text(text: str) -> str | None:
-    invalid_supplier_tokens = {
-        "invoice",
-        "rechnung",
-        "receipt",
-        "bill",
-        "document",
-        "page",
-        "seite",
-        "tax",
-        "notice",
-    }
+    # Legacy exact-match set kept for backward compatibility.
+    _exact_skip = {"invoice", "rechnung", "receipt", "bill", "document", "page", "seite", "tax", "notice"}
+
     for line in text.splitlines():
         stripped = line.strip()
         lowered = stripped.lower()
@@ -381,9 +493,19 @@ def parse_supplier_from_text(text: str) -> str | None:
             continue
         if any(label in lowered for label in DATE_LABEL_PATTERNS):
             continue
-        if any(label in lowered for label in AMOUNT_LABEL_PATTERNS):
+        if any(re.search(p, lowered) for p in AMOUNT_LABEL_PATTERNS):
             continue
-        if lowered in invalid_supplier_tokens:
+        if lowered in _exact_skip:
+            continue
+        # Skip email header labels: "Von:", "An:", "Betreff:", "From:", "To:", …
+        bare = re.sub(r"[^a-z]", "", lowered)
+        if bare in _EMAIL_HEADER_BARE_WORDS:
+            continue
+        # Skip lines containing email addresses or web URLs.
+        if "@" in stripped or re.search(r"\bwww\.", lowered):
+            continue
+        # Skip billing-address labels and other non-supplier line patterns.
+        if any(re.search(p, lowered) for p in _INVALID_SUPPLIER_PATTERNS):
             continue
         try:
             return normalize_supplier_name(stripped)

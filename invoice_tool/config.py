@@ -279,7 +279,8 @@ def _parse_preset(preset_key: str, preset_raw: dict, base_dir: Path) -> Processi
             report_extension=str(duplicate_raw.get("report_extension", ".txt")),
         ),
         supplier_cleaning=SupplierCleaningRules(
-            remove_suffix_patterns=tuple(supplier_cleaning_raw.get("remove_suffix_patterns", []))
+            remove_suffix_patterns=tuple(supplier_cleaning_raw.get("remove_suffix_patterns", [])),
+            supplier_aliases=dict(supplier_cleaning_raw.get("supplier_aliases", {})),
         ),
     )
 

@@ -362,6 +362,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Regex-Muster als reine Strings – keine fachliche Veränderung durch Schema."
+        },
+        "supplier_aliases": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Mapping normalisierter Slug → kanonischer Lieferantenname zur Korrektur von OCR-Fehlern."
         }
       }
     }
