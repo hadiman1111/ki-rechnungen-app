@@ -35,7 +35,10 @@
           "transfer proof",
           "payment confirmation",
           "bescheid",
-          "steuerbescheid"
+          "steuerbescheid",
+          "bestellte artikel",
+          "bestellbestätigung",
+          "order confirmation"
         ],
         "internal_invoice_keywords": [
           "eigenbeleg",

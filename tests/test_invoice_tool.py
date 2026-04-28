@@ -110,6 +110,99 @@ def test_filename_generation_uses_payment_field() -> None:
     assert "_1234.56_vobaai.pdf" in filename
 
 
+def test_order_confirmation_with_billing_address_and_vat_is_document() -> None:
+    """Eine Bestellbestätigung mit Rechnungsadresse, MwSt. und PayPal darf keine invoice sein.
+
+    Das Dokument hat 'Rechnungsadresse' (kein eigenständiges 'Rechnung'),
+    'Bestellte Artikel' als Abschnitt und kein Rechnungsdatum/Rechnungsnummer.
+    Es soll als document klassifiziert werden, nicht als invoice/unklar.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="260318",
+        supplier_raw="Detail Magazin",
+        amount_raw="299,00",
+        raw_text=(
+            "Bestellung # 000040795 Vollständig Erstellt:\n"
+            "Bestellte Artikel Produktname Artikelnummer Preis Menge Zwischensumme\n"
+            "Testabo Einzelnutzer PREMIUM DEO-EP-DEO-EJP 299,00 €\n"
+            "Zwischensumme 299,00 € MwSt. 19,56 €\n"
+            "Rechnungsadresse Alexander Tandawardaja SOMAA. Bismarckstrasse 63\n"
+            "Zahlungsart PayPal Express Checkout"
+        ),
+        payment_method_raw="paypal",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "document", (
+        f"Bestellbestätigung muss document sein, war: {classification.dokumenttyp!r} "
+        f"({classification.begruendung})"
+    )
+
+
+def test_invoice_with_rechnung_standalone_stays_invoice() -> None:
+    """Eine echte Rechnung mit 'Rechnung' als eigenständigem Wort bleibt invoice.
+
+    Regression: 'Rechnung' als Standalone-Wort muss weiterhin als invoice_keyword greifen,
+    auch wenn das Dokument 'Rechnungsadresse' enthält.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="260401",
+        supplier_raw="Test GmbH",
+        amount_raw="100,00",
+        raw_text=(
+            "Rechnung Nr. 1234\n"
+            "Rechnungsadresse SOMAA Bismarckstrasse 63 Stuttgart\n"
+            "MwSt. 19% 15,97 € Gesamt: 100,00 €"
+        ),
+        payment_method_raw="transfer",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "invoice", (
+        f"Echte Rechnung mit 'Rechnung' als eigenständigem Wort muss invoice bleiben, "
+        f"war: {classification.dokumenttyp!r}"
+    )
+
+
+def test_bestellbestaetigung_keyword_triggers_document() -> None:
+    """'Bestellbestätigung' als Dokument-Keyword führt direkt zu document-Klassifikation."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="260320",
+        supplier_raw="Some Shop",
+        amount_raw="50,00",
+        raw_text="Bestellbestätigung Produkt A 50,00 € Rechnungsadresse SOMAA MwSt. 7%",
+        payment_method_raw="paypal",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "document", (
+        f"'Bestellbestätigung' muss als Dokument-Indikator greifen, "
+        f"war: {classification.dokumenttyp!r}"
+    )
+
+
+def test_invoice_with_rechnungsadresse_only_but_invoice_number_is_invoice() -> None:
+    """Dokument mit nur 'Rechnungsadresse' (kein standalone Rechnung) aber mit invoice_number_raw → invoice."""
+    rules = load_office_rules(Path("office_rules.json"))
+    extracted = ExtractedData(
+        invoice_date_raw="260401",
+        supplier_raw="Shop GmbH",
+        amount_raw="39,99",
+        invoice_number_raw="INV-2026-001",  # explizite Rechnungsnummer
+        raw_text="Rechnungsadresse SOMAA Bismarckstrasse MwSt. 19% 39,99 €",
+        payment_method_raw="transfer",
+        source_method="openai",
+    )
+    classification = classify_document_type(extracted, rules.preset)
+    assert classification.dokumenttyp == "invoice", (
+        f"Dokument mit invoice_number_raw muss invoice bleiben, "
+        f"war: {classification.dokumenttyp!r}"
+    )
+
+
 def test_document_indicator_overrides_invoice_like_fields() -> None:
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
