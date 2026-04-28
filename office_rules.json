@@ -441,6 +441,7 @@
       },
       "supplier_cleaning": {
         "remove_suffix_patterns": [
+          "\\n[\\w\\W]*",
           "\\\\b(?:elisabethenstr(?:asse)?|bismarckstr(?:asse)?|roetestr(?:asse)?|r\\u00f6testr(?:asse)?)\\\\b.*$",
           "\\\\b(?:strasse|straße|weg|allee|platz)\\\\s+\\d+[a-z]?\\\\b.*$"
         ],

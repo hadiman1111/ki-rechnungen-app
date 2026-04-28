@@ -12,6 +12,7 @@ from invoice_tool.filename_schema import build_filename
 from invoice_tool.models import ExtractedData
 from invoice_tool.normalization import (
     normalize_invoice_date,
+    normalize_supplier_name,
     parse_invoice_date_from_text,
     parse_amount_from_text,
     parse_supplier_from_text,
@@ -2805,6 +2806,68 @@ def test_supplier_aliases_loaded_from_office_rules() -> None:
     aliases = rules.preset.supplier_cleaning.supplier_aliases
     assert aliases.get("ecasypark") == "easypark"
     assert aliases.get("deine-rechnungsadresse") == "dm-drogerie-markt"
+
+
+# ---------------------------------------------------------------------------
+# Supplier-Cleaning: Newline-Adress-Stripping (für Cursor/Anysphere etc.)
+# ---------------------------------------------------------------------------
+
+
+def test_multiline_supplier_address_stripped_to_company_name() -> None:
+    """Wenn OpenAI den Lieferantennamen mit Adresszeilen zurückgibt (multi-line),
+    soll nur die erste Zeile (Firmenname) im Dateinamen erscheinen.
+
+    Entspricht dem Cursor/Anysphere-Fall: OpenAI liefert
+    'Cursor\\n2261 Market Street\\n...' statt nur 'Cursor'.
+    Das remove_suffix_pattern '\\\\n[\\\\w\\\\W]*' entfernt alles ab dem
+    ersten Newline.
+    """
+    rules = load_office_rules(Path("office_rules.json"))
+    sc = rules.preset.supplier_cleaning
+    cursor_raw = (
+        "Cursor\n"
+        "2261 Market Street\n"
+        "STE 86466\n"
+        "San Francisco, California 10025\n"
+        "United States\n"
+        "+1 831 425 9504\n"
+        "hi@cursor.com\n"
+        "Anysphere, Inc.\n"
+        "US EIN 87 4436547"
+    )
+    result = normalize_supplier_name(clean_supplier_text(cursor_raw, sc))
+    assert result == "cursor", (
+        f"Cursor-Lieferant mit Adresse muss zu 'cursor' bereinigt werden, war: {result!r}"
+    )
+    assert "2261" not in result, "Straßennummer darf nicht im Lieferantennamen erscheinen"
+    assert "market" not in result, "Straßenname darf nicht im Lieferantennamen erscheinen"
+
+
+def test_multiline_supplier_anysphere_stripped() -> None:
+    """Anysphere als zweite Zeile (nach leerem Firmennamen-Prefix) wird verworfen –
+    nur der erste Token bleibt."""
+    rules = load_office_rules(Path("office_rules.json"))
+    sc = rules.preset.supplier_cleaning
+    anysphere_raw = "Anysphere, Inc.\n87 4436547\nUS EIN"
+    result = normalize_supplier_name(clean_supplier_text(anysphere_raw, sc))
+    assert result == "anysphere-inc", (
+        f"Anysphere-Lieferant muss korrekt bereinigt werden, war: {result!r}"
+    )
+
+
+def test_single_line_supplier_unchanged_by_newline_pattern() -> None:
+    """Einzeilige Lieferantennamen (ohne Newline) werden durch das Pattern nicht verändert."""
+    rules = load_office_rules(Path("office_rules.json"))
+    sc = rules.preset.supplier_cleaning
+    for raw, expected in [
+        ("Vodafone West GmbH", "vodafone-west-gmbh"),
+        ("Adobe Systems Software Ireland Ltd", "adobe-systems-software-ireland-ltd"),
+        ("dm-drogerie markt GmbH + Co. KG", "dm-drogerie-markt-gmbh-co-kg"),
+    ]:
+        result = normalize_supplier_name(clean_supplier_text(raw, sc))
+        assert result == expected, (
+            f"Einzeile Supplier darf sich nicht ändern: {raw!r} → {result!r} (erwartet: {expected!r})"
+        )
 
 
 # ---------------------------------------------------------------------------
