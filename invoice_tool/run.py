@@ -303,7 +303,10 @@ def run_once(
         gen_routing = gen_preset.get("routing", {})
         generated_sections = [
             f"routing.{section}"
-            for section in ("strassen", "prioritaetsregeln", "konten", "business_context_rules")
+            for section in (
+                "strassen", "prioritaetsregeln", "konten",
+                "business_context_rules", "payment_detection_rules",
+            )
             if section in gen_routing
         ]
         # classification is a top-level preset section (not under routing)

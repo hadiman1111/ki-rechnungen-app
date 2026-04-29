@@ -226,7 +226,15 @@
       "spendenbescheinigung",
       "donation confirmation",
       "donation receipt",
-      "steuerbescheid"
+      "contribution statement",
+      "tax certificate",
+      "transfer proof",
+      "payment confirmation",
+      "bescheid",
+      "steuerbescheid",
+      "bestellte artikel",
+      "bestellbestätigung",
+      "order confirmation"
     ],
     "internal_invoice_keywords": ["eigenbeleg", "interner beleg", "internal form"]
   }

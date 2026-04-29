@@ -996,3 +996,175 @@ def test_runtime_rules_meta_includes_classification_generated_section(tmp_path: 
     assert "classification" not in protected, (
         f"classification must NOT be in protected_sections. Got: {protected}"
     )
+
+
+def _pdr_a() -> list[dict]:
+    return [{"name": "vendor-a", "text_all": [], "text_any": ["vendor-a"],
+             "payment_method": "amex", "explicit": True}]
+
+
+def _pdr_b() -> list[dict]:
+    return [{"name": "vendor-b", "text_all": [], "text_any": ["vendor-b", "b.com"],
+             "payment_method": "paypal", "explicit": True}]
+
+
+# ---------------------------------------------------------------------------
+# payment_detection_rules merge
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_replaces_payment_detection_rules() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["payment_detection_rules"] = _pdr_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"payment_detection_rules": _pdr_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["payment_detection_rules"] == _pdr_b()
+
+
+def test_merge_rules_dicts_without_pdr_keeps_base() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["payment_detection_rules"] = _pdr_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["payment_detection_rules"] == _pdr_a()
+
+
+def test_merge_rules_dicts_preserves_other_when_pdr_replaced() -> None:
+    base = _minimal_rules_dict()
+    orig_fa = copy.deepcopy(base["presets"]["office_default"]["routing"]["final_assignment_rules"])
+    orig_or = copy.deepcopy(base["presets"]["office_default"]["routing"]["output_route_rules"])
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"payment_detection_rules": _pdr_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["final_assignment_rules"] == orig_fa
+    assert merged["presets"]["office_default"]["routing"]["output_route_rules"] == orig_or
+
+
+def test_run_once_with_profile_applies_generated_pdr(tmp_path: Path) -> None:
+    """InvoiceProcessor receives OfficeRules with payment_detection_rules from profile."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+    profile_data = {
+        "schema_version": "1.0", "profile_name": "Test PDR",
+        "categories": [], "folders": [], "account_card_profiles": [],
+        "address_profiles": [], "vendor_profiles": [
+            {"id": "unique-test-vendor", "label": "T",
+             "recognition_hints": ["unique-vendor-hint"],
+             "payment_field": "amex", "enabled": True}
+        ],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {"unclear_folder": "unklar",
+                          "business_unclear_payment_goes_to_unclear": True,
+                          "private_unclear_attributes_stay_private": True},
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    received = {}
+
+    def capture(config, extractor, *, office_rules):
+        received["rules"] = office_rules
+        return type("M", (), {"process_all": lambda self: []})()
+
+    with patch("invoice_tool.run.InvoiceProcessor", side_effect=capture):
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_once(source=source, output=tmp_path / "runs",
+                             config_path=config_path, profile_path=profile_path)
+
+    office_rules = received.get("rules")
+    assert office_rules is not None
+    pdr_names = [r.name for r in office_rules.preset.routing.payment_detection_rules]
+    assert "unique-test-vendor" in pdr_names
+
+
+def test_runtime_rules_meta_includes_pdr_generated_section(tmp_path: Path) -> None:
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+    profile_data = {
+        "schema_version": "1.0", "profile_name": "Test PDR Meta",
+        "categories": [], "folders": [], "account_card_profiles": [],
+        "address_profiles": [], "vendor_profiles": [
+            {"id": "meta-vendor", "label": "M",
+             "recognition_hints": ["meta-vendor-hint"],
+             "payment_field": "amex", "enabled": True}
+        ],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {"unclear_folder": "unklar",
+                          "business_unclear_payment_goes_to_unclear": True,
+                          "private_unclear_attributes_stay_private": True},
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    with patch("invoice_tool.run.InvoiceProcessor") as mock_cls:
+        mock_cls.return_value.process_all.return_value = []
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_dir = run_once(source=source, output=tmp_path / "runs",
+                                       config_path=config_path, profile_path=profile_path)
+
+    runtime = json.loads((run_dir / "runtime_rules.json").read_text())
+    meta = runtime.get("_meta", {})
+    generated = meta.get("generated_sections", [])
+    protected = meta.get("protected_sections", [])
+
+    assert "routing.payment_detection_rules" in generated
+    assert "routing.payment_detection_rules" not in protected
+
+
+# ---------------------------------------------------------------------------
+# Preview script
+# ---------------------------------------------------------------------------
+
+
+def test_preview_script_produces_valid_json(tmp_path: Path) -> None:
+    """Preview script must produce valid JSON with _meta.profile_applied=true."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+    from preview_profile_runtime_rules import main
+
+    output = tmp_path / "preview.json"
+    ret = main([
+        "--profile", "profile_config.example.json",
+        "--output", str(output),
+    ])
+    assert ret == 0, "Preview script must exit 0"
+    assert output.exists(), "Output file must be created"
+    data = json.loads(output.read_text())
+    meta = data.get("_meta", {})
+    assert meta.get("profile_applied") is True
+    assert "generated_sections" in meta
+    assert "classification" in meta["generated_sections"]
+
+
+def test_preview_script_contains_payment_detection_rules(tmp_path: Path) -> None:
+    """Preview output must contain payment_detection_rules when profile has vendor_profiles."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+    from preview_profile_runtime_rules import main
+
+    output = tmp_path / "preview.json"
+    main(["--profile", "profile_config.example.json", "--output", str(output)])
+    data = json.loads(output.read_text())
+    meta = data.get("_meta", {})
+    # cursor-anysphere vendor should produce routing.payment_detection_rules
+    assert "routing.payment_detection_rules" in meta.get("generated_sections", [])
+    pdr = data.get("presets", {}).get("office_default", {}).get(
+        "routing", {}).get("payment_detection_rules", [])
+    assert any(r.get("name") == "cursor-anysphere" for r in pdr)

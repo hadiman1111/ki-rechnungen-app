@@ -4,16 +4,18 @@ Translates a user-facing profile_config (dict) into the technical
 office_rules format. Pure function: no file I/O, no side effects.
 
 Scope:
-  address_profiles         →  routing.strassen
-  address_profiles         →  routing.prioritaetsregeln
-                               (when exclude_if_text_contains is set)
-  account_card_profiles    →  routing.konten
-  business_context_profiles → routing.business_context_rules
+  address_profiles          →  routing.strassen
+  address_profiles          →  routing.prioritaetsregeln
+                                (when exclude_if_text_contains is set)
+  account_card_profiles     →  routing.konten
+  business_context_profiles →  routing.business_context_rules
+  vendor_profiles           →  routing.payment_detection_rules
+  classification_profile    →  classification
 
-All other profile sections (vendor_profiles, classification_profile,
-naming_profile, supplier_cleaning, final_assignment_rules,
-output_route_rules) are NOT yet handled by this compiler and remain
-the responsibility of the manually maintained office_rules.json.
+All other profile sections (naming_profile, supplier_cleaning,
+final_assignment_rules, output_route_rules) are NOT yet handled by this
+compiler and remain the responsibility of the manually maintained
+office_rules.json.
 
 Design principles:
 - No SOMAA-specific logic, no user-specific hardcoding.
@@ -250,6 +252,93 @@ def _compile_classification_profile(classification_profile: dict) -> dict:
     }
 
 
+def _compile_vendor_profiles(vendor_profiles: list[dict]) -> list[dict]:
+    """Translate vendor_profile dicts into routing.payment_detection_rules entries.
+
+    Each enabled vendor_profile produces one payment_detection_rules dict.
+
+    Field mapping:
+        id                → name
+        recognition_hints → text_any
+        payment_field     → payment_method (direct value, e.g. "amex")
+        enabled=false     → skipped
+
+    Entries without recognition_hints produce no rule (no match criteria).
+    """
+    rules: list[dict] = []
+
+    for vp in vendor_profiles:
+        if not vp.get("enabled", True):
+            continue
+
+        profile_id: str = vp.get("id", "")
+        if not profile_id:
+            continue
+
+        recognition_hints = list(vp.get("recognition_hints") or [])
+        if not recognition_hints:
+            continue  # no match criteria → skip (also caught by validation)
+
+        payment_field = vp.get("payment_field") or ""
+
+        rules.append({
+            "name": profile_id,
+            "text_all": [],
+            "text_any": recognition_hints,
+            "payment_method": payment_field,
+            "explicit": True,
+        })
+
+    return rules
+
+
+# -----------------------------------------------------------------------
+# Profile validation
+# -----------------------------------------------------------------------
+
+def validate_profile(profile: dict) -> list[str]:
+    """Validate a profile_config dict and return a list of issue strings.
+
+    Returns an empty list if the profile is valid.
+    This is a lightweight check – it does not raise exceptions.
+
+    Checks performed:
+    - Duplicate card_endings across account_card_profiles
+    - vendor_profiles entries with no recognition_hints
+    - Empty id fields in key sections
+    """
+    issues: list[str] = []
+
+    # Check for duplicate card endings across account_card_profiles
+    seen_endings: dict[str, str] = {}  # ending → profile_id
+    for acp in profile.get("account_card_profiles") or []:
+        if not acp.get("enabled", True):
+            continue
+        profile_id = acp.get("id", "?")
+        for ending in acp.get("card_endings") or []:
+            if ending in seen_endings:
+                issues.append(
+                    f"Doppelte card_ending '{ending}' in account_card_profiles: "
+                    f"'{seen_endings[ending]}' und '{profile_id}'"
+                )
+            else:
+                seen_endings[ending] = profile_id
+
+    # Check vendor_profiles for missing recognition_hints
+    for vp in profile.get("vendor_profiles") or []:
+        if not vp.get("enabled", True):
+            continue
+        profile_id = vp.get("id", "?")
+        recognition_hints = vp.get("recognition_hints") or []
+        if not recognition_hints:
+            issues.append(
+                f"vendor_profile '{profile_id}' hat keine recognition_hints "
+                f"– keine payment_detection_rule wird erzeugt"
+            )
+
+    return issues
+
+
 # -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
@@ -289,6 +378,9 @@ def compile_profile_to_rules(
     business_context_profiles: list[dict] = list(profile.get("business_context_profiles") or [])
     business_context_rules = _compile_business_context_profiles(business_context_profiles)
 
+    vendor_profiles: list[dict] = list(profile.get("vendor_profiles") or [])
+    payment_detection_rules = _compile_vendor_profiles(vendor_profiles)
+
     routing: dict = {
         "strassen": strassen,
         "prioritaetsregeln": prioritaetsregeln,
@@ -297,6 +389,8 @@ def compile_profile_to_rules(
         routing["konten"] = konten
     if business_context_rules:
         routing["business_context_rules"] = business_context_rules
+    if payment_detection_rules:
+        routing["payment_detection_rules"] = payment_detection_rules
 
     preset_dict: dict = {"routing": routing}
 

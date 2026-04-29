@@ -752,3 +752,156 @@ def test_compile_profile_example_generates_classification() -> None:
     # profile has 3 document_keywords
     assert len(cls["document_keywords"]) >= 1
     assert "eigenbeleg" in cls["internal_invoice_keywords"]
+
+
+# ---------------------------------------------------------------------------
+# vendor_profiles → routing.payment_detection_rules
+# ---------------------------------------------------------------------------
+
+def _get_pdr(result: dict, preset: str = "office_default") -> list[dict]:
+    return result["presets"][preset]["routing"].get("payment_detection_rules", [])
+
+
+def test_vendor_profile_generates_payment_detection_rule() -> None:
+    """A vendor_profile with recognition_hints must produce one payment_detection_rule."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["vendor_profiles"] = [
+        {
+            "id": "my-vendor",
+            "label": "My Vendor",
+            "recognition_hints": ["myvendor", "vendor.com", "hi@vendor.com"],
+            "payment_field": "amex",
+            "enabled": True,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    pdr = _get_pdr(result)
+
+    assert len(pdr) == 1
+    rule = pdr[0]
+    assert rule["name"] == "my-vendor"
+    assert rule["text_any"] == ["myvendor", "vendor.com", "hi@vendor.com"]
+    assert rule["payment_method"] == "amex"
+    assert rule["explicit"] is True
+    assert rule["text_all"] == []
+
+
+def test_vendor_profile_disabled_is_skipped() -> None:
+    """enabled=False must skip the vendor."""
+    profile = _make_profile(
+        id="test", label="Test", category="ai",
+        canonical_address={"street": "Bismarckstraße"}, enabled=True,
+    )
+    profile["vendor_profiles"] = [
+        {"id": "disabled-vendor", "label": "Disabled",
+         "recognition_hints": ["x"], "payment_field": "amex", "enabled": False}
+    ]
+    assert _get_pdr(compile_profile_to_rules(profile)) == []
+
+
+def test_vendor_profile_without_recognition_hints_is_skipped() -> None:
+    """A vendor without recognition_hints produces no rule (no match criteria)."""
+    profile = _make_profile(
+        id="test", label="Test", category="ai",
+        canonical_address={"street": "Bismarckstraße"}, enabled=True,
+    )
+    profile["vendor_profiles"] = [
+        {"id": "no-hints", "label": "No Hints",
+         "recognition_hints": [], "payment_field": "amex", "enabled": True}
+    ]
+    assert _get_pdr(compile_profile_to_rules(profile)) == []
+
+
+def test_vendor_profiles_absent_generates_no_pdr() -> None:
+    """Without vendor_profiles, no payment_detection_rules key."""
+    profile = _make_profile(
+        id="test", label="Test", category="ai",
+        canonical_address={"street": "Bismarckstraße"}, enabled=True,
+    )
+    profile.pop("vendor_profiles", None)
+    result = compile_profile_to_rules(profile)
+    assert "payment_detection_rules" not in result["presets"]["office_default"]["routing"]
+
+
+def test_compile_profile_example_generates_payment_detection_rules() -> None:
+    """profile_config.example.json vendor_profiles must produce payment_detection_rules."""
+    example = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    result = compile_profile_to_rules(example)
+    pdr = _get_pdr(result)
+    assert len(pdr) >= 1
+    names = {r["name"] for r in pdr}
+    assert "cursor-anysphere" in names
+
+
+# ---------------------------------------------------------------------------
+# Classification document_keywords – example profile completeness
+# ---------------------------------------------------------------------------
+
+
+def test_example_profile_document_keywords_includes_bestellung_keywords() -> None:
+    """profile_config.example.json must include Bestellbestätigungs-Keywords."""
+    example = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    doc_kw = example.get("classification_profile", {}).get("document_keywords", [])
+    assert "bestellte artikel" in doc_kw
+    assert "bestellbestätigung" in doc_kw
+    assert "order confirmation" in doc_kw
+
+
+# ---------------------------------------------------------------------------
+# validate_profile
+# ---------------------------------------------------------------------------
+
+from invoice_tool.profile_compiler import validate_profile
+
+
+def test_validate_profile_clean_profile_returns_no_issues() -> None:
+    """A valid profile must produce no issues."""
+    example = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    issues = validate_profile(example)
+    assert issues == [], f"Unexpected issues: {issues}"
+
+
+def test_validate_profile_detects_duplicate_card_endings() -> None:
+    """Duplicate card_endings across two account_card_profiles must be reported."""
+    profile = {
+        "account_card_profiles": [
+            {"id": "a", "label": "A", "card_endings": ["1234"], "enabled": True},
+            {"id": "b", "label": "B", "card_endings": ["1234", "5678"], "enabled": True},
+        ]
+    }
+    issues = validate_profile(profile)
+    assert any("1234" in i for i in issues), f"Expected duplicate 1234 issue, got: {issues}"
+
+
+def test_validate_profile_detects_vendor_without_recognition_hints() -> None:
+    """A vendor_profile with empty recognition_hints must be flagged."""
+    profile = {
+        "account_card_profiles": [],
+        "vendor_profiles": [
+            {"id": "no-hints-vendor", "label": "X",
+             "recognition_hints": [], "enabled": True}
+        ]
+    }
+    issues = validate_profile(profile)
+    assert any("no-hints-vendor" in i for i in issues), f"Expected issue for empty hints, got: {issues}"
+
+
+def test_validate_profile_disabled_entries_not_flagged() -> None:
+    """Disabled entries with issues must not be reported."""
+    profile = {
+        "account_card_profiles": [
+            {"id": "a", "label": "A", "card_endings": ["1234"], "enabled": True},
+            {"id": "dup", "label": "Dup", "card_endings": ["1234"], "enabled": False},
+        ],
+        "vendor_profiles": [
+            {"id": "no-hints", "label": "X", "recognition_hints": [], "enabled": False}
+        ]
+    }
+    issues = validate_profile(profile)
+    assert issues == [], f"Disabled entries must not cause issues: {issues}"
