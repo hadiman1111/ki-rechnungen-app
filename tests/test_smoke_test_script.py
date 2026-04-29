@@ -17,7 +17,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from run_smoke_test import (
     SmokeResult,
+    _tri,
     build_parser,
+    check_profile_artifacts,
     check_run_structure,
     check_source_unchanged,
     list_pdfs,
@@ -277,3 +279,133 @@ def test_list_pdfs_is_sorted(tmp_path: Path) -> None:
     _make_pdf(source / "a.pdf")
     result = list_pdfs(source)
     assert result == sorted(result)
+
+
+# ---------------------------------------------------------------------------
+# Profile / Runtime-Rules extensions
+# ---------------------------------------------------------------------------
+
+def test_parser_accepts_profile_flag(tmp_path: Path) -> None:
+    """--profile flag is accepted and correctly parsed."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+    profile_file = tmp_path / "my_profile.json"
+    parser = build_parser()
+    args = parser.parse_args([
+        "--source", str(tmp_path),
+        "--output", str(tmp_path),
+        "--profile", str(profile_file),
+    ])
+    assert args.profile == profile_file
+
+
+def test_profile_checks_not_required_without_profile(tmp_path: Path) -> None:
+    """Without --profile, missing runtime_rules.json must NOT cause a FAIL."""
+
+    result = SmokeResult()
+    result.profile_used = False
+    # profile_snapshot_ok and runtime_rules_ok remain None (not applicable)
+    assert result.profile_snapshot_ok is None
+    assert result.runtime_rules_ok is None
+    # No failure added for missing runtime files
+    assert result.ok
+
+
+def test_profile_checks_require_runtime_rules_with_profile(tmp_path: Path) -> None:
+    """With profile, missing runtime_rules.json must register as a failure."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    # Only profile_snapshot exists, runtime_rules.json is missing
+    (run_dir / "profile_snapshot.json").write_text("{}")
+
+    snap_ok, rt_ok, issues = check_profile_artifacts(run_dir)
+    assert snap_ok is True
+    assert rt_ok is False
+    assert any("runtime_rules.json" in i for i in issues)
+
+
+def test_profile_checks_pass_with_runtime_rules_and_snapshot(tmp_path: Path) -> None:
+    """With profile, both files present and valid → no issues."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "profile_snapshot.json").write_text("{}")
+    runtime = {
+        "active_preset": "office_default",
+        "presets": {"office_default": {}},
+        "_meta": {"profile_applied": True},
+    }
+    (run_dir / "runtime_rules.json").write_text(json.dumps(runtime))
+
+    snap_ok, rt_ok, issues = check_profile_artifacts(run_dir)
+    assert snap_ok is True
+    assert rt_ok is True
+    assert issues == []
+
+
+def test_parse_runtime_rules_meta_profile_applied(tmp_path: Path) -> None:
+    """_meta.profile_applied=true is recognized without errors."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "profile_snapshot.json").write_text("{}")
+    runtime = {
+        "active_preset": "office_default",
+        "presets": {"office_default": {}},
+        "_meta": {"profile_applied": True, "generated_sections": ["routing.strassen"]},
+    }
+    (run_dir / "runtime_rules.json").write_text(json.dumps(runtime))
+
+    snap_ok, rt_ok, issues = check_profile_artifacts(run_dir)
+    assert snap_ok is True
+    assert rt_ok is True
+    assert issues == [], f"Unexpected issues: {issues}"
+
+
+def test_parse_runtime_rules_meta_profile_applied_false_is_flagged(tmp_path: Path) -> None:
+    """_meta.profile_applied=false must be reported as an issue."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "profile_snapshot.json").write_text("{}")
+    runtime = {
+        "active_preset": "office_default",
+        "presets": {"office_default": {}},
+        "_meta": {"profile_applied": False},
+    }
+    (run_dir / "runtime_rules.json").write_text(json.dumps(runtime))
+
+    _, rt_ok, issues = check_profile_artifacts(run_dir)
+    assert rt_ok is False or any("profile_applied" in i for i in issues)
+
+
+def test_profile_checks_invalid_json_reports_error(tmp_path: Path) -> None:
+    """Unreadable runtime_rules.json must produce an error message."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "profile_snapshot.json").write_text("{}")
+    (run_dir / "runtime_rules.json").write_text("{invalid json")
+
+    snap_ok, rt_ok, issues = check_profile_artifacts(run_dir)
+    assert rt_ok is False
+    assert any("nicht lesbar" in i or "runtime_rules" in i for i in issues)
+
+
+def test_smoke_result_profile_not_used_shows_not_applicable() -> None:
+    """When profile_used=False, profile_snapshot and runtime_rules show 'not applicable'."""
+
+    result = SmokeResult()
+    result.profile_used = False
+    assert _tri(result.profile_snapshot_ok) == "not applicable"
+    assert _tri(result.runtime_rules_ok) == "not applicable"
+
+
+def test_smoke_result_profile_used_shows_yes_or_no() -> None:
+    """When profile files checked, _tri reflects actual bool."""
+
+    assert _tri(True) == "yes"
+    assert _tri(False) == "no"
+    assert _tri(None) == "not applicable"
