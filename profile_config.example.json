@@ -136,7 +136,7 @@
       "applies_to": "any",
       "exclude_if_text_contains": ["somaa"],
       "matching_mode": "normal",
-      "advanced_variants": [],
+      "advanced_variants": ["rotestrasse"],
       "enabled": true
     },
     {

@@ -432,6 +432,12 @@
           "description": "Mindestens einer dieser Begriffe muss im Text vorkommen."
         },
         "category": { "$ref": "#/$defs/CategoryId" },
+        "match_source": {
+          "type": "string",
+          "enum": ["enriched_text", "raw_text"],
+          "default": "enriched_text",
+          "description": "Welche Textquelle für die Keyword-Prüfung verwendet wird. enriched_text (Default) = alle Felder inkl. KI-Interpretation. raw_text = nur dokumentabgeleitete Felder ohne halluzinationsanfällige KI-Zusätze."
+        },
         "enabled": { "type": "boolean", "default": true }
       }
     },
