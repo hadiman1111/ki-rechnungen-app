@@ -658,3 +658,97 @@ def test_compile_profile_example_generates_business_context_rules() -> None:
     assert "somaa-event-production" in names
     assert "somaa-architektur-innenarchitektur" in names
     assert "somaa-unspecified" in names
+
+
+# ---------------------------------------------------------------------------
+# classification_profile → classification section
+# ---------------------------------------------------------------------------
+
+def _get_classification(result: dict, preset: str = "office_default") -> dict | None:
+    return result["presets"][preset].get("classification")
+
+
+def test_classification_profile_generates_classification_section() -> None:
+    """A classification_profile must produce a classification section."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["classification_profile"] = {
+        "invoice_keywords": ["rechnung", "faktura"],
+        "document_keywords": ["quittung", "bescheid"],
+        "internal_invoice_keywords": ["eigenbeleg"],
+        "invoice_like_indicators": [],
+        "invoice_like_threshold": 5,
+    }
+    result = compile_profile_to_rules(profile)
+    cls = _get_classification(result)
+
+    assert cls is not None, "classification section must be generated"
+    assert cls["invoice_keywords"] == ["rechnung", "faktura"]
+    assert cls["document_keywords"] == ["quittung", "bescheid"]
+    assert cls["internal_invoice_keywords"] == ["eigenbeleg"]
+    assert cls["invoice_like_indicators"] == []
+    assert cls["invoice_like_threshold"] == 5
+
+
+def test_classification_profile_missing_lists_default_to_empty() -> None:
+    """Absent optional list fields must default to empty lists."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["classification_profile"] = {}  # all fields absent
+    result = compile_profile_to_rules(profile)
+    cls = _get_classification(result)
+
+    assert cls is not None
+    assert cls["invoice_keywords"] == []
+    assert cls["document_keywords"] == []
+    assert cls["internal_invoice_keywords"] == []
+    assert cls["invoice_like_indicators"] == []
+    assert cls["invoice_like_threshold"] == 3  # default
+
+    # Must be parseable by load_office_rules_from_dict
+    from invoice_tool.config import load_office_rules_from_dict, merge_rules_dicts
+    rules_dict = json.loads(Path("office_rules.json").read_text(encoding="utf-8"))
+    merged = merge_rules_dicts(rules_dict, result)
+    base_dir = Path("office_rules.json").resolve().parent
+    office_rules = load_office_rules_from_dict(merged, base_dir)
+    assert office_rules is not None
+
+
+def test_classification_profile_absent_does_not_generate_classification() -> None:
+    """Without classification_profile, no classification must appear in output."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    # No classification_profile key
+    profile.pop("classification_profile", None)
+    result = compile_profile_to_rules(profile)
+    cls = _get_classification(result)
+    assert cls is None, "classification must NOT be generated when classification_profile is absent"
+
+
+def test_compile_profile_example_generates_classification() -> None:
+    """profile_config.example.json must produce classification from classification_profile."""
+    example_profile = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    result = compile_profile_to_rules(example_profile)
+    cls = _get_classification(result)
+
+    assert cls is not None
+    assert "rechnung" in cls["invoice_keywords"]
+    assert "invoice" in cls["invoice_keywords"]
+    # profile has 3 document_keywords
+    assert len(cls["document_keywords"]) >= 1
+    assert "eigenbeleg" in cls["internal_invoice_keywords"]

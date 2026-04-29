@@ -221,6 +221,35 @@ def _compile_business_context_profiles(
     return rules
 
 
+def _compile_classification_profile(classification_profile: dict) -> dict:
+    """Translate a classification_profile dict into a classification section dict.
+
+    Field mapping:
+        invoice_keywords           → invoice_keywords    (default: [])
+        document_keywords          → document_keywords   (default: [])
+        internal_invoice_keywords  → internal_invoice_keywords  (default: [])
+        invoice_like_indicators    → invoice_like_indicators  (default: [])
+        invoice_like_threshold     → invoice_like_threshold   (default: 3)
+
+    The last two are optional in the profile and fall back to sensible defaults.
+    Returns a plain dict matching the structure expected by
+    config._parse_preset (classification section).
+    """
+    return {
+        "invoice_keywords": list(classification_profile.get("invoice_keywords") or []),
+        "document_keywords": list(classification_profile.get("document_keywords") or []),
+        "internal_invoice_keywords": list(
+            classification_profile.get("internal_invoice_keywords") or []
+        ),
+        "invoice_like_indicators": list(
+            classification_profile.get("invoice_like_indicators") or []
+        ),
+        "invoice_like_threshold": int(
+            classification_profile.get("invoice_like_threshold") or 3
+        ),
+    }
+
+
 # -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
@@ -269,11 +298,18 @@ def compile_profile_to_rules(
     if business_context_rules:
         routing["business_context_rules"] = business_context_rules
 
+    preset_dict: dict = {"routing": routing}
+
+    # classification is a top-level preset section (not under routing)
+    classification_profile_raw = profile.get("classification_profile")
+    if isinstance(classification_profile_raw, dict):
+        preset_dict["classification"] = _compile_classification_profile(
+            classification_profile_raw
+        )
+
     return {
         "active_preset": preset_name,
         "presets": {
-            preset_name: {
-                "routing": routing,
-            }
+            preset_name: preset_dict,
         },
     }

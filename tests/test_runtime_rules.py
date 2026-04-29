@@ -813,3 +813,186 @@ def test_runtime_rules_meta_includes_business_context_generated_section(tmp_path
     assert "routing.business_context_rules" not in protected, (
         f"routing.business_context_rules must NOT be in protected_sections. Got: {protected}"
     )
+
+
+def _cls_a() -> dict:
+    return {"invoice_keywords": ["rechnung"], "document_keywords": ["quittung"],
+            "internal_invoice_keywords": [], "invoice_like_indicators": [], "invoice_like_threshold": 3}
+
+
+def _cls_b() -> dict:
+    return {"invoice_keywords": ["faktura", "invoice"], "document_keywords": ["bescheid"],
+            "internal_invoice_keywords": ["eigenbeleg"], "invoice_like_indicators": [], "invoice_like_threshold": 5}
+
+
+# ---------------------------------------------------------------------------
+# E. merge_rules_dicts: replaces classification
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_replaces_classification() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["classification"] = _cls_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"classification": _cls_b()}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["classification"] == _cls_b()
+
+
+def test_merge_rules_dicts_without_classification_keeps_base() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["classification"] = _cls_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {}  # no classification key
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["classification"] == _cls_a()
+
+
+# ---------------------------------------------------------------------------
+# F. Protected sections unchanged when classification replaced
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_preserves_routing_when_classification_replaced() -> None:
+    base = _minimal_rules_dict()
+    orig_fa = copy.deepcopy(base["presets"]["office_default"]["routing"]["final_assignment_rules"])
+    orig_or = copy.deepcopy(base["presets"]["office_default"]["routing"]["output_route_rules"])
+    orig_pd = copy.deepcopy(base["presets"]["office_default"]["routing"]["payment_detection_rules"])
+
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"classification": _cls_b()}
+    }}
+    merged = merge_rules_dicts(base, patch)
+
+    assert merged["presets"]["office_default"]["routing"]["final_assignment_rules"] == orig_fa
+    assert merged["presets"]["office_default"]["routing"]["output_route_rules"] == orig_or
+    assert merged["presets"]["office_default"]["routing"]["payment_detection_rules"] == orig_pd
+
+
+# ---------------------------------------------------------------------------
+# G. run_once with profile applies generated classification
+# ---------------------------------------------------------------------------
+
+
+def test_run_once_with_profile_applies_generated_classification(tmp_path: Path) -> None:
+    """InvoiceProcessor must receive OfficeRules with classification from profile."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+
+    profile_data = {
+        "schema_version": "1.0",
+        "profile_name": "Test Classification",
+        "categories": [],
+        "folders": [],
+        "account_card_profiles": [],
+        "address_profiles": [],
+        "classification_profile": {
+            "invoice_keywords": ["unique-invoice-keyword"],
+            "document_keywords": ["unique-doc-keyword"],
+            "internal_invoice_keywords": [],
+        },
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    received = {}
+
+    def capture(config, extractor, *, office_rules):
+        received["rules"] = office_rules
+        return type("M", (), {"process_all": lambda self: []})()
+
+    with patch("invoice_tool.run.InvoiceProcessor", side_effect=capture):
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    office_rules = received.get("rules")
+    assert office_rules is not None
+    inv_kw = list(office_rules.preset.classification.invoice_keywords)
+    assert "unique-invoice-keyword" in inv_kw, (
+        f"Expected 'unique-invoice-keyword' in invoice_keywords, got: {inv_kw}"
+    )
+    doc_kw = list(office_rules.preset.classification.document_keywords)
+    assert "unique-doc-keyword" in doc_kw
+
+
+# ---------------------------------------------------------------------------
+# H. runtime_rules _meta includes classification as generated section
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_rules_meta_includes_classification_generated_section(tmp_path: Path) -> None:
+    """When profile has classification_profile, runtime_rules._meta.generated_sections
+    must include 'classification' and protected_sections must NOT."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+
+    profile_data = {
+        "schema_version": "1.0",
+        "profile_name": "Test Classification Meta",
+        "categories": [],
+        "folders": [],
+        "account_card_profiles": [],
+        "address_profiles": [],
+        "classification_profile": {
+            "invoice_keywords": ["rechnung"],
+            "document_keywords": [],
+            "internal_invoice_keywords": [],
+        },
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    with patch("invoice_tool.run.InvoiceProcessor") as mock_cls:
+        mock_cls.return_value.process_all.return_value = []
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_dir = run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    runtime = json.loads((run_dir / "runtime_rules.json").read_text())
+    meta = runtime.get("_meta", {})
+    generated = meta.get("generated_sections", [])
+    protected = meta.get("protected_sections", [])
+
+    assert "classification" in generated, (
+        f"classification must be in generated_sections. Got: {generated}"
+    )
+    assert "classification" not in protected, (
+        f"classification must NOT be in protected_sections. Got: {protected}"
+    )

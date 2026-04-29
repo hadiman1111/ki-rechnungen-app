@@ -136,8 +136,13 @@ _MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = (
 def merge_rules_dicts(base: dict, patch: dict) -> dict:
     """Merge generated profile rules into a base rules dict.
 
-    MVP scope: only presets[*].routing.strassen and
-    presets[*].routing.prioritaetsregeln may be replaced.
+    Replaces the following sections when present in patch:
+    - presets[*].routing.strassen
+    - presets[*].routing.prioritaetsregeln
+    - presets[*].routing.konten
+    - presets[*].routing.business_context_rules
+    - presets[*].classification  (top-level preset section, not under routing)
+
     All other sections remain unchanged from base.
 
     Neither base nor patch is mutated. Returns a deep copy of base
@@ -155,12 +160,17 @@ def merge_rules_dicts(base: dict, patch: dict) -> dict:
         if not isinstance(base_preset, dict):
             continue  # only patch presets that exist in base
 
+        # Merge routing sub-sections
         patch_routing = patch_preset.get("routing") or {}
         base_routing = base_preset.setdefault("routing", {})
 
         for section in _MERGEABLE_ROUTING_SECTIONS:
             if section in patch_routing:
                 base_routing[section] = _copy.deepcopy(patch_routing[section])
+
+        # Merge top-level preset sections (e.g. classification)
+        if "classification" in patch_preset:
+            base_preset["classification"] = _copy.deepcopy(patch_preset["classification"])
 
     return merged
 

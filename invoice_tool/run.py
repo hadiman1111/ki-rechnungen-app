@@ -299,12 +299,17 @@ def run_once(
 
         # 4. Annotate with _meta for traceability (ignored by the parser).
         # Build generated_sections dynamically from what the compiler produced.
-        gen_routing = generated.get("presets", {}).get(active_preset, {}).get("routing", {})
+        gen_preset = generated.get("presets", {}).get(active_preset, {})
+        gen_routing = gen_preset.get("routing", {})
         generated_sections = [
             f"routing.{section}"
             for section in ("strassen", "prioritaetsregeln", "konten", "business_context_rules")
             if section in gen_routing
         ]
+        # classification is a top-level preset section (not under routing)
+        if "classification" in gen_preset:
+            generated_sections.append("classification")
+
         all_protected = [
             "routing.konten",
             "routing.business_context_rules",
