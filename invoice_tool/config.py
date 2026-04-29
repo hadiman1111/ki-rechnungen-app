@@ -123,6 +123,74 @@ def load_office_rules(rules_path: Path, active_preset_override: str | None = Non
     return OfficeRules(active_preset=active_preset, presets=presets)
 
 
+# Routing sections that the Profile Compiler may safely replace.
+# All other sections remain unchanged from the base rules.
+_MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = ("strassen", "prioritaetsregeln")
+
+
+def merge_rules_dicts(base: dict, patch: dict) -> dict:
+    """Merge generated profile rules into a base rules dict.
+
+    MVP scope: only presets[*].routing.strassen and
+    presets[*].routing.prioritaetsregeln may be replaced.
+    All other sections remain unchanged from base.
+
+    Neither base nor patch is mutated. Returns a deep copy of base
+    with the patch applied.
+    """
+    import copy as _copy  # local import to avoid module-level side effects
+
+    merged = _copy.deepcopy(base)
+    patch_presets = patch.get("presets") or {}
+
+    for preset_key, patch_preset in patch_presets.items():
+        if not isinstance(patch_preset, dict):
+            continue
+        base_preset = merged.get("presets", {}).get(preset_key)
+        if not isinstance(base_preset, dict):
+            continue  # only patch presets that exist in base
+
+        patch_routing = patch_preset.get("routing") or {}
+        base_routing = base_preset.setdefault("routing", {})
+
+        for section in _MERGEABLE_ROUTING_SECTIONS:
+            if section in patch_routing:
+                base_routing[section] = _copy.deepcopy(patch_routing[section])
+
+    return merged
+
+
+def load_office_rules_from_dict(
+    rules_dict: dict,
+    base_dir: Path,
+    active_preset_override: str | None = None,
+) -> OfficeRules:
+    """Build an OfficeRules instance from an in-memory dict.
+
+    Identical parsing behaviour to load_office_rules(), but accepts an
+    already-loaded dict instead of a file path. No file I/O is performed.
+    Used to apply runtime rules without touching office_rules.json.
+
+    The dict may contain a top-level "_meta" key (written for traceability);
+    it is silently ignored during parsing.
+    """
+    presets_raw = rules_dict.get("presets")
+    if not isinstance(presets_raw, dict) or not presets_raw:
+        raise ConfigError("Regeldatei enthaelt keine gueltigen 'presets'.")
+
+    active_preset = active_preset_override or rules_dict.get("active_preset")
+    if not isinstance(active_preset, str) or active_preset not in presets_raw:
+        raise ConfigError("Aktives Preset fehlt oder ist ungueltig.")
+
+    presets: dict[str, ProcessingPreset] = {}
+    for preset_key, preset_raw in presets_raw.items():
+        if not isinstance(preset_raw, dict):
+            raise ConfigError(f"Preset '{preset_key}' ist ungueltig.")
+        presets[preset_key] = _parse_preset(preset_key, preset_raw, base_dir)
+
+    return OfficeRules(active_preset=active_preset, presets=presets)
+
+
 def _parse_preset(preset_key: str, preset_raw: dict, base_dir: Path) -> ProcessingPreset:
     schema_raw = preset_raw.get("dateiname_schema")
     if not isinstance(schema_raw, dict):

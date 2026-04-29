@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from invoice_tool.config import ConfigError, load_app_config, load_office_rules
+from invoice_tool.config import ConfigError, load_app_config, load_office_rules, merge_rules_dicts, load_office_rules_from_dict
 from invoice_tool.extraction import ExtractionCoordinator, OpenAIVisionExtractor, TesseractExtractor
 from invoice_tool.models import AppConfig
 from invoice_tool.processing import InvoiceProcessor, ProcessorError
@@ -44,6 +45,7 @@ _OUTPUT_DIRNAME = "output"
 _RUNTIME_DIRNAME = "runtime"
 _LOGS_DIRNAME = "logs"
 _PROFILE_SNAPSHOT_FILENAME = "profile_snapshot.json"
+_RUNTIME_RULES_FILENAME = "runtime_rules.json"
 
 
 # ---------------------------------------------------------------------------
@@ -260,24 +262,80 @@ def run_once(
         else Path(_DEFAULT_CONFIG_FILENAME).resolve()
     )
     base_config = load_app_config(resolved_config)
-    office_rules = load_office_rules(
-        base_config.regeln_datei,
-        active_preset_override=base_config.aktives_preset,
-    )
+
+    # Load base rules dict once (used both for baseline and for merging).
+    try:
+        base_rules_dict = json.loads(base_config.regeln_datei.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RunError(f"Regeldatei konnte nicht gelesen werden: {exc}") from exc
+
+    base_rules_dir = base_config.regeln_datei.parent.resolve()
+    active_preset = base_config.aktives_preset or "office_default"
 
     # --- create run directory and snapshot ---
     run_dir = create_run_dir(output)
     snapshot_dir = create_run_snapshot(source, run_dir)
 
-    # --- profile snapshot (MVP: copy only, not applied) ---
+    # --- profile: compile → merge → runtime_rules ---
     if profile_path is not None:
         profile_src = profile_path.resolve()
         if not profile_src.exists():
             raise RunError(f"profile_path existiert nicht: {profile_src}")
+
+        # 1. Save a snapshot of the profile for traceability.
         shutil.copy2(profile_src, run_dir / _PROFILE_SNAPSHOT_FILENAME)
-        print(
-            f"[run] Profil nach {run_dir / _PROFILE_SNAPSHOT_FILENAME} kopiert. "
-            "Hinweis: Profil wird in diesem MVP noch nicht auf das Routing angewendet."
+
+        # 2. Compile profile → generated patch (strassen + prioritaetsregeln only).
+        from invoice_tool.profile_compiler import compile_profile_to_rules  # noqa: PLC0415
+        try:
+            profile_data = json.loads(profile_src.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RunError(f"profile_path ist kein gueltiges JSON: {exc}") from exc
+
+        generated = compile_profile_to_rules(profile_data, preset_name=active_preset)
+
+        # 3. Merge: only _MERGEABLE_ROUTING_SECTIONS are replaced.
+        merged_dict = merge_rules_dicts(base_rules_dict, generated)
+
+        # 4. Annotate with _meta for traceability (ignored by the parser).
+        merged_dict["_meta"] = {
+            "profile_applied": True,
+            "base_rules_source": str(base_config.regeln_datei),
+            "profile_source": str(profile_src),
+            "generated_sections": ["routing.strassen", "routing.prioritaetsregeln"],
+            "protected_sections": [
+                "routing.konten",
+                "routing.business_context_rules",
+                "routing.payment_detection_rules",
+                "routing.final_assignment_rules",
+                "routing.output_route_rules",
+                "classification",
+                "supplier_cleaning",
+                "dateiname_schema",
+                "invoice_fallbacks",
+            ],
+            "merge_strategy": "replace_generated_sections_only",
+        }
+
+        # 5. Write runtime_rules.json into the run directory.
+        runtime_rules_path = run_dir / _RUNTIME_RULES_FILENAME
+        runtime_rules_path.write_text(
+            json.dumps(merged_dict, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[run] Runtime-Regeln geschrieben: {runtime_rules_path}")
+
+        # 6. Build OfficeRules from merged dict (no file I/O on office_rules.json).
+        office_rules = load_office_rules_from_dict(
+            merged_dict,
+            base_rules_dir,
+            active_preset_override=active_preset,
+        )
+    else:
+        # No profile: use base rules unchanged.
+        office_rules = load_office_rules(
+            base_config.regeln_datei,
+            active_preset_override=base_config.aktives_preset,
         )
 
     # --- build isolated config ---
