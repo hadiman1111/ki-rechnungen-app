@@ -125,7 +125,11 @@ def load_office_rules(rules_path: Path, active_preset_override: str | None = Non
 
 # Routing sections that the Profile Compiler may safely replace.
 # All other sections remain unchanged from the base rules.
-_MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = ("strassen", "prioritaetsregeln")
+_MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = (
+    "strassen",
+    "prioritaetsregeln",
+    "konten",
+)
 
 
 def merge_rules_dicts(base: dict, patch: dict) -> dict:

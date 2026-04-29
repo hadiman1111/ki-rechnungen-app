@@ -298,22 +298,32 @@ def run_once(
         merged_dict = merge_rules_dicts(base_rules_dict, generated)
 
         # 4. Annotate with _meta for traceability (ignored by the parser).
+        # Build generated_sections dynamically from what the compiler produced.
+        gen_routing = generated.get("presets", {}).get(active_preset, {}).get("routing", {})
+        generated_sections = [
+            f"routing.{section}"
+            for section in ("strassen", "prioritaetsregeln", "konten")
+            if section in gen_routing
+        ]
+        all_protected = [
+            "routing.konten",
+            "routing.business_context_rules",
+            "routing.payment_detection_rules",
+            "routing.final_assignment_rules",
+            "routing.output_route_rules",
+            "classification",
+            "supplier_cleaning",
+            "dateiname_schema",
+            "invoice_fallbacks",
+        ]
+        protected_sections = [s for s in all_protected if s not in generated_sections]
+
         merged_dict["_meta"] = {
             "profile_applied": True,
             "base_rules_source": str(base_config.regeln_datei),
             "profile_source": str(profile_src),
-            "generated_sections": ["routing.strassen", "routing.prioritaetsregeln"],
-            "protected_sections": [
-                "routing.konten",
-                "routing.business_context_rules",
-                "routing.payment_detection_rules",
-                "routing.final_assignment_rules",
-                "routing.output_route_rules",
-                "classification",
-                "supplier_cleaning",
-                "dateiname_schema",
-                "invoice_fallbacks",
-            ],
+            "generated_sections": generated_sections,
+            "protected_sections": protected_sections,
             "merge_strategy": "replace_generated_sections_only",
         }
 

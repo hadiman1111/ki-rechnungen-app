@@ -425,3 +425,197 @@ def test_run_once_without_profile_preserves_existing_behavior(tmp_path: Path) ->
         "runtime_rules.json must NOT be written when no profile is provided"
     )
     assert not (run_dir / "profile_snapshot.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# E. merge_rules_dicts: replaces konten
+# ---------------------------------------------------------------------------
+
+
+def _konten_a() -> list[dict]:
+    return [{"name": "bank-a", "konto": "banka", "payment_field": "banka",
+             "art_override": "ai", "karten_endungen": ["1111"],
+             "apple_pay_endungen": [], "iban_endungen": ["1234"],
+             "anbieter_hinweise": ["bank a"], "zuweisungs_hinweise": []}]
+
+
+def _konten_b() -> list[dict]:
+    return [{"name": "bank-b", "konto": "bankb", "payment_field": "bankb",
+             "art_override": "ep", "karten_endungen": ["2222"],
+             "apple_pay_endungen": [], "iban_endungen": [],
+             "anbieter_hinweise": [], "zuweisungs_hinweise": []}]
+
+
+def test_merge_rules_dicts_replaces_konten() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["konten"] = _konten_a()
+
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"konten": _konten_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["konten"] == _konten_b()
+
+
+def test_merge_rules_dicts_without_konten_keeps_base() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["konten"] = _konten_a()
+
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {}}  # no konten key
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["konten"] == _konten_a()
+
+
+# ---------------------------------------------------------------------------
+# F. Protected sections remain unchanged when konten is replaced
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_preserves_other_sections_when_konten_replaced() -> None:
+    base = _minimal_rules_dict()
+    orig_bc = copy.deepcopy(base["presets"]["office_default"]["routing"]["business_context_rules"])
+    orig_fa = copy.deepcopy(base["presets"]["office_default"]["routing"]["final_assignment_rules"])
+    orig_or = copy.deepcopy(base["presets"]["office_default"]["routing"]["output_route_rules"])
+
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"konten": _konten_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+
+    assert merged["presets"]["office_default"]["routing"]["business_context_rules"] == orig_bc
+    assert merged["presets"]["office_default"]["routing"]["final_assignment_rules"] == orig_fa
+    assert merged["presets"]["office_default"]["routing"]["output_route_rules"] == orig_or
+
+
+# ---------------------------------------------------------------------------
+# G. run_once with profile applies generated konten
+# ---------------------------------------------------------------------------
+
+
+def test_run_once_with_profile_applies_generated_konten(tmp_path: Path) -> None:
+    """InvoiceProcessor must receive OfficeRules with konten derived from profile."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+
+    # Build a profile with one distinct account_card_profile
+    profile_data = {
+        "schema_version": "1.0",
+        "profile_name": "Test Konten",
+        "categories": [{"id": "ai", "label": "AI"}],
+        "folders": [{"id": "ai", "label": "AI", "folder_name": "ai"}],
+        "account_card_profiles": [
+            {
+                "id": "unique-test-konto",
+                "label": "Unique Test",
+                "category": "ai",
+                "payment_field": "unique-test",
+                "card_endings": ["9876"],
+                "apple_pay_endings": [],
+                "iban_endings": [],
+                "provider_hints": [],
+                "assignment_hints": [],
+                "enabled": True,
+            }
+        ],
+        "address_profiles": [],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    received = {}
+
+    def capture(config, extractor, *, office_rules):
+        received["rules"] = office_rules
+        return type("M", (), {"process_all": lambda self: []})()
+
+    with patch("invoice_tool.run.InvoiceProcessor", side_effect=capture):
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    office_rules = received.get("rules")
+    assert office_rules is not None
+    konto_names = [k.name for k in office_rules.preset.routing.konten]
+    assert "unique-test-konto" in konto_names, (
+        f"Expected 'unique-test-konto' in konten, got: {konto_names}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# H. runtime_rules _meta reflects routing.konten as generated section
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_rules_meta_includes_konten_generated_section(tmp_path: Path) -> None:
+    """When profile has account_card_profiles, runtime_rules._meta.generated_sections
+    must include 'routing.konten' and protected_sections must NOT include it."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+    profile_path = _make_minimal_profile(tmp_path)
+
+    # Ensure profile has account_card_profiles (it's in the example profile)
+    import json
+    profile_data = json.loads(profile_path.read_text())
+    profile_data["account_card_profiles"] = [
+        {
+            "id": "test-konto",
+            "label": "Test",
+            "category": "ai",
+            "payment_field": "testkonto",
+            "card_endings": [],
+            "apple_pay_endings": [],
+            "iban_endings": [],
+            "provider_hints": [],
+            "assignment_hints": [],
+            "enabled": True,
+        }
+    ]
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    with patch("invoice_tool.run.InvoiceProcessor") as mock_cls:
+        mock_cls.return_value.process_all.return_value = []
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_dir = run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    runtime = json.loads((run_dir / "runtime_rules.json").read_text())
+    meta = runtime.get("_meta", {})
+    generated = meta.get("generated_sections", [])
+    protected = meta.get("protected_sections", [])
+
+    assert "routing.konten" in generated, (
+        f"routing.konten must be in generated_sections when profile has konten. Got: {generated}"
+    )
+    assert "routing.konten" not in protected, (
+        f"routing.konten must NOT be in protected_sections when generated. Got: {protected}"
+    )

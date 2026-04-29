@@ -5,6 +5,9 @@ All other profile sections are outside the MVP scope and are not tested here.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from invoice_tool.profile_compiler import compile_profile_to_rules
@@ -360,3 +363,169 @@ def test_profile_example_json_produces_two_address_entries() -> None:
     assert "rotestrasse" in roete_entries[0]["varianten"], (
         "advanced_variants='rotestrasse' must appear in varianten"
     )
+
+
+# ---------------------------------------------------------------------------
+# account_card_profiles → routing.konten
+# ---------------------------------------------------------------------------
+
+def _get_konten(result: dict, preset: str = "office_default") -> list[dict]:
+    return result["presets"][preset]["routing"].get("konten", [])
+
+
+def test_account_card_profile_generates_konten_entry() -> None:
+    """A single enabled account_card_profile must produce one konten dict."""
+    profile = {
+        "schema_version": "1.0",
+        "profile_name": "Test",
+        "categories": [],
+        "folders": [],
+        "account_card_profiles": [
+            {
+                "id": "my-bank",
+                "label": "My Bank",
+                "category": "ai",
+                "payment_field": "mybank",
+                "card_endings": ["1234", "5678"],
+                "apple_pay_endings": ["9999"],
+                "iban_endings": ["0001"],
+                "provider_hints": ["my bank", "mybank gmbh"],
+                "assignment_hints": ["ai"],
+                "enabled": True,
+            }
+        ],
+        "address_profiles": [],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    result = compile_profile_to_rules(profile)
+    konten = _get_konten(result)
+
+    assert len(konten) == 1
+    k = konten[0]
+    assert k["name"] == "my-bank"
+    assert k["payment_field"] == "mybank"
+    assert k["konto"] == "mybank"
+    assert k["art_override"] == "ai"
+    assert k["karten_endungen"] == ["1234", "5678"]
+    assert k["apple_pay_endungen"] == ["9999"]
+    assert k["iban_endungen"] == ["0001"]
+    assert k["anbieter_hinweise"] == ["my bank", "mybank gmbh"]
+    assert k["zuweisungs_hinweise"] == ["ai"]
+
+
+def test_account_card_profile_unklar_category_gives_no_art_override() -> None:
+    """category='unklar' must produce art_override=None (no forced category)."""
+    profile = _make_profile(
+        id="amex-profile",
+        label="Amex",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    # Override to test account_card_profiles specifically
+    profile["account_card_profiles"] = [
+        {
+            "id": "amex",
+            "label": "American Express",
+            "category": "unklar",
+            "payment_field": "amex",
+            "card_endings": ["1005"],
+            "apple_pay_endings": [],
+            "iban_endings": [],
+            "provider_hints": ["american express"],
+            "assignment_hints": [],
+            "enabled": True,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    konten = _get_konten(result)
+    assert len(konten) == 1
+    assert konten[0]["art_override"] is None, (
+        "category='unklar' must yield art_override=None"
+    )
+
+
+def test_account_card_profile_disabled_is_skipped() -> None:
+    """enabled=False must result in no konten entry."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["account_card_profiles"] = [
+        {
+            "id": "disabled-bank",
+            "label": "Disabled",
+            "category": "ai",
+            "payment_field": "disabledbank",
+            "card_endings": ["0000"],
+            "apple_pay_endings": [],
+            "iban_endings": [],
+            "provider_hints": [],
+            "assignment_hints": [],
+            "enabled": False,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    assert _get_konten(result) == []
+
+
+def test_account_card_profile_missing_lists_default_to_empty() -> None:
+    """Optional list fields absent from the profile must default to empty lists."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["account_card_profiles"] = [
+        {
+            "id": "minimal",
+            "label": "Minimal",
+            "category": "private",
+            "payment_field": "minimal",
+            "enabled": True,
+            # All list fields absent
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    konten = _get_konten(result)
+
+    assert len(konten) == 1
+    k = konten[0]
+    assert k["karten_endungen"] == []
+    assert k["apple_pay_endungen"] == []
+    assert k["iban_endungen"] == []
+    assert k["anbieter_hinweise"] == []
+    assert k["zuweisungs_hinweise"] == []
+
+    # Must be parseable by load_office_rules_from_dict
+    from pathlib import Path
+    from invoice_tool.config import load_office_rules_from_dict, merge_rules_dicts
+    rules_dict = json.loads(Path("office_rules.json").read_text(encoding="utf-8"))
+    merged = merge_rules_dicts(rules_dict, result)
+    base_dir = Path("office_rules.json").resolve().parent
+    office_rules = load_office_rules_from_dict(merged, base_dir)
+    assert office_rules is not None
+
+
+def test_compile_profile_example_generates_konten_entries() -> None:
+    """profile_config.example.json must produce konten from account_card_profiles."""
+    example_profile = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    result = compile_profile_to_rules(example_profile)
+    konten = _get_konten(result)
+
+    # profile_config.example.json has 5 account_card_profiles, all enabled
+    assert len(konten) == 5, f"Expected 5 konten, got {len(konten)}: {[k['name'] for k in konten]}"
+    names = {k["name"] for k in konten}
+    assert "amex" in names
+    assert "vobaai" in names
+    assert "vobaep" in names
