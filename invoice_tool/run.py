@@ -313,10 +313,18 @@ def run_once(
         if "classification" in gen_preset:
             generated_sections.append("classification")
 
+        # payment_detection_rules uses PREPEND strategy (profile rules first, base rules kept).
+        # It appears in generated_sections when the profile contributed rules, but is never
+        # fully "protected" because both profile and base rules are always active.
+        prepended_sections = [
+            f"routing.{section}"
+            for section in ("payment_detection_rules",)
+            if section in gen_routing
+        ]
+
         all_protected = [
             "routing.konten",
             "routing.business_context_rules",
-            "routing.payment_detection_rules",
             "routing.final_assignment_rules",
             "routing.output_route_rules",
             "classification",
@@ -331,8 +339,9 @@ def run_once(
             "base_rules_source": str(base_config.regeln_datei),
             "profile_source": str(profile_src),
             "generated_sections": generated_sections,
+            "prepended_sections": prepended_sections,
             "protected_sections": protected_sections,
-            "merge_strategy": "replace_generated_sections_only",
+            "merge_strategy": "replace_generated_sections_prepend_payment_detection",
         }
 
         # 5. Write runtime_rules.json into the run directory.

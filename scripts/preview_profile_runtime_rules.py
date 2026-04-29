@@ -121,10 +121,15 @@ def main(argv: list[str] | None = None) -> int:
     if "classification" in gen_preset:
         generated_sections.append("classification")
 
+    prepended_sections = [
+        f"routing.{section}"
+        for section in ("payment_detection_rules",)
+        if section in gen_routing
+    ]
+
     all_protected = [
         "routing.konten",
         "routing.business_context_rules",
-        "routing.payment_detection_rules",
         "routing.final_assignment_rules",
         "routing.output_route_rules",
         "classification",
@@ -139,8 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         "base_rules_source": str(rules_path),
         "profile_source": str(profile_path),
         "generated_sections": generated_sections,
+        "prepended_sections": prepended_sections,
         "protected_sections": protected_sections,
-        "merge_strategy": "replace_generated_sections_only",
+        "merge_strategy": "replace_generated_sections_prepend_payment_detection",
         "preview_mode": True,
     }
 

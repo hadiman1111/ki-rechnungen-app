@@ -1013,14 +1013,21 @@ def _pdr_b() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def test_merge_rules_dicts_replaces_payment_detection_rules() -> None:
+def test_merge_rules_dicts_prepends_payment_detection_rules() -> None:
+    """payment_detection_rules uses PREPEND strategy: profile rules come first,
+    base rules are preserved (not replaced)."""
     base = _minimal_rules_dict()
     base["presets"]["office_default"]["routing"]["payment_detection_rules"] = _pdr_a()
     patch = {"active_preset": "office_default", "presets": {
         "office_default": {"routing": {"payment_detection_rules": _pdr_b()}}
     }}
     merged = merge_rules_dicts(base, patch)
-    assert merged["presets"]["office_default"]["routing"]["payment_detection_rules"] == _pdr_b()
+    result = merged["presets"]["office_default"]["routing"]["payment_detection_rules"]
+    # Profile rules come first (higher priority)
+    assert result[0] == _pdr_b()[0], "Profile rule must be first"
+    # Base rules are preserved after profile rules
+    assert result[-1] == _pdr_a()[0], "Base rule must be preserved at end"
+    assert len(result) == 2
 
 
 def test_merge_rules_dicts_without_pdr_keeps_base() -> None:
@@ -1122,9 +1129,11 @@ def test_runtime_rules_meta_includes_pdr_generated_section(tmp_path: Path) -> No
     runtime = json.loads((run_dir / "runtime_rules.json").read_text())
     meta = runtime.get("_meta", {})
     generated = meta.get("generated_sections", [])
+    prepended = meta.get("prepended_sections", [])
     protected = meta.get("protected_sections", [])
 
     assert "routing.payment_detection_rules" in generated
+    assert "routing.payment_detection_rules" in prepended
     assert "routing.payment_detection_rules" not in protected
 
 
@@ -1154,7 +1163,10 @@ def test_preview_script_produces_valid_json(tmp_path: Path) -> None:
 
 
 def test_preview_script_contains_payment_detection_rules(tmp_path: Path) -> None:
-    """Preview output must contain payment_detection_rules when profile has vendor_profiles."""
+    """Preview output must contain prepended payment_detection_rules.
+
+    Profile rules appear first; base generic rules are preserved after them.
+    """
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
     from preview_profile_runtime_rules import main
@@ -1163,8 +1175,16 @@ def test_preview_script_contains_payment_detection_rules(tmp_path: Path) -> None
     main(["--profile", "profile_config.example.json", "--output", str(output)])
     data = json.loads(output.read_text())
     meta = data.get("_meta", {})
-    # cursor-anysphere vendor should produce routing.payment_detection_rules
+
     assert "routing.payment_detection_rules" in meta.get("generated_sections", [])
+    assert "routing.payment_detection_rules" in meta.get("prepended_sections", [])
+
     pdr = data.get("presets", {}).get("office_default", {}).get(
         "routing", {}).get("payment_detection_rules", [])
-    assert any(r.get("name") == "cursor-anysphere" for r in pdr)
+    names = [r.get("name") for r in pdr]
+
+    # Profile rule is first (higher priority)
+    assert names[0] == "cursor-anysphere", f"Profile rule must be first, got: {names}"
+    # Base generic rules are preserved
+    assert "explicit-amex" in names, f"Base rule explicit-amex must be preserved: {names}"
+    assert len(pdr) > 1, "Both profile and base rules must be present"

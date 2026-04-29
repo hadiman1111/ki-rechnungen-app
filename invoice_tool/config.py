@@ -123,26 +123,35 @@ def load_office_rules(rules_path: Path, active_preset_override: str | None = Non
     return OfficeRules(active_preset=active_preset, presets=presets)
 
 
-# Routing sections that the Profile Compiler may safely replace.
-# All other sections remain unchanged from the base rules.
-_MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = (
+# Routing sections that the Profile Compiler fully replaces (user-specific data).
+# A profile's values completely override the base rules for these sections.
+_REPLACE_ROUTING_SECTIONS: tuple[str, ...] = (
     "strassen",
     "prioritaetsregeln",
     "konten",
     "business_context_rules",
-    "payment_detection_rules",
 )
+
+# Routing sections where profile rules are PREPENDED before the base rules.
+# The base generic rules are kept; profile-specific rules run first (higher priority).
+# This is appropriate for payment_detection_rules: generic IBAN/SEPA/amex detection
+# must always be active; vendor-specific rules add on top.
+_PREPEND_ROUTING_SECTIONS: tuple[str, ...] = ("payment_detection_rules",)
 
 
 def merge_rules_dicts(base: dict, patch: dict) -> dict:
     """Merge generated profile rules into a base rules dict.
 
-    Replaces the following sections when present in patch:
+    Replaces the following sections when present in patch (user-specific, no base fallback):
     - presets[*].routing.strassen
     - presets[*].routing.prioritaetsregeln
     - presets[*].routing.konten
     - presets[*].routing.business_context_rules
     - presets[*].classification  (top-level preset section, not under routing)
+
+    Prepends the following sections when present in patch (generic base rules preserved):
+    - presets[*].routing.payment_detection_rules
+      Profile rules come first (higher priority); base generic rules follow.
 
     All other sections remain unchanged from base.
 
@@ -161,13 +170,20 @@ def merge_rules_dicts(base: dict, patch: dict) -> dict:
         if not isinstance(base_preset, dict):
             continue  # only patch presets that exist in base
 
-        # Merge routing sub-sections
         patch_routing = patch_preset.get("routing") or {}
         base_routing = base_preset.setdefault("routing", {})
 
-        for section in _MERGEABLE_ROUTING_SECTIONS:
+        # Full-replace sections (user-specific)
+        for section in _REPLACE_ROUTING_SECTIONS:
             if section in patch_routing:
                 base_routing[section] = _copy.deepcopy(patch_routing[section])
+
+        # Prepend sections: profile rules first, then existing base rules
+        for section in _PREPEND_ROUTING_SECTIONS:
+            if section in patch_routing:
+                profile_entries = _copy.deepcopy(patch_routing[section])
+                existing = base_routing.get(section) or []
+                base_routing[section] = profile_entries + _copy.deepcopy(existing)
 
         # Merge top-level preset sections (e.g. classification)
         if "classification" in patch_preset:
