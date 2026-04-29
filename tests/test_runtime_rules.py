@@ -619,3 +619,197 @@ def test_runtime_rules_meta_includes_konten_generated_section(tmp_path: Path) ->
     assert "routing.konten" not in protected, (
         f"routing.konten must NOT be in protected_sections when generated. Got: {protected}"
     )
+
+
+def _bc_rule_a() -> list[dict]:
+    return [{"name": "ctx-a", "text_all": ["x"], "text_any": ["y"], "art": "ai", "match_source": "enriched_text"}]
+
+
+def _bc_rule_b() -> list[dict]:
+    return [{"name": "ctx-b", "text_all": [], "text_any": ["z"], "art": "ep", "match_source": "raw_text"}]
+
+
+# ---------------------------------------------------------------------------
+# F. merge_rules_dicts: replaces business_context_rules
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_replaces_business_context_rules() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["business_context_rules"] = _bc_rule_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"business_context_rules": _bc_rule_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["business_context_rules"] == _bc_rule_b()
+
+
+def test_merge_rules_dicts_without_bc_rules_keeps_base() -> None:
+    base = _minimal_rules_dict()
+    base["presets"]["office_default"]["routing"]["business_context_rules"] = _bc_rule_a()
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+    assert merged["presets"]["office_default"]["routing"]["business_context_rules"] == _bc_rule_a()
+
+
+# ---------------------------------------------------------------------------
+# G. Protected sections unchanged when bc_rules replaced
+# ---------------------------------------------------------------------------
+
+
+def test_merge_rules_dicts_preserves_other_sections_when_bc_rules_replaced() -> None:
+    base = _minimal_rules_dict()
+    orig_fa = copy.deepcopy(base["presets"]["office_default"]["routing"]["final_assignment_rules"])
+    orig_or = copy.deepcopy(base["presets"]["office_default"]["routing"]["output_route_rules"])
+    orig_pd = copy.deepcopy(base["presets"]["office_default"]["routing"]["payment_detection_rules"])
+    orig_cl = copy.deepcopy(base["presets"]["office_default"]["classification"])
+    orig_sc = copy.deepcopy(base["presets"]["office_default"]["supplier_cleaning"])
+
+    patch = {"active_preset": "office_default", "presets": {
+        "office_default": {"routing": {"business_context_rules": _bc_rule_b()}}
+    }}
+    merged = merge_rules_dicts(base, patch)
+
+    assert merged["presets"]["office_default"]["routing"]["final_assignment_rules"] == orig_fa
+    assert merged["presets"]["office_default"]["routing"]["output_route_rules"] == orig_or
+    assert merged["presets"]["office_default"]["routing"]["payment_detection_rules"] == orig_pd
+    assert merged["presets"]["office_default"]["classification"] == orig_cl
+    assert merged["presets"]["office_default"]["supplier_cleaning"] == orig_sc
+
+
+# ---------------------------------------------------------------------------
+# H. run_once with profile applies generated business_context_rules
+# ---------------------------------------------------------------------------
+
+
+def test_run_once_with_profile_applies_generated_business_context_rules(tmp_path: Path) -> None:
+    """InvoiceProcessor must receive OfficeRules with business_context_rules from profile."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+
+    profile_data = {
+        "schema_version": "1.0",
+        "profile_name": "Test BC",
+        "categories": [{"id": "ai", "label": "AI"}],
+        "folders": [{"id": "ai", "label": "AI", "folder_name": "ai"}],
+        "account_card_profiles": [],
+        "address_profiles": [],
+        "business_context_profiles": [
+            {
+                "id": "unique-test-ctx",
+                "label": "Unique Test Context",
+                "required_keywords": ["unique-firm"],
+                "optional_keywords": ["unique-keyword"],
+                "category": "ai",
+                "match_source": "raw_text",
+                "enabled": True,
+            }
+        ],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    received = {}
+
+    def capture(config, extractor, *, office_rules):
+        received["rules"] = office_rules
+        return type("M", (), {"process_all": lambda self: []})()
+
+    with patch("invoice_tool.run.InvoiceProcessor", side_effect=capture):
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    office_rules = received.get("rules")
+    assert office_rules is not None
+    bc_names = [bc.name for bc in office_rules.preset.routing.business_context_rules]
+    assert "unique-test-ctx" in bc_names, (
+        f"Expected 'unique-test-ctx' in business_context_rules, got: {bc_names}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# I. runtime_rules _meta includes business_context_rules as generated section
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_rules_meta_includes_business_context_generated_section(tmp_path: Path) -> None:
+    """When profile has business_context_profiles, runtime_rules._meta.generated_sections
+    must include 'routing.business_context_rules' and protected_sections must NOT."""
+    from invoice_tool.run import run_once
+
+    config_path = _make_run_config_path(tmp_path)
+
+    profile_data = {
+        "schema_version": "1.0",
+        "profile_name": "Test BC Meta",
+        "categories": [],
+        "folders": [],
+        "account_card_profiles": [],
+        "address_profiles": [],
+        "business_context_profiles": [
+            {
+                "id": "meta-test-ctx",
+                "label": "Meta Test",
+                "required_keywords": [],
+                "optional_keywords": ["meta-keyword"],
+                "category": "ai",
+                "enabled": True,
+            }
+        ],
+        "naming_profile": {"separator": "_", "max_length": 50, "fields": [], "fallback_values": {}},
+        "review_policy": {
+            "unclear_folder": "unklar",
+            "business_unclear_payment_goes_to_unclear": True,
+            "private_unclear_attributes_stay_private": True,
+        },
+    }
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "test.pdf")
+
+    with patch("invoice_tool.run.InvoiceProcessor") as mock_cls:
+        mock_cls.return_value.process_all.return_value = []
+        with patch("invoice_tool.run.TesseractExtractor", side_effect=Exception("no tesseract")):
+            with patch("invoice_tool.run.OpenAIVisionExtractor"):
+                with patch("invoice_tool.run.ExtractionCoordinator"):
+                    run_dir = run_once(
+                        source=source,
+                        output=tmp_path / "runs",
+                        config_path=config_path,
+                        profile_path=profile_path,
+                    )
+
+    runtime = json.loads((run_dir / "runtime_rules.json").read_text())
+    meta = runtime.get("_meta", {})
+    generated = meta.get("generated_sections", [])
+    protected = meta.get("protected_sections", [])
+
+    assert "routing.business_context_rules" in generated, (
+        f"routing.business_context_rules must be in generated_sections. Got: {generated}"
+    )
+    assert "routing.business_context_rules" not in protected, (
+        f"routing.business_context_rules must NOT be in protected_sections. Got: {protected}"
+    )

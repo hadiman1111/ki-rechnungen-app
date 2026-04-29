@@ -4,16 +4,16 @@ Translates a user-facing profile_config (dict) into the technical
 office_rules format. Pure function: no file I/O, no side effects.
 
 Scope:
-  address_profiles       →  routing.strassen
-  address_profiles       →  routing.prioritaetsregeln
-                             (when exclude_if_text_contains is set)
-  account_card_profiles  →  routing.konten
+  address_profiles         →  routing.strassen
+  address_profiles         →  routing.prioritaetsregeln
+                               (when exclude_if_text_contains is set)
+  account_card_profiles    →  routing.konten
+  business_context_profiles → routing.business_context_rules
 
-All other profile sections (business_context_profiles, vendor_profiles,
-classification_profile, naming_profile, supplier_cleaning,
-final_assignment_rules, output_route_rules) are NOT yet handled by this
-compiler and remain the responsibility of the manually maintained
-office_rules.json.
+All other profile sections (vendor_profiles, classification_profile,
+naming_profile, supplier_cleaning, final_assignment_rules,
+output_route_rules) are NOT yet handled by this compiler and remain
+the responsibility of the manually maintained office_rules.json.
 
 Design principles:
 - No SOMAA-specific logic, no user-specific hardcoding.
@@ -184,6 +184,43 @@ def _compile_account_card_profiles(
     return konten
 
 
+def _compile_business_context_profiles(
+    business_context_profiles: list[dict],
+) -> list[dict]:
+    """Translate business_context_profile dicts into routing.business_context_rules entries.
+
+    Each enabled business_context_profile produces one business_context_rules dict
+    matching the structure expected by config._parse_business_context_rules.
+
+    Field mapping:
+        id                → name
+        required_keywords → text_all
+        optional_keywords → text_any
+        category          → art
+        match_source      → match_source  (default: "enriched_text")
+        enabled=false     → skipped
+    """
+    rules: list[dict] = []
+
+    for bcp in business_context_profiles:
+        if not bcp.get("enabled", True):
+            continue
+
+        profile_id: str = bcp.get("id", "")
+        if not profile_id:
+            continue
+
+        rules.append({
+            "name": profile_id,
+            "text_all": list(bcp.get("required_keywords") or []),
+            "text_any": list(bcp.get("optional_keywords") or []),
+            "art": bcp.get("category", ""),
+            "match_source": bcp.get("match_source", "enriched_text"),
+        })
+
+    return rules
+
+
 # -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
@@ -197,12 +234,13 @@ def compile_profile_to_rules(
 
     Generates the following routing sections when the corresponding profile
     sections are present:
-    - address_profiles      → routing.strassen + routing.prioritaetsregeln
-    - account_card_profiles → routing.konten
+    - address_profiles          → routing.strassen + routing.prioritaetsregeln
+    - account_card_profiles     → routing.konten
+    - business_context_profiles → routing.business_context_rules
 
-    All other routing sections (business_context_rules, payment_detection_rules,
-    final_assignment_rules, output_route_rules) are not generated here and
-    remain in the manually maintained office_rules.json.
+    All other routing sections (payment_detection_rules, final_assignment_rules,
+    output_route_rules) are not generated here and remain in the manually
+    maintained office_rules.json.
 
     Args:
         profile:     Parsed profile_config, e.g. loaded from profile_config.json.
@@ -219,12 +257,17 @@ def compile_profile_to_rules(
     account_card_profiles: list[dict] = list(profile.get("account_card_profiles") or [])
     konten = _compile_account_card_profiles(account_card_profiles)
 
+    business_context_profiles: list[dict] = list(profile.get("business_context_profiles") or [])
+    business_context_rules = _compile_business_context_profiles(business_context_profiles)
+
     routing: dict = {
         "strassen": strassen,
         "prioritaetsregeln": prioritaetsregeln,
     }
     if konten:
         routing["konten"] = konten
+    if business_context_rules:
+        routing["business_context_rules"] = business_context_rules
 
     return {
         "active_preset": preset_name,

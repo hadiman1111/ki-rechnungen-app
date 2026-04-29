@@ -302,7 +302,7 @@ def run_once(
         gen_routing = generated.get("presets", {}).get(active_preset, {}).get("routing", {})
         generated_sections = [
             f"routing.{section}"
-            for section in ("strassen", "prioritaetsregeln", "konten")
+            for section in ("strassen", "prioritaetsregeln", "konten", "business_context_rules")
             if section in gen_routing
         ]
         all_protected = [

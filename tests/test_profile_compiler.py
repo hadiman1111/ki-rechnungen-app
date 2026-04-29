@@ -529,3 +529,132 @@ def test_compile_profile_example_generates_konten_entries() -> None:
     assert "amex" in names
     assert "vobaai" in names
     assert "vobaep" in names
+
+
+# ---------------------------------------------------------------------------
+# business_context_profiles → routing.business_context_rules
+# ---------------------------------------------------------------------------
+
+def _get_bc_rules(result: dict, preset: str = "office_default") -> list[dict]:
+    return result["presets"][preset]["routing"].get("business_context_rules", [])
+
+
+def test_business_context_profile_generates_rule() -> None:
+    """A single enabled business_context_profile must produce one business_context_rules entry."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["business_context_profiles"] = [
+        {
+            "id": "my-firm",
+            "label": "My Firm",
+            "required_keywords": ["myfirm", "client"],
+            "optional_keywords": ["architektur", "design"],
+            "category": "ai",
+            "match_source": "raw_text",
+            "enabled": True,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    bc_rules = _get_bc_rules(result)
+
+    assert len(bc_rules) == 1
+    rule = bc_rules[0]
+    assert rule["name"] == "my-firm"
+    assert rule["art"] == "ai"
+    assert rule["text_all"] == ["myfirm", "client"]
+    assert rule["text_any"] == ["architektur", "design"]
+    assert rule["match_source"] == "raw_text"
+
+
+def test_business_context_profile_disabled_is_skipped() -> None:
+    """enabled=False must result in no business_context_rules entry."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["business_context_profiles"] = [
+        {
+            "id": "disabled-ctx",
+            "label": "Disabled",
+            "required_keywords": ["x"],
+            "optional_keywords": [],
+            "category": "ai",
+            "enabled": False,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    assert _get_bc_rules(result) == []
+
+
+def test_business_context_profile_match_source_defaults_to_enriched_text() -> None:
+    """Absent match_source must default to 'enriched_text'."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["business_context_profiles"] = [
+        {
+            "id": "ctx-no-source",
+            "label": "No Source",
+            "required_keywords": [],
+            "optional_keywords": ["keyword"],
+            "category": "ai",
+            "enabled": True,
+            # match_source absent
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    bc_rules = _get_bc_rules(result)
+    assert len(bc_rules) == 1
+    assert bc_rules[0]["match_source"] == "enriched_text"
+
+
+def test_business_context_profile_raw_text_is_preserved() -> None:
+    """match_source='raw_text' must appear in the output."""
+    profile = _make_profile(
+        id="test",
+        label="Test",
+        category="ai",
+        canonical_address={"street": "Bismarckstraße"},
+        enabled=True,
+    )
+    profile["business_context_profiles"] = [
+        {
+            "id": "ctx-raw",
+            "label": "Raw",
+            "required_keywords": ["firm", "keyword"],
+            "optional_keywords": ["extra"],
+            "category": "ep",
+            "match_source": "raw_text",
+            "enabled": True,
+        }
+    ]
+    result = compile_profile_to_rules(profile)
+    bc_rules = _get_bc_rules(result)
+    assert len(bc_rules) == 1
+    assert bc_rules[0]["match_source"] == "raw_text"
+
+
+def test_compile_profile_example_generates_business_context_rules() -> None:
+    """profile_config.example.json must produce business_context_rules."""
+    example_profile = json.loads(Path("profile_config.example.json").read_text(encoding="utf-8"))
+    result = compile_profile_to_rules(example_profile)
+    bc_rules = _get_bc_rules(result)
+
+    # profile_config.example.json has 3 enabled business_context_profiles
+    assert len(bc_rules) == 3
+    names = {r["name"] for r in bc_rules}
+    assert "somaa-event-production" in names
+    assert "somaa-architektur-innenarchitektur" in names
+    assert "somaa-unspecified" in names

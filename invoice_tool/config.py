@@ -129,6 +129,7 @@ _MERGEABLE_ROUTING_SECTIONS: tuple[str, ...] = (
     "strassen",
     "prioritaetsregeln",
     "konten",
+    "business_context_rules",
 )
 
 
