@@ -1,0 +1,54 @@
+---
+description: Projektregeln für KI-Rechnungen-App – gilt für alle Cursor-Aufträge in diesem Repo.
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# KI-Rechnungen – Cursor Workflow Rules
+
+## Standardablauf
+- Jeden Auftrag mit `git status`, letztem Commit und Branch-Abstand zu `origin/main` beginnen.
+- Am Ende Git-Zustand erneut prüfen.
+- Wenn Working Tree nicht clean und Auftrag erlaubt keinen Umgang damit: stoppen und berichten.
+
+## Git
+- Kein Push, kein Commit außer ausdrücklich erlaubt.
+- Nur relevante Dateien stagen.
+- Keine generierten Output-/Runtime-/`/tmp`-Dateien committen.
+- `profile_config.local*.json` und `config/profile_config.local*.json` sind git-ignoriert – niemals committen.
+
+## Datenschutz
+- Keine vollständigen IBANs, Kartennummern oder API-Keys ausgeben.
+- Gekürzte Endungen (`****1234`) nur wenn bereits im Projekt vorhanden oder vom Nutzer freigegeben.
+
+## Datei- und Originalschutz
+- Original-PDFs niemals verändern.
+- Processing Core arbeitet nur auf Snapshots/Arbeitskopien.
+- Output nur in vorgesehene Output- oder `/tmp`-Ordner.
+
+## Profil- und Runtime-Regeln
+- `office_rules.json` darf nicht dauerhaft überschrieben werden.
+- Nutzerprofile erzeugen Runtime Rules pro Lauf (nie persistent).
+- `routing.payment_detection_rules` nutzt PREPEND: Profilregeln zuerst, Basisregeln erhalten.
+- `_meta.generated_sections` und `_meta.prepended_sections` dokumentieren was das Profil erzeugt hat.
+
+## Tests
+- Bei Produktcodeänderungen: `./.venv/bin/pytest -q`
+- Bei reinen Doku-/`.gitignore`-Änderungen: Tests nicht nötig, im Bericht begründen.
+- Smoke-Test prüft immer: Final Status, Reports, `runtime_rules.json`, `profile_snapshot.json`, `profile_applied`, Source unverändert, Laufwerte.
+- Abgebrochene Smoke-Tests gelten nicht als bestanden.
+
+## Berichtstruktur
+1. Git-Ausgangszustand
+2. Änderung / Prüfung
+3. Tests oder Begründung ohne Tests
+4. Abschlussstand
+5. Bewertung / nächster Schritt
+
+## Arbeitsweise
+- Kurz und entscheidungsfähig berichten.
+- Keine unnötigen Alternativen bei kleinen Aufträgen.
+- Bei riskanten Änderungen stoppen und berichten.
+
+## Referenz
+Vollständige Regeln: `docs/CURSOR_WORKFLOW_RULES.md`

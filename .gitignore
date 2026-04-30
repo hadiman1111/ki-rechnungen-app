@@ -16,7 +16,9 @@ testing/output/
 testing/documents/*.pdf
 testing/input/*.pdf
 testing/input/archiv/
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 
 # Local profile configs (personalized, may contain real card/IBAN endings – never commit)
 profile_config.local*.json
