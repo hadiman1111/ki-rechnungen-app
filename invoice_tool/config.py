@@ -185,9 +185,11 @@ def merge_rules_dicts(base: dict, patch: dict) -> dict:
                 existing = base_routing.get(section) or []
                 base_routing[section] = profile_entries + _copy.deepcopy(existing)
 
-        # Merge top-level preset sections (e.g. classification)
+        # Merge top-level preset sections (classification, dateiname_schema)
         if "classification" in patch_preset:
             base_preset["classification"] = _copy.deepcopy(patch_preset["classification"])
+        if "dateiname_schema" in patch_preset:
+            base_preset["dateiname_schema"] = _copy.deepcopy(patch_preset["dateiname_schema"])
 
     return merged
 

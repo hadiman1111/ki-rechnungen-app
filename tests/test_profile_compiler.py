@@ -905,3 +905,138 @@ def test_validate_profile_disabled_entries_not_flagged() -> None:
     }
     issues = validate_profile(profile)
     assert issues == [], f"Disabled entries must not cause issues: {issues}"
+
+
+# ---------------------------------------------------------------------------
+# _compile_naming_profile
+# ---------------------------------------------------------------------------
+
+from invoice_tool.profile_compiler import _compile_naming_profile  # noqa: E402
+
+
+class TestCompileNamingProfile:
+    def _standard_profile(self) -> dict:
+        return {
+            "separator": "_",
+            "max_length": 50,
+            "fields": [
+                {"key": "invoice_date", "label": "Datum", "enabled": True},
+                {"key": "literal_er", "label": "er", "enabled": True},
+                {"key": "art", "label": "Kategorie", "enabled": True},
+                {"key": "supplier", "label": "Lieferant", "enabled": True},
+                {"key": "amount", "label": "Betrag", "enabled": True},
+                {"key": "payment_field", "label": "Zahlung", "enabled": True},
+            ],
+        }
+
+    def test_separator_and_max_laenge(self):
+        result = _compile_naming_profile({"separator": "-", "max_length": 80, "fields": []})
+        assert result["separator"] == "-"
+        assert result["max_laenge"] == 80
+
+    def test_erweiterung_always_pdf(self):
+        result = _compile_naming_profile({})
+        assert result["erweiterung"] == ".pdf"
+
+    def test_invoice_date_field(self):
+        result = _compile_naming_profile({"fields": [{"key": "invoice_date", "enabled": True}]})
+        f = result["felder"][0]
+        assert f["typ"] == "datum"
+        assert f["quelle"] == "invoice_date"
+        assert f["format"] == "jjmmtt"
+        assert f["aktiv"] is True
+
+    def test_literal_field(self):
+        result = _compile_naming_profile({"fields": [{"key": "literal_er", "enabled": True}]})
+        f = result["felder"][0]
+        assert f["typ"] == "literal"
+        assert f["wert"] == "er"
+        assert f["aktiv"] is True
+
+    def test_literal_field_disabled(self):
+        result = _compile_naming_profile({"fields": [{"key": "literal_er", "enabled": False}]})
+        assert result["felder"][0]["aktiv"] is False
+
+    def test_wert_field(self):
+        result = _compile_naming_profile({"fields": [{"key": "supplier", "enabled": True}]})
+        f = result["felder"][0]
+        assert f["typ"] == "wert"
+        assert f["quelle"] == "supplier"
+
+    def test_full_standard_profile_produces_six_fields(self):
+        result = _compile_naming_profile(self._standard_profile())
+        assert len(result["felder"]) == 6
+
+    def test_empty_fields_list(self):
+        result = _compile_naming_profile({"fields": []})
+        assert result["felder"] == []
+
+    def test_empty_profile_uses_defaults(self):
+        result = _compile_naming_profile({})
+        assert result["separator"] == "_"
+        assert result["max_laenge"] == 50
+
+    def test_field_with_empty_key_is_skipped(self):
+        result = _compile_naming_profile({"fields": [{"key": "", "enabled": True}, {"key": "art", "enabled": True}]})
+        assert len(result["felder"]) == 1
+        assert result["felder"][0]["quelle"] == "art"
+
+
+class TestNamingProfileMerge:
+    """Test that naming_profile flows through compile_profile_to_rules and merge_rules_dicts."""
+
+    def _base_rules(self, preset: str = "office_default") -> dict:
+        return {
+            "active_preset": preset,
+            "presets": {
+                preset: {
+                    "dateiname_schema": {
+                        "separator": "_", "max_laenge": 50, "erweiterung": ".pdf", "felder": []
+                    },
+                    "routing": {},
+                    "classification": {},
+                }
+            },
+        }
+
+    def test_naming_profile_appears_in_generated_preset(self):
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {
+            "naming_profile": {
+                "separator": "-",
+                "max_length": 40,
+                "fields": [{"key": "art", "enabled": True}],
+            }
+        }
+        generated = compile_profile_to_rules(profile, preset_name="office_default")
+        preset = generated["presets"]["office_default"]
+        assert "dateiname_schema" in preset
+        assert preset["dateiname_schema"]["separator"] == "-"
+        assert preset["dateiname_schema"]["max_laenge"] == 40
+
+    def test_merge_replaces_dateiname_schema(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {
+            "naming_profile": {
+                "separator": "-",
+                "max_length": 40,
+                "fields": [{"key": "art", "enabled": True}],
+            }
+        }
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        schema = merged["presets"]["office_default"]["dateiname_schema"]
+        assert schema["separator"] == "-"
+        assert schema["max_laenge"] == 40
+
+    def test_no_naming_profile_leaves_schema_unchanged(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {}  # no naming_profile
+        base = self._base_rules()
+        original_schema = base["presets"]["office_default"]["dateiname_schema"].copy()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        assert merged["presets"]["office_default"]["dateiname_schema"] == original_schema

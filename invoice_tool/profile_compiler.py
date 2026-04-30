@@ -11,8 +11,9 @@ Scope:
   business_context_profiles →  routing.business_context_rules
   vendor_profiles           →  routing.payment_detection_rules
   classification_profile    →  classification
+  naming_profile            →  dateiname_schema
 
-All other profile sections (naming_profile, supplier_cleaning,
+All other profile sections (supplier_cleaning, review_policy,
 final_assignment_rules, output_route_rules) are NOT yet handled by this
 compiler and remain the responsibility of the manually maintained
 office_rules.json.
@@ -340,6 +341,49 @@ def validate_profile(profile: dict) -> list[str]:
 
 
 # -----------------------------------------------------------------------
+# naming_profile compiler
+# -----------------------------------------------------------------------
+
+def _compile_naming_profile(naming_profile: dict) -> dict:
+    """Translate a naming_profile dict into the dateiname_schema format.
+
+    Profile field keys map to dateiname_schema as follows:
+    - "invoice_date"   → {"typ": "datum", "quelle": "invoice_date", "format": "jjmmtt"}
+    - "literal_<val>" → {"typ": "literal", "wert": "<val>"}
+    - anything else   → {"typ": "wert", "quelle": <key>}
+
+    The "erweiterung" is always ".pdf" (no profile field for this).
+    The "fallback_values" section is not reflected in dateiname_schema (handled elsewhere).
+    """
+    separator: str = str(naming_profile.get("separator", "_"))
+    max_laenge: int = int(naming_profile.get("max_length", 50))
+
+    felder: list[dict] = []
+    for field in naming_profile.get("fields", []):
+        if not isinstance(field, dict):
+            continue
+        key: str = str(field.get("key", "")).strip()
+        enabled: bool = bool(field.get("enabled", True))
+        if not key:
+            continue
+
+        if key == "invoice_date":
+            felder.append({"typ": "datum", "quelle": "invoice_date", "format": "jjmmtt", "aktiv": enabled})
+        elif key.startswith("literal_"):
+            literal_value = key[len("literal_"):]
+            felder.append({"typ": "literal", "wert": literal_value, "aktiv": enabled})
+        else:
+            felder.append({"typ": "wert", "quelle": key, "aktiv": enabled})
+
+    return {
+        "separator": separator,
+        "max_laenge": max_laenge,
+        "erweiterung": ".pdf",
+        "felder": felder,
+    }
+
+
+# -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
 
@@ -400,6 +444,11 @@ def compile_profile_to_rules(
         preset_dict["classification"] = _compile_classification_profile(
             classification_profile_raw
         )
+
+    # dateiname_schema is a top-level preset section (not under routing)
+    naming_profile_raw = profile.get("naming_profile")
+    if isinstance(naming_profile_raw, dict):
+        preset_dict["dateiname_schema"] = _compile_naming_profile(naming_profile_raw)
 
     return {
         "active_preset": preset_name,
