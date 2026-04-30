@@ -116,7 +116,11 @@ ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE
 EMPFOHLENER MODUS NACH FREIGABE: Agent
 CHATGPT NÖTIG: nein, außer Nutzer ist unsicher
 FREIGABEFRAGE: Soll ich <konkrete Aktion> ausführen?
+EMPFEHLUNG: freigeben / nicht freigeben / erst ChatGPT fragen
+BEGRÜNDUNG: <kurze sachliche Begründung, warum die Freigabe fachlich sinnvoll oder riskant ist>
 ```
+
+Cursor gibt immer eine klare Empfehlung mit Begründung aus – der Nutzer soll nicht nur gefragt werden, sondern eine fachliche Einschätzung erhalten.
 
 ### 4. ENTSCHEIDUNGSSIGNAL: STOPP
 Verwenden, wenn:
