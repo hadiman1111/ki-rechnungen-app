@@ -275,6 +275,38 @@ class TestBeep:
 # check-last-run mit vollständiger Dummy-Struktur
 # ---------------------------------------------------------------------------
 
+class TestIsSmokeFresh:
+    def test_returns_false_for_missing_dir(self, tmp_path):
+        m = _import_dev_assistant()
+        result = m._is_smoke_fresh(str(tmp_path / "nonexistent"))
+        assert result is False
+
+    def test_returns_false_for_empty_dir(self, tmp_path):
+        m = _import_dev_assistant()
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is False
+
+    def test_returns_true_when_run_is_future(self, tmp_path):
+        """Ein Run-Dir mit Zeitstempel weit in der Zukunft gilt als frisch."""
+        m = _import_dev_assistant()
+        (tmp_path / "29991231_235959").mkdir()
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is True
+
+    def test_returns_false_when_run_is_very_old(self, tmp_path):
+        """Ein Run-Dir mit Zeitstempel weit in der Vergangenheit gilt als veraltet."""
+        m = _import_dev_assistant()
+        (tmp_path / "19990101_000000").mkdir()
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is False
+
+    def test_returns_false_for_invalid_run_dir_name(self, tmp_path):
+        m = _import_dev_assistant()
+        (tmp_path / "not-a-timestamp").mkdir()
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is False
+
+
 class TestCheckLastRunDummy:
     def test_full_valid_structure_passes(self, tmp_path):
         base = tmp_path / "runs"

@@ -308,11 +308,41 @@ def run_check_last_run(base_output: str = SMOKE_OUTPUT) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Smart-Skip: Smoke-Test nur ausführen wenn nötig
+# ---------------------------------------------------------------------------
+
+def _is_smoke_fresh(base_output: str = SMOKE_OUTPUT) -> bool:
+    """True wenn der letzte Run-Ordner nach dem letzten Git-Commit erstellt wurde.
+
+    Logik: Run-IDs haben das Format YYYYMMDD_HHMMSS. Wenn der jüngste Run
+    nach dem HEAD-Commit-Zeitstempel liegt, ist der Smoke-Test noch gültig
+    und muss nicht erneut ausgeführt werden.
+    """
+    run_dir = find_latest_run_dir(base_output)
+    if run_dir is None:
+        return False
+
+    from datetime import datetime
+    try:
+        run_time = datetime.strptime(run_dir.name, "%Y%m%d_%H%M%S")
+    except ValueError:
+        return False
+
+    try:
+        commit_ts = int(_git(["log", "-1", "--format=%ct"]))
+        commit_time = datetime.fromtimestamp(commit_ts)
+    except Exception:
+        return False
+
+    return run_time > commit_time
+
+
+# ---------------------------------------------------------------------------
 # Mode: next  (Hauptsequenz)
 # ---------------------------------------------------------------------------
 
 def run_next() -> None:
-    """Automatische Standardsequenz: status → smoke → check → signal."""
+    """Automatische Standardsequenz: status → (smoke wenn nötig) → check → signal."""
     print(f"\n{'═'*60}")
     print(" DEV ASSISTANT – MODUS: NEXT")
     print(f"{'═'*60}")
@@ -355,8 +385,16 @@ def run_next() -> None:
         )
         return
 
-    # 2. Smoke-Test
-    smoke_passed = run_smoke_profile()
+    # 2. Smoke-Test (Smart-Skip: überspringen wenn Run nach letztem Commit)
+    if _is_smoke_fresh():
+        print(f"\n{'─'*40}")
+        print("SMOKE-TEST")
+        print(f"{'─'*40}")
+        print("  [SKIP] Letzter Run-Ordner ist aktueller als HEAD-Commit.")
+        print("         Smoke-Test wird übersprungen – check-last-run verifiziert stattdessen.")
+        smoke_passed = True
+    else:
+        smoke_passed = run_smoke_profile()
 
     if not smoke_passed:
         print_signal(
