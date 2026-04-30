@@ -311,12 +311,28 @@ def run_check_last_run(base_output: str = SMOKE_OUTPUT) -> bool:
 # Smart-Skip: Smoke-Test nur ausführen wenn nötig
 # ---------------------------------------------------------------------------
 
-def _is_smoke_fresh(base_output: str = SMOKE_OUTPUT) -> bool:
-    """True wenn der letzte Run-Ordner nach dem letzten Git-Commit erstellt wurde.
+# Dateipfade, deren Änderung einen neuen Smoke-Test erfordert.
+# Reine Docs/Regel-Dateien werden nicht berücksichtigt.
+_SMOKE_RELEVANT_PATHS = (
+    "invoice_tool/",
+    "office_rules.json",
+    "office_rules.schema.json",
+    "profile_config.local.json",
+    "scripts/run_smoke_test.py",
+    "scripts/check_profile_run.py",
+    "scripts/dev_assistant.py",
+)
 
-    Logik: Run-IDs haben das Format YYYYMMDD_HHMMSS. Wenn der jüngste Run
-    nach dem HEAD-Commit-Zeitstempel liegt, ist der Smoke-Test noch gültig
-    und muss nicht erneut ausgeführt werden.
+
+def _is_smoke_fresh(base_output: str = SMOKE_OUTPUT) -> bool:
+    """True wenn kein smoke-relevanter Code seit dem letzten Run-Ordner geändert wurde.
+
+    Logik:
+    1. Neuesten Run-Ordner finden (Format YYYYMMDD_HHMMSS).
+    2. Alle Commits seit dem Run-Zeitstempel prüfen.
+    3. Nur wenn dabei Dateien in _SMOKE_RELEVANT_PATHS geändert wurden,
+       gilt der Smoke als veraltet (→ False).
+    4. Reine Docs-/Workflow-Commits werden ignoriert → Smart-Skip bleibt aktiv.
     """
     run_dir = find_latest_run_dir(base_output)
     if run_dir is None:
@@ -328,13 +344,25 @@ def _is_smoke_fresh(base_output: str = SMOKE_OUTPUT) -> bool:
     except ValueError:
         return False
 
+    # Prüfe ob seit run_time code-relevante Commits existieren
     try:
-        commit_ts = int(_git(["log", "-1", "--format=%ct"]))
-        commit_time = datetime.fromtimestamp(commit_ts)
+        run_iso = run_time.strftime("%Y-%m-%dT%H:%M:%S")
+        changed = _git([
+            "log", "--name-only", "--format=", f"--since={run_iso}",
+        ])
     except Exception:
         return False
 
-    return run_time > commit_time
+    if not changed.strip():
+        return True  # keine Commits seit Run → frisch
+
+    changed_files = [line.strip() for line in changed.splitlines() if line.strip()]
+    for path in changed_files:
+        for relevant in _SMOKE_RELEVANT_PATHS:
+            if path.startswith(relevant) or path == relevant:
+                return False  # relevante Datei geändert → Smoke nötig
+
+    return True  # nur Docs/Workflow-Änderungen → Skip
 
 
 # ---------------------------------------------------------------------------

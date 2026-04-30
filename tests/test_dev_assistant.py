@@ -286,25 +286,69 @@ class TestIsSmokeFresh:
         result = m._is_smoke_fresh(str(tmp_path))
         assert result is False
 
-    def test_returns_true_when_run_is_future(self, tmp_path):
-        """Ein Run-Dir mit Zeitstempel weit in der Zukunft gilt als frisch."""
-        m = _import_dev_assistant()
-        (tmp_path / "29991231_235959").mkdir()
-        result = m._is_smoke_fresh(str(tmp_path))
-        assert result is True
-
-    def test_returns_false_when_run_is_very_old(self, tmp_path):
-        """Ein Run-Dir mit Zeitstempel weit in der Vergangenheit gilt als veraltet."""
-        m = _import_dev_assistant()
-        (tmp_path / "19990101_000000").mkdir()
-        result = m._is_smoke_fresh(str(tmp_path))
-        assert result is False
-
     def test_returns_false_for_invalid_run_dir_name(self, tmp_path):
         m = _import_dev_assistant()
         (tmp_path / "not-a-timestamp").mkdir()
         result = m._is_smoke_fresh(str(tmp_path))
         assert result is False
+
+    def _has_since(self, args: list) -> bool:
+        return any("--since" in a for a in args)
+
+    def test_returns_true_when_no_code_commits_since_run(self, tmp_path, monkeypatch):
+        """Wenn seit dem Run nur Docs geändert wurden, gilt Smoke als frisch."""
+        m = _import_dev_assistant()
+        (tmp_path / "29991231_235959").mkdir()
+
+        def fake_git(args):
+            if self._has_since(args):
+                return "docs/MASTERPLAN_PDF_DOCUMENT_TOOL.md\ndocs/CURSOR_WORKFLOW_RULES.md"
+            return ""
+
+        monkeypatch.setattr(m, "_git", fake_git)
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is True
+
+    def test_returns_false_when_code_changed_since_run(self, tmp_path, monkeypatch):
+        """Wenn invoice_tool/ geändert wurde, muss Smoke neu laufen."""
+        m = _import_dev_assistant()
+        (tmp_path / "29991231_235959").mkdir()
+
+        def fake_git(args):
+            if self._has_since(args):
+                return "invoice_tool/normalization.py"
+            return ""
+
+        monkeypatch.setattr(m, "_git", fake_git)
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is False
+
+    def test_returns_false_when_office_rules_changed(self, tmp_path, monkeypatch):
+        m = _import_dev_assistant()
+        (tmp_path / "29991231_235959").mkdir()
+
+        def fake_git(args):
+            if self._has_since(args):
+                return "office_rules.json"
+            return ""
+
+        monkeypatch.setattr(m, "_git", fake_git)
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is False
+
+    def test_returns_true_when_no_commits_since_run(self, tmp_path, monkeypatch):
+        """Keine Commits seit Run → frisch."""
+        m = _import_dev_assistant()
+        (tmp_path / "29991231_235959").mkdir()
+
+        def fake_git(args):
+            if self._has_since(args):
+                return ""
+            return ""
+
+        monkeypatch.setattr(m, "_git", fake_git)
+        result = m._is_smoke_fresh(str(tmp_path))
+        assert result is True
 
 
 class TestCheckLastRunDummy:
