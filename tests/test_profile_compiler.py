@@ -1161,3 +1161,144 @@ class TestReviewPolicyMerge:
         assert routing["unklar_konto"] == "unklar"
         assert routing["default_zielordner"] == "unklar"
         assert "routing_overrides" not in merged["presets"]["office_default"]
+
+
+# ---------------------------------------------------------------------------
+# payment_profiles compiler tests
+# ---------------------------------------------------------------------------
+
+class TestCompilePaymentProfiles:
+    """Unit tests for _compile_payment_profiles."""
+
+    def test_single_profile_maps_to_rule(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{
+            "id": "twint",
+            "label": "Twint",
+            "keywords": ["twint"],
+            "payment_method": "card",
+            "is_explicit": True,
+            "enabled": True,
+        }])
+        assert len(result) == 1
+        r = result[0]
+        assert r["name"] == "twint"
+        assert r["text_any"] == ["twint"]
+        assert r["payment_method"] == "card"
+        assert r["explicit"] is True
+        assert r["text_all"] == []
+
+    def test_is_explicit_false(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{
+            "id": "hint-only",
+            "label": "Hinweis",
+            "keywords": ["rechnungszahlung"],
+            "payment_method": "transfer",
+            "is_explicit": False,
+        }])
+        assert result[0]["explicit"] is False
+
+    def test_is_explicit_defaults_to_true(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{"id": "x", "label": "X", "keywords": ["foo"], "payment_method": "bar"}])
+        assert result[0]["explicit"] is True
+
+    def test_disabled_profile_skipped(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{
+            "id": "off", "label": "Off", "keywords": ["foo"], "payment_method": "bar", "enabled": False,
+        }])
+        assert result == []
+
+    def test_no_keywords_skipped(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{"id": "empty", "label": "Empty", "keywords": [], "payment_method": "bar"}])
+        assert result == []
+
+    def test_missing_keywords_skipped(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{"id": "nok", "label": "NoK", "payment_method": "bar"}])
+        assert result == []
+
+    def test_empty_id_skipped(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{"id": "", "label": "X", "keywords": ["foo"], "payment_method": "bar"}])
+        assert result == []
+
+    def test_multiple_keywords(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        result = _compile_payment_profiles([{
+            "id": "multi", "label": "M", "keywords": ["word1", "word2", "word3"], "payment_method": "card",
+        }])
+        assert result[0]["text_any"] == ["word1", "word2", "word3"]
+
+    def test_empty_list_returns_empty(self):
+        from invoice_tool.profile_compiler import _compile_payment_profiles
+        assert _compile_payment_profiles([]) == []
+
+
+class TestPaymentProfilesMerge:
+    """Test that payment_profiles combines with vendor_profiles and merges via PREPEND."""
+
+    def _base_rules(self, preset: str = "office_default") -> dict:
+        return {
+            "active_preset": preset,
+            "presets": {
+                preset: {
+                    "dateiname_schema": {
+                        "separator": "_", "max_laenge": 50, "erweiterung": ".pdf", "felder": []
+                    },
+                    "routing": {
+                        "payment_detection_rules": [{"name": "base-rule", "text_any": ["base"], "payment_method": "transfer", "explicit": True}],
+                    },
+                    "classification": {},
+                }
+            },
+        }
+
+    def test_payment_profiles_appears_in_generated_routing(self):
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"payment_profiles": [
+            {"id": "my-method", "label": "My", "keywords": ["mypay"], "payment_method": "card"},
+        ]}
+        generated = compile_profile_to_rules(profile, preset_name="office_default")
+        routing = generated["presets"]["office_default"]["routing"]
+        assert "payment_detection_rules" in routing
+        assert routing["payment_detection_rules"][0]["name"] == "my-method"
+
+    def test_payment_profiles_prepended_before_base_rules(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"payment_profiles": [
+            {"id": "my-method", "label": "My", "keywords": ["mypay"], "payment_method": "card"},
+        ]}
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        rules = merged["presets"]["office_default"]["routing"]["payment_detection_rules"]
+        names = [r["name"] for r in rules]
+        assert names[0] == "my-method"
+        assert "base-rule" in names
+
+    def test_vendor_profiles_before_payment_profiles(self):
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {
+            "vendor_profiles": [
+                {"id": "vendor-rule", "recognition_hints": ["vendortext"], "payment_field": "amex"},
+            ],
+            "payment_profiles": [
+                {"id": "generic-rule", "label": "G", "keywords": ["generictext"], "payment_method": "card"},
+            ],
+        }
+        generated = compile_profile_to_rules(profile, preset_name="office_default")
+        rules = generated["presets"]["office_default"]["routing"]["payment_detection_rules"]
+        names = [r["name"] for r in rules]
+        assert names.index("vendor-rule") < names.index("generic-rule")
+
+    def test_null_payment_profiles_produces_no_rules(self):
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"payment_profiles": None}
+        generated = compile_profile_to_rules(profile, preset_name="office_default")
+        routing = generated["presets"]["office_default"]["routing"]
+        assert "payment_detection_rules" not in routing

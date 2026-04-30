@@ -9,16 +9,16 @@ Scope:
                                 (when exclude_if_text_contains is set)
   account_card_profiles     →  routing.konten
   business_context_profiles →  routing.business_context_rules
-  vendor_profiles           →  routing.payment_detection_rules
+  vendor_profiles           →  routing.payment_detection_rules  (PREPEND)
+  payment_profiles          →  routing.payment_detection_rules  (PREPEND, after vendor_profiles)
   classification_profile    →  classification
   naming_profile            →  dateiname_schema
   review_policy             →  routing_overrides
                                 (targeted key-level overrides to routing)
 
-All other profile sections (supplier_cleaning,
-final_assignment_rules, output_route_rules) are NOT yet handled by this
-compiler and remain the responsibility of the manually maintained
-office_rules.json.
+All other profile sections (supplier_cleaning, final_assignment_rules,
+output_route_rules) are NOT yet handled by this compiler and remain the
+responsibility of the manually maintained office_rules.json.
 
 Design principles:
 - No SOMAA-specific logic, no user-specific hardcoding.
@@ -386,6 +386,55 @@ def _compile_naming_profile(naming_profile: dict) -> dict:
 
 
 # -----------------------------------------------------------------------
+# payment_profiles compiler
+# -----------------------------------------------------------------------
+
+def _compile_payment_profiles(payment_profiles: list[dict]) -> list[dict]:
+    """Translate payment_profile dicts into routing.payment_detection_rules entries.
+
+    Each enabled payment_profile with at least one keyword produces one
+    payment_detection_rules dict.
+
+    Field mapping:
+        id              → name
+        keywords        → text_any
+        payment_method  → payment_method
+        is_explicit     → explicit  (default: True)
+        enabled=false   → skipped
+
+    Entries without keywords produce no rule (no match criteria).
+    Rules are merged via PREPEND in merge_rules_dicts (profile rules first,
+    base rules preserved).
+    """
+    rules: list[dict] = []
+
+    for pp in payment_profiles:
+        if not pp.get("enabled", True):
+            continue
+
+        profile_id: str = pp.get("id", "")
+        if not profile_id:
+            continue
+
+        keywords = list(pp.get("keywords") or [])
+        if not keywords:
+            continue  # no recognition criteria → skip
+
+        payment_method: str = pp.get("payment_method") or ""
+        is_explicit: bool = bool(pp.get("is_explicit", True))
+
+        rules.append({
+            "name": profile_id,
+            "text_all": [],
+            "text_any": keywords,
+            "payment_method": payment_method,
+            "explicit": is_explicit,
+        })
+
+    return rules
+
+
+# -----------------------------------------------------------------------
 # review_policy compiler
 # -----------------------------------------------------------------------
 
@@ -455,7 +504,14 @@ def compile_profile_to_rules(
     business_context_rules = _compile_business_context_profiles(business_context_profiles)
 
     vendor_profiles: list[dict] = list(profile.get("vendor_profiles") or [])
-    payment_detection_rules = _compile_vendor_profiles(vendor_profiles)
+    vendor_detection_rules = _compile_vendor_profiles(vendor_profiles)
+
+    payment_profiles_raw: list[dict] = list(profile.get("payment_profiles") or [])
+    payment_profile_rules = _compile_payment_profiles(payment_profiles_raw)
+
+    # Combine: vendor_profiles rules first (more specific), payment_profiles rules second.
+    # Both use PREPEND strategy in merge_rules_dicts (profile rules before base rules).
+    payment_detection_rules = vendor_detection_rules + payment_profile_rules
 
     routing: dict = {
         "strassen": strassen,

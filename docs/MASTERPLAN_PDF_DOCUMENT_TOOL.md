@@ -353,7 +353,7 @@ Dateinamensschema: `{date}_bescheid_{authority}_{topic}_{year}.pdf`
 | `classification_profile` | Invoice/Document Keywords | Schema ✓, Compiler MVP ✓ |
 | `naming_profile` | Dateinamensstruktur | Schema ✓, Compiler MVP ✓ |
 | `review_policy` | Unklar-Verhalten | Schema ✓, Compiler MVP ✓ |
-| `payment_profiles` | Zahlungsarterkennung | Schema vorhanden, Compiler geplant |
+| `payment_profiles` | Zahlungsarterkennung | Schema ✓, Compiler MVP ✓ |
 | `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | Zielbild, nicht implementiert |
 
 ### Trennung von Profil und Basisregeln
