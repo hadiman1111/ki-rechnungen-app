@@ -38,6 +38,16 @@ alwaysApply: true
 - Smoke-Test prüft immer: Final Status, Reports, `runtime_rules.json`, `profile_snapshot.json`, `profile_applied`, Source unverändert, Laufwerte.
 - Abgebrochene Smoke-Tests gelten nicht als bestanden.
 
+## Run-Verifikation
+
+Nach jedem `run.py`-Lauf Standardprüfung mit:
+```bash
+PYTHONPATH=. ./.venv/bin/python scripts/check_profile_run.py \
+  --run-dir "<RUN_DIR>" \
+  --baseline "25,1,3,1,0"
+```
+Gibt PASS/FAIL und Entscheidungssignal aus. Ersetzt manuelle Einzelprüfung aller Artefakte.
+
 ## Berichtstruktur
 1. Git-Ausgangszustand
 2. Änderung / Prüfung

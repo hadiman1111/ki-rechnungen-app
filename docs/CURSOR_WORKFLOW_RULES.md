@@ -57,6 +57,25 @@
   - Laufwerte processed/document/duplicate/unclear/errors
 - Wenn ein Smoke-Test abgebrochen wurde, darf er nicht als vollständig bestandener Smoke-Test dargestellt werden.
 
+## Run-Verifikation mit check_profile_run.py
+
+Nach jedem `run.py`-Lauf ist die manuelle Einzelprüfung durch diesen Befehl zu ersetzen:
+
+```bash
+PYTHONPATH=. ./.venv/bin/python scripts/check_profile_run.py \
+  --run-dir "<RUN_DIR>" \
+  --baseline "25,1,3,1,0"
+```
+
+Das Skript prüft automatisch:
+- `report.json`, `runtime_rules.json`, `decision_trace.jsonl`, `routing_summary.csv`, `profile_snapshot.json`
+- `_meta`-Felder (profile_applied, generated_sections, prepended_sections, protected_sections)
+- Laufwerte gegen optionale Baseline
+- Unklar-Fälle mit Dateiname, art, payment_field, final_assignment_rule und Grund
+- Gibt PASS/FAIL und ein Entscheidungssignal nach Projektregeln aus
+
+Die Baseline für den Standardarchiv-Lauf lautet: `25,1,3,1,0`.
+
 ## Berichtstruktur
 Berichte kurz und entscheidungsfähig mit:
 1. Git-Ausgangszustand
