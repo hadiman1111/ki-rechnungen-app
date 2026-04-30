@@ -44,6 +44,58 @@ alwaysApply: true
 3. Tests oder Begründung ohne Tests
 4. Abschlussstand
 5. Bewertung / nächster Schritt
+6. **Entscheidungssignal** (immer am Ende)
+
+## Entscheidungssignale
+
+Jeder Bericht endet mit genau einem Signal:
+
+### WEITER IN CURSOR
+Bedingungen: Tests/Smoke-Test ok · Working Tree clean · keine Regression · keine Produktivdaten · keine offene Architekturentscheidung
+```
+ENTSCHEIDUNGSSIGNAL: WEITER IN CURSOR
+EMPFOHLENER MODUS: Agent / Ask / Plan
+CHATGPT NÖTIG: nein
+ZAUBERWORT: Weiter nach Projektregeln.
+```
+
+### CHATGPT FRAGEN
+Bedingungen: Architekturentscheidung offen · unerklärliche Regression · mehrere gleichwertige Wege · Scope-Erweiterung · Tests schlagen aus unklarem Grund fehl
+```
+ENTSCHEIDUNGSSIGNAL: CHATGPT FRAGEN
+EMPFOHLENER MODUS: ChatGPT
+CHATGPT NÖTIG: ja
+FRAGE AN CHATGPT: <konkrete Frage>
+```
+
+### NUTZERFREIGABE
+Bedingungen: Push · Commit außerhalb kleiner freigegebener Tasks · echter Zielordnerlauf · produktive Dateien verschieben/umbenennen/löschen · Output außerhalb /tmp
+```
+ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE
+EMPFOHLENER MODUS NACH FREIGABE: Agent
+CHATGPT NÖTIG: nein, außer Nutzer ist unsicher
+FREIGABEFRAGE: Soll ich <konkrete Aktion> ausführen?
+```
+
+### STOPP
+Bedingungen: Working Tree unklar · sensible Vollwerte · unsicherer Pfad · Originalschutz nicht sicher · fehlende Datei · Tests außerhalb Scope kaputt
+```
+ENTSCHEIDUNGSSIGNAL: STOPP
+EMPFOHLENER MODUS: Ask oder ChatGPT
+CHATGPT NÖTIG: je nach Grund ja/nein
+GRUND: <konkret>
+NÄCHSTER SCHRITT: <was geklärt werden muss>
+```
+
+## Zauberwort
+
+Wenn Cursor `ENTSCHEIDUNGSSIGNAL: WEITER IN CURSOR` meldet, darf der Nutzer schreiben:
+
+> **Weiter nach Projektregeln.**
+
+Cursor wählt dann selbst den nächsten sicheren Schritt, führt ihn aus und berichtet kurz.
+
+Das Zauberwort darf **niemals** automatisch auslösen: Push · Produktivlauf · Löschen/Verschieben/Umbenennen echter Dateien · Scope-Erweiterungen. Dafür bleibt NUTZERFREIGABE erforderlich.
 
 ## Arbeitsweise
 - Kurz und entscheidungsfähig berichten.

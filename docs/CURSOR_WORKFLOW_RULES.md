@@ -64,6 +64,93 @@ Berichte kurz und entscheidungsfähig mit:
 3. Tests oder Begründung ohne Tests
 4. Abschlussstand
 5. Bewertung / nächster Schritt
+6. **Entscheidungssignal** (immer am Ende, gemäß Abschnitt Entscheidungssignale)
+
+## Entscheidungssignale
+
+Jeder Bericht endet mit genau einem der folgenden Entscheidungssignale.
+
+### 1. ENTSCHEIDUNGSSIGNAL: WEITER IN CURSOR
+Verwenden, wenn:
+- Tests/Smoke-Test erfolgreich
+- Working Tree clean
+- keine Regression
+- keine Produktivdaten betroffen
+- keine Architekturentscheidung offen
+
+Ausgabeformat:
+```
+ENTSCHEIDUNGSSIGNAL: WEITER IN CURSOR
+EMPFOHLENER MODUS: Agent / Ask / Plan
+CHATGPT NÖTIG: nein
+ZAUBERWORT: Weiter nach Projektregeln.
+```
+
+### 2. ENTSCHEIDUNGSSIGNAL: CHATGPT FRAGEN
+Verwenden, wenn:
+- Architekturentscheidung offen
+- Regression oder unerklärliche Abweichung
+- mehrere fachlich sinnvolle Wege
+- Scope-Erweiterung nötig
+- Tests fehlschlagen und Ursache nicht eindeutig ist
+
+Ausgabeformat:
+```
+ENTSCHEIDUNGSSIGNAL: CHATGPT FRAGEN
+EMPFOHLENER MODUS: ChatGPT
+CHATGPT NÖTIG: ja
+FRAGE AN CHATGPT: <konkrete Frage>
+```
+
+### 3. ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE
+Verwenden, wenn:
+- Push
+- Commit außerhalb kleiner freigegebener Tasks
+- echter Zielordnerlauf
+- produktive Dateien verschieben, umbenennen oder löschen
+- Output außerhalb /tmp erzeugt werden soll
+
+Ausgabeformat:
+```
+ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE
+EMPFOHLENER MODUS NACH FREIGABE: Agent
+CHATGPT NÖTIG: nein, außer Nutzer ist unsicher
+FREIGABEFRAGE: Soll ich <konkrete Aktion> ausführen?
+```
+
+### 4. ENTSCHEIDUNGSSIGNAL: STOPP
+Verwenden, wenn:
+- Working Tree unklar
+- sensible Vollwerte gefunden
+- unsicherer Pfad
+- Originalschutz nicht sicher
+- fehlende Datei
+- Tests außerhalb Scope kaputt
+
+Ausgabeformat:
+```
+ENTSCHEIDUNGSSIGNAL: STOPP
+EMPFOHLENER MODUS: Ask oder ChatGPT
+CHATGPT NÖTIG: je nach Grund ja/nein
+GRUND: <konkret>
+NÄCHSTER SCHRITT: <was geklärt werden muss>
+```
+
+## Zauberwort
+
+Wenn Cursor am Ende meldet `ENTSCHEIDUNGSSIGNAL: WEITER IN CURSOR`, darf der Nutzer schreiben:
+
+> **Weiter nach Projektregeln.**
+
+Cursor wählt dann selbst den nächsten sicheren Schritt, führt ihn innerhalb der Projektregeln aus, prüft angemessen und berichtet kurz.
+
+**Das Zauberwort darf niemals automatisch auslösen:**
+- Push
+- Produktivlauf (echter Zielordner)
+- Löschen, Verschieben oder Umbenennen echter Dateien
+- Scope-Erweiterungen
+
+Für diese Aktionen ist weiterhin `ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE` erforderlich.
 
 ## Arbeitsweise
 - Keine unnötigen Alternativen.
