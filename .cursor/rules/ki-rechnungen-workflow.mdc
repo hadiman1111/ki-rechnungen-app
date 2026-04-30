@@ -115,6 +115,18 @@ Das Zauberwort darf **niemals** automatisch auslösen: Push · Produktivlauf · 
 - Keine unnötigen Alternativen bei kleinen Aufträgen.
 - Bei riskanten Änderungen stoppen und berichten.
 
+## MVP-Freeze / Stabilization Mode
+
+**Status: AKTIV** – Keine neuen Produktfeatures automatisch.
+
+Nach Abschluss aller 8 Profile-Compiler und des dev_assistant-Workflows gilt:
+- **Erlaubt im autonomen Modus:** Bugfixes, Tests, Smoke-Tests, Doku, Bedienablauf, Ergebnisprüfung.
+- **Erfordert NUTZERFREIGABE oder CHATGPT FRAGEN:** neue Compiler, neue Architekturbausteine,
+  Runtime-Logik, UI, Produktivlauf außerhalb `/tmp`, neue Dependencies, Architekturänderungen.
+
+Erkennt Cursor einen Feature- oder Architekturschritt als „nächsten sinnvollen Schritt",
+muss er **stoppen** und NUTZERFREIGABE oder CHATGPT FRAGEN ausgeben.
+
 ## Autonomer Fortsetzungsmodus
 
 Wenn der Nutzer `Weiter nach Projektregeln.` schreibt und das letzte Signal `WEITER IN CURSOR` war,

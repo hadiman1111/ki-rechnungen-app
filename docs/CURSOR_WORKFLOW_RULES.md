@@ -185,6 +185,33 @@ nacheinander ausführen. Nach jedem Teilschritt intern prüfen:
 Scope · Tests/Checks · Git diff · Working Tree · Signal wäre WEITER IN CURSOR.
 Am Ende: zusammenfassenden Abschlussbericht ausgeben.
 
+## MVP-Freeze / Stabilization Mode
+
+**Status: AKTIV** – Das Projekt befindet sich im MVP-Stabilisierungsmodus.
+
+Nach erfolgreichem Abschluss aller Profil-Compiler (address, account_card, business_context,
+vendor, classification, naming, review_policy, payment_profiles), Runtime-Rules-Integration,
+Smoke-Test und dev_assistant werden **keine neuen Produktfeatures automatisch umgesetzt**.
+
+### Was der autonome Fortsetzungsmodus im MVP-Freeze noch darf:
+- Bugfixes bei echten, reproduzierbaren Fehlern
+- Test- und Smoke-Test-Verifikation
+- Bedienanleitungen und Doku-Korrekturen zum aktuellen Stand
+- Echter kontrollierter Arbeitslauf (Zielordner) nach ausdrücklicher Freigabe
+- Ergebnisprüfung und Berichte
+- Kleine Doku-/Regelkorrekturen
+
+### Was ausdrückliche NUTZERFREIGABE oder CHATGPT FRAGEN erfordert:
+- Neue Compiler oder Profile
+- Neue Architekturbausteine oder Runtime-Logik
+- UI-Entwicklung
+- Produktivlauf-Logik außerhalb freigegebener Pfade
+- Architekturänderungen jeder Art
+- Neue Dependencies
+
+Erkennt Cursor einen „sinnvollen nächsten Schritt", der Feature- oder Architekturentwicklung
+wäre, **muss er stoppen** und NUTZERFREIGABE oder CHATGPT FRAGEN ausgeben.
+
 ## Arbeitsweise
 - Keine unnötigen Alternativen.
 - Keine großen Architekturvorschläge bei kleinen Prüf- oder Git-Aufträgen.

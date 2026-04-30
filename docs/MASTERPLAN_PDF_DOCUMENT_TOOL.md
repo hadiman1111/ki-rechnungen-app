@@ -615,5 +615,42 @@ muss sie **bewusst als Übergangslösung** gekennzeichnet werden.
 
 ---
 
+## 15. MVP-Freeze / Stabilization Mode
+
+**Status: AKTIV seit 2026-04-30**
+
+Das Projekt hat den MVP-Stand erreicht. Alle geplanten Profile-Compiler sind implementiert.
+Die Entwicklung tritt in den Stabilisierungsmodus.
+
+### Abgeschlossener MVP-Umfang
+
+- ✅ 8 Profile-Compiler: address, account_card, business_context, vendor, classification,
+  naming, review_policy, payment_profiles
+- ✅ Runtime-Rules-Integration (profile_config → runtime_rules.json pro Lauf)
+- ✅ Run Manager (`invoice_tool/run.py`)
+- ✅ Smoke-Test + Run-Verifikation (`scripts/check_profile_run.py`)
+- ✅ Dev-Assistant (`scripts/dev_assistant.py`, Smart-Skip, `--mode next`)
+- ✅ Autonomer Cursor-Agent-Workflow (`docs/roadmap/PDF_TOOL_CURSOR_AGENT_WORKFLOW.md`)
+- ✅ 414 Unit-Tests
+
+### Was im Stabilisierungsmodus erlaubt ist (ohne gesonderte Freigabe)
+
+- Bugfixes bei reproduzierbaren Fehlern
+- Test- und Smoke-Test-Verifikation
+- Bedienanleitungen, Doku-Korrekturen
+- Echter kontrollierter Arbeitslauf nach ausdrücklicher Freigabe
+- Ergebnisprüfung
+
+### Was ausdrückliche Freigabe erfordert
+
+- Neue Compiler, Profile oder Runtime-Logik
+- Neue Architekturbausteine
+- UI-Entwicklung
+- Produktivlauf-Logik außerhalb freigegebener Pfade
+- Neue Dependencies
+- Architekturänderungen
+
+---
+
 *Dieses Dokument ist ein lebendiger Plan und wird mit Architekturentscheidungen aktualisiert.*  
 *Letzter redaktioneller Stand: April 2026.*

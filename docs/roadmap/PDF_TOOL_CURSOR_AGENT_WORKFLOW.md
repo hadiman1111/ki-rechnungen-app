@@ -8,6 +8,13 @@ und ergänzt die übrigen Projektregeln.
 
 ---
 
+> **MVP-Freeze aktiv** – Das Projekt befindet sich im Stabilisierungsmodus.
+> Der autonome Fortsetzungsmodus darf nur noch Stabilisierung, Prüfung, Doku,
+> Bedienablauf und Bugfixes betreffen. Neue Compiler, Profile, Runtime-Logik,
+> UI oder Architekturänderungen erfordern ausdrückliche NUTZERFREIGABE.
+
+---
+
 ## 1. Zweck
 
 Cursor soll Standardarbeiten selbstständiger ausführen können, ohne dass der
