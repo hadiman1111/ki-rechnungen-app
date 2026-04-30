@@ -1040,3 +1040,124 @@ class TestNamingProfileMerge:
         patch = compile_profile_to_rules(profile, preset_name="office_default")
         merged = merge_rules_dicts(base, patch)
         assert merged["presets"]["office_default"]["dateiname_schema"] == original_schema
+
+
+# ---------------------------------------------------------------------------
+# review_policy compiler tests
+# ---------------------------------------------------------------------------
+
+class TestCompileReviewPolicy:
+    """Unit tests for _compile_review_policy."""
+
+    def test_unclear_folder_maps_to_routing_overrides(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({"unclear_folder": "unklar"})
+        assert result["unklar_konto"] == "unklar"
+        assert result["default_zielordner"] == "unklar"
+
+    def test_custom_unclear_folder(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({"unclear_folder": "zu_pruefen"})
+        assert result["unklar_konto"] == "zu_pruefen"
+        assert result["default_zielordner"] == "zu_pruefen"
+
+    def test_missing_unclear_folder_defaults_to_unklar(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({})
+        assert result["unklar_konto"] == "unklar"
+        assert result["default_zielordner"] == "unklar"
+
+    def test_empty_string_unclear_folder_defaults_to_unklar(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({"unclear_folder": ""})
+        assert result["unklar_konto"] == "unklar"
+        assert result["default_zielordner"] == "unklar"
+
+    def test_whitespace_only_defaults_to_unklar(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({"unclear_folder": "   "})
+        assert result["unklar_konto"] == "unklar"
+        assert result["default_zielordner"] == "unklar"
+
+    def test_only_two_keys_in_result(self):
+        from invoice_tool.profile_compiler import _compile_review_policy
+        result = _compile_review_policy({"unclear_folder": "unklar", "review_flags_enabled": True})
+        assert set(result.keys()) == {"unklar_konto", "default_zielordner"}
+
+
+class TestReviewPolicyMerge:
+    """Test that review_policy flows through compile_profile_to_rules and merge_rules_dicts."""
+
+    def _base_rules(self, preset: str = "office_default") -> dict:
+        return {
+            "active_preset": preset,
+            "presets": {
+                preset: {
+                    "dateiname_schema": {
+                        "separator": "_", "max_laenge": 50, "erweiterung": ".pdf", "felder": []
+                    },
+                    "routing": {
+                        "unklar_konto": "unklar",
+                        "default_zielordner": "unklar",
+                        "default_art": "private",
+                    },
+                    "classification": {},
+                }
+            },
+        }
+
+    def test_review_policy_appears_in_generated_preset(self):
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"review_policy": {"unclear_folder": "unklar"}}
+        generated = compile_profile_to_rules(profile, preset_name="office_default")
+        preset = generated["presets"]["office_default"]
+        assert "routing_overrides" in preset
+        assert preset["routing_overrides"]["unklar_konto"] == "unklar"
+
+    def test_merge_applies_routing_overrides_to_routing(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"review_policy": {"unclear_folder": "zu_pruefen"}}
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        routing = merged["presets"]["office_default"]["routing"]
+        assert routing["unklar_konto"] == "zu_pruefen"
+        assert routing["default_zielordner"] == "zu_pruefen"
+
+    def test_merge_keeps_routing_overrides_for_traceability(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {"review_policy": {"unclear_folder": "zu_pruefen"}}
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        preset = merged["presets"]["office_default"]
+        assert "routing_overrides" in preset
+        assert preset["routing_overrides"]["unklar_konto"] == "zu_pruefen"
+
+    def test_merge_does_not_override_nonexistent_routing_keys(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        # default_art is in base routing; a hypothetical unknown key should NOT be injected
+        profile = {"review_policy": {"unclear_folder": "unklar"}}
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        # Manually add a nonexistent key to routing_overrides to test the guard
+        patch["presets"]["office_default"]["routing_overrides"]["nonexistent_key"] = "x"
+        merged = merge_rules_dicts(base, patch)
+        routing = merged["presets"]["office_default"]["routing"]
+        assert "nonexistent_key" not in routing
+
+    def test_no_review_policy_leaves_routing_keys_unchanged(self):
+        from invoice_tool.config import merge_rules_dicts
+        from invoice_tool.profile_compiler import compile_profile_to_rules
+        profile = {}
+        base = self._base_rules()
+        patch = compile_profile_to_rules(profile, preset_name="office_default")
+        merged = merge_rules_dicts(base, patch)
+        routing = merged["presets"]["office_default"]["routing"]
+        # The review_policy-controlled keys must remain at their base values
+        assert routing["unklar_konto"] == "unklar"
+        assert routing["default_zielordner"] == "unklar"
+        assert "routing_overrides" not in merged["presets"]["office_default"]

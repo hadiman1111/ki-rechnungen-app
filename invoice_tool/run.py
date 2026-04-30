@@ -309,11 +309,13 @@ def run_once(
             )
             if section in gen_routing
         ]
-        # classification and dateiname_schema are top-level preset sections (not under routing)
+        # classification, dateiname_schema, routing_overrides are top-level preset sections
         if "classification" in gen_preset:
             generated_sections.append("classification")
         if "dateiname_schema" in gen_preset:
             generated_sections.append("dateiname_schema")
+        if "routing_overrides" in gen_preset:
+            generated_sections.append("routing_overrides")
 
         # payment_detection_rules uses PREPEND strategy (profile rules first, base rules kept).
         # It appears in generated_sections when the profile contributed rules, but is never

@@ -191,6 +191,17 @@ def merge_rules_dicts(base: dict, patch: dict) -> dict:
         if "dateiname_schema" in patch_preset:
             base_preset["dateiname_schema"] = _copy.deepcopy(patch_preset["dateiname_schema"])
 
+        # Apply routing_overrides: targeted key-level updates to the routing dict.
+        # Only keys that already exist in base_routing are overridden (safe: no new keys injected).
+        # The routing_overrides section is kept in the merged preset for traceability.
+        if "routing_overrides" in patch_preset:
+            overrides = patch_preset["routing_overrides"]
+            if isinstance(overrides, dict):
+                for key, value in overrides.items():
+                    if key in base_routing:
+                        base_routing[key] = value
+                base_preset["routing_overrides"] = _copy.deepcopy(overrides)
+
     return merged
 
 

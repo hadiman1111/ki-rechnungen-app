@@ -12,8 +12,10 @@ Scope:
   vendor_profiles           →  routing.payment_detection_rules
   classification_profile    →  classification
   naming_profile            →  dateiname_schema
+  review_policy             →  routing_overrides
+                                (targeted key-level overrides to routing)
 
-All other profile sections (supplier_cleaning, review_policy,
+All other profile sections (supplier_cleaning,
 final_assignment_rules, output_route_rules) are NOT yet handled by this
 compiler and remain the responsibility of the manually maintained
 office_rules.json.
@@ -384,6 +386,36 @@ def _compile_naming_profile(naming_profile: dict) -> dict:
 
 
 # -----------------------------------------------------------------------
+# review_policy compiler
+# -----------------------------------------------------------------------
+
+def _compile_review_policy(review_policy: dict) -> dict:
+    """Translate a review_policy dict into a routing_overrides dict.
+
+    Only ``unclear_folder`` has a direct mapping to routing keys.
+    Boolean flags (business_unclear_payment_goes_to_unclear,
+    private_unclear_attributes_stay_private, etc.) reflect behavior that is
+    already hardcoded in office_rules.json and have no additional runtime
+    effect via this compiler; they are compiled purely for documentation.
+
+    Field mapping:
+        unclear_folder → routing_overrides.unklar_konto
+                         routing_overrides.default_zielordner
+
+    Returns a routing_overrides dict intended for merge_rules_dicts to apply
+    as targeted key-level overrides to the existing routing section.
+    An empty / falsy string falls back to the default value "unklar".
+    """
+    unclear_folder: str = (
+        str(review_policy.get("unclear_folder", "unklar")).strip() or "unklar"
+    )
+    return {
+        "unklar_konto": unclear_folder,
+        "default_zielordner": unclear_folder,
+    }
+
+
+# -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
 
@@ -449,6 +481,11 @@ def compile_profile_to_rules(
     naming_profile_raw = profile.get("naming_profile")
     if isinstance(naming_profile_raw, dict):
         preset_dict["dateiname_schema"] = _compile_naming_profile(naming_profile_raw)
+
+    # routing_overrides is a top-level preset section for targeted routing key overrides
+    review_policy_raw = profile.get("review_policy")
+    if isinstance(review_policy_raw, dict):
+        preset_dict["routing_overrides"] = _compile_review_policy(review_policy_raw)
 
     return {
         "active_preset": preset_name,
