@@ -162,3 +162,25 @@ class TestCheckProfileRunUnklar:
         result = _run_script(run_dir)
         assert "unclear.pdf" in result.stdout
         assert "somaa-unclear-payment" in result.stdout
+
+
+class TestSystemFallbacksNote:
+    """Test that system_fallbacks > 0 shows an info note in the output."""
+
+    def test_no_note_when_fallbacks_zero(self, tmp_path):
+        run_dir = _make_run_dir(tmp_path, summary={
+            "processed": 5, "documents": 1, "duplicates": 0,
+            "unklar": 0, "errors": 0, "system_fallbacks": 0,
+        })
+        result = _run_script(run_dir)
+        assert "Primär-Extraktion" not in result.stdout
+        assert "fallbacks  : 0" in result.stdout
+
+    def test_note_shown_when_fallbacks_nonzero(self, tmp_path):
+        run_dir = _make_run_dir(tmp_path, summary={
+            "processed": 5, "documents": 1, "duplicates": 0,
+            "unklar": 0, "errors": 0, "system_fallbacks": 27,
+        })
+        result = _run_script(run_dir)
+        assert "Primär-Extraktion" in result.stdout
+        assert "fallbacks  : 27" in result.stdout

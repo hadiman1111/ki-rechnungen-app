@@ -172,7 +172,8 @@ def print_summary(summary: dict, baseline: Optional[tuple]) -> bool:
     print(f"  duplicates : {duplicates}")
     print(f"  unklar     : {unklar}")
     print(f"  errors     : {errors}")
-    print(f"  fallbacks  : {fallbacks}")
+    fallback_note = "  ← Primär-Extraktion (OpenAI) nicht verfügbar, Fallback genutzt" if fallbacks > 0 else ""
+    print(f"  fallbacks  : {fallbacks}{fallback_note}")
 
     if baseline is None:
         return True
