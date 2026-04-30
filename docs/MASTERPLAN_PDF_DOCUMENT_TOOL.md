@@ -104,7 +104,7 @@ Diese Grundsätze gelten für alle künftigen Architekturentscheidungen:
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Run Manager                              │
-│   invoice_tool/run.py  (geplant)                             │
+│   invoice_tool/run.py  ✓ implementiert                       │
 │   - nimmt source + output + profile entgegen                 │
 │   - erzeugt Run-Ordner                                       │
 │   - erstellt input_snapshot                                  │
@@ -347,10 +347,10 @@ Dateinamensschema: `{date}_bescheid_{authority}_{topic}_{year}.pdf`
 | `categories` | Bekannte Kategorien (ai, ep, private…) | Schema ✓ |
 | `folders` | Zielordner-Definitionen | Schema ✓ |
 | `address_profiles` | Adresse → Kategorie, Matching-Modus | Schema ✓, Compiler MVP ✓ |
-| `account_card_profiles` | IBAN/Karte/Apple Pay → Konto | Schema ✓, Compiler geplant |
-| `business_context_profiles` | Keywords → Geschäftskontext | Schema ✓, Compiler geplant |
-| `vendor_profiles` | Lieferant → Zahlungsfeld | Schema ✓, Compiler geplant |
-| `classification_profile` | Invoice/Document Keywords | Schema ✓, Compiler geplant |
+| `account_card_profiles` | IBAN/Karte/Apple Pay → Konto | Schema ✓, Compiler MVP ✓ |
+| `business_context_profiles` | Keywords → Geschäftskontext | Schema ✓, Compiler MVP ✓ |
+| `vendor_profiles` | Lieferant → Zahlungsfeld | Schema ✓, Compiler MVP ✓ |
+| `classification_profile` | Invoice/Document Keywords | Schema ✓, Compiler MVP ✓ |
 | `naming_profile` | Dateinamensstruktur | Schema ✓, Compiler geplant |
 | `review_policy` | Unklar-Verhalten | Schema ✓, Compiler geplant |
 | `payment_profiles` | Zahlungsarterkennung | Schema vorhanden, Compiler geplant |
@@ -573,15 +573,16 @@ Folgendes ist heute **noch nicht** gebaut und explizit außerhalb des aktuellen 
 
 - ❌ Allgemeines `document_profiles`-System für beliebige Dokumenttypen
 - ❌ Vollständige UI (nur Planung)
-- ❌ Freier Run Manager (`invoice_tool/run.py` noch nicht implementiert)
-- ❌ Runtime-Rules-Integration (Profil → Regeln pro Lauf, noch nicht verknüpft)
-- ❌ Automatisches Konto-/Zahlungsregel-Generierung via Profile Compiler
-- ❌ Automatisches Merge in `office_rules.json`
+- ✅ Run Manager (`invoice_tool/run.py` – implementiert, produktiv nutzbar)
+- ✅ Runtime-Rules-Integration (Profil → Runtime Rules pro Lauf, vollständig verknüpft)
+- ✅ Konto-/Zahlungsregel-Generierung via Profile Compiler (account_card_profiles, vendor_profiles)
+- ❌ Automatisches Merge in `office_rules.json` (Runtime Rules bleiben laufbezogen, kein Permanent-Merge)
 - ❌ Nutzerverwaltung oder Mehrbenutzerfähigkeit
-- ❌ Preview-UI für generierte Regeln
-- ❌ Nutzerverständlicher Schlussbericht (jetzt nur technisch lesbar)
+- ✅ Preview-Skript für generierte Regeln (`scripts/preview_profile_runtime_rules.py`)
+- ✅ Run-Verifikationsskript (`scripts/check_profile_run.py` – PASS/FAIL + Entscheidungssignal)
+- ❌ Nutzerverständlicher Schlussbericht für Nicht-Techniker (jetzt technisch-strukturiert)
 - ❌ Installation / Packaging / Produktdistribution
-- ❌ Vollständige Profilvalidierung (nur Schema-basiert)
+- ✅ Profilvalidierung (`validate_profile()` in profile_compiler.py, Laufzeit-Checks)
 
 ---
 
