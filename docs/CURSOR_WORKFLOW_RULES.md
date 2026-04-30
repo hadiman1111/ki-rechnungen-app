@@ -175,6 +175,16 @@ Cursor wählt dann selbst den nächsten sicheren Schritt, führt ihn innerhalb d
 
 Für diese Aktionen ist weiterhin `ENTSCHEIDUNGSSIGNAL: NUTZERFREIGABE` erforderlich.
 
+## Autonomer Fortsetzungsmodus
+
+Vollständige Definition in `docs/roadmap/PDF_TOOL_CURSOR_AGENT_WORKFLOW.md`.
+
+Kurzfassung: Wenn der Nutzer `Weiter nach Projektregeln.` schreibt und das letzte Signal
+`WEITER IN CURSOR` war, darf Cursor **bis zu 3 kleine, eindeutig sichere Schritte**
+nacheinander ausführen. Nach jedem Teilschritt intern prüfen:
+Scope · Tests/Checks · Git diff · Working Tree · Signal wäre WEITER IN CURSOR.
+Am Ende: zusammenfassenden Abschlussbericht ausgeben.
+
 ## Arbeitsweise
 - Keine unnötigen Alternativen.
 - Keine großen Architekturvorschläge bei kleinen Prüf- oder Git-Aufträgen.

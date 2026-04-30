@@ -352,7 +352,7 @@ Dateinamensschema: `{date}_bescheid_{authority}_{topic}_{year}.pdf`
 | `vendor_profiles` | Lieferant → Zahlungsfeld | Schema ✓, Compiler MVP ✓ |
 | `classification_profile` | Invoice/Document Keywords | Schema ✓, Compiler MVP ✓ |
 | `naming_profile` | Dateinamensstruktur | Schema ✓, Compiler MVP ✓ |
-| `review_policy` | Unklar-Verhalten | Schema ✓, Compiler geplant |
+| `review_policy` | Unklar-Verhalten | Schema ✓, Compiler MVP ✓ |
 | `payment_profiles` | Zahlungsarterkennung | Schema vorhanden, Compiler geplant |
 | `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | Zielbild, nicht implementiert |
 
@@ -581,6 +581,7 @@ Folgendes ist heute **noch nicht** gebaut und explizit außerhalb des aktuellen 
 - ✅ Preview-Skript für generierte Regeln (`scripts/preview_profile_runtime_rules.py`)
 - ✅ Run-Verifikationsskript (`scripts/check_profile_run.py` – PASS/FAIL + Entscheidungssignal)
 - ✅ Dev-Assistant (`scripts/dev_assistant.py` – bündelt status/test/smoke/check in `--mode next` mit Smart-Skip)
+- ✅ Autonomer Cursor-Agent-Workflow (`docs/roadmap/PDF_TOOL_CURSOR_AGENT_WORKFLOW.md` – bis zu 3 Schritte ohne Unterbrechung)
 - ❌ Nutzerverständlicher Schlussbericht für Nicht-Techniker (jetzt technisch-strukturiert)
 - ❌ Installation / Packaging / Produktdistribution
 - ✅ Profilvalidierung (`validate_profile()` in profile_compiler.py, Laufzeit-Checks)
