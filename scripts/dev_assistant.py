@@ -247,7 +247,6 @@ def run_smoke_profile() -> bool:
         "--source", str(source_path),
         "--output", SMOKE_OUTPUT,
         "--profile", SMOKE_PROFILE,
-        "--baseline", BASELINE_LABEL,
     ]
     print(f"Befehl: {' '.join(cmd)}")
 
