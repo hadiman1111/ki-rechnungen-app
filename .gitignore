@@ -18,6 +18,10 @@ testing/input/*.pdf
 testing/input/archiv/
 .cursor/
 
+# Local profile configs (personalized, may contain real card/IBAN endings – never commit)
+profile_config.local*.json
+config/profile_config.local*.json
+
 # Local invoice archives and real PDF collections (never commit originals)
 260425_archiv Rechnungen/
 TESTRECHNUNGEN/
