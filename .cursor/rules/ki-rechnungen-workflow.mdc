@@ -115,5 +115,26 @@ Das Zauberwort darf **niemals** automatisch auslösen: Push · Produktivlauf · 
 - Keine unnötigen Alternativen bei kleinen Aufträgen.
 - Bei riskanten Änderungen stoppen und berichten.
 
+## Autonomer Fortsetzungsmodus
+
+Wenn der Nutzer `Weiter nach Projektregeln.` schreibt und das letzte Signal `WEITER IN CURSOR` war,
+darf Cursor bis zu **3 kleine, eindeutig sichere Schritte** nacheinander ausführen.
+
+Nach jedem Teilschritt intern prüfen:
+1. Scope eingehalten?
+2. Tests/Checks passend ausgeführt?
+3. Git diff plausibel?
+4. Working Tree sauber oder erwartbar?
+5. Entscheidungssignal wäre WEITER IN CURSOR?
+
+Wenn ja → nächsten Schritt ausführen. Wenn nein → stoppen und berichten.
+Erst am Ende des gesamten Laufs einen zusammenfassenden Abschlussbericht ausgeben.
+
+Verboten im autonomen Modus ohne explizite Freigabe: Push · Produktivlauf · echte Dateien
+verschieben/löschen/umbenennen · neue Dependencies · Architekturänderungen · Scope-Erweiterungen.
+
+Vollständige Definition: `docs/roadmap/PDF_TOOL_CURSOR_AGENT_WORKFLOW.md`
+
 ## Referenz
 Vollständige Regeln: `docs/CURSOR_WORKFLOW_RULES.md`
+Autonomer Workflow: `docs/roadmap/PDF_TOOL_CURSOR_AGENT_WORKFLOW.md`
