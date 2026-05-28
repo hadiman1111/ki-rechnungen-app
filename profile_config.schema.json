@@ -84,6 +84,13 @@
     "classification_profile": {
       "$ref": "#/$defs/ClassificationProfile",
       "description": "Keywords zur Klassifikation (Rechnung vs. Dokument). Optionaler Bereich."
+    },
+
+    "document_profiles": {
+      "type": "array",
+      "description": "Nutzerdefinierte Dokumenttyp-Profile. Definieren, wie ein Dokumenttyp erkannt, benannt und abgelegt wird. Schema-Ebene geplant – Runtime-Compiler-Erweiterung noch nicht implementiert. Rechnungen bleiben der erste und stabile Anwendungsfall.",
+      "items": { "$ref": "#/$defs/DocumentProfile" },
+      "default": []
     }
 
   },
@@ -449,6 +456,155 @@
         "invoice_keywords": { "$ref": "#/$defs/StringList" },
         "document_keywords": { "$ref": "#/$defs/StringList" },
         "internal_invoice_keywords": { "$ref": "#/$defs/StringList" }
+      }
+    },
+
+    "DocumentTypeEnum": {
+      "type": "string",
+      "enum": [
+        "invoice",
+        "credit_note",
+        "contract",
+        "delivery_note",
+        "tax_notice",
+        "order_confirmation",
+        "internal_document",
+        "generic_document"
+      ],
+      "description": "Bekannte technische Dokumenttypen. 'invoice' ist der einzige heute vollständig implementierte Typ."
+    },
+
+    "DuplicatePolicyEnum": {
+      "type": "string",
+      "enum": ["skip", "flag", "overwrite", "rename_with_suffix"],
+      "description": "Verhalten bei Duplikaterkennung: skip = übergehen, flag = markieren (Standard), overwrite = überschreiben, rename_with_suffix = Suffix anhängen."
+    },
+
+    "DocumentNamingSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Schlankes Dateinamensschema für einen spezifischen Dokumenttyp. Überschreibt das globale naming_profile wenn gesetzt. MVP: nur Template-String und Literal-Wert.",
+      "properties": {
+        "type_literal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Fester Kürzel für diesen Dokumenttyp im Dateinamen, z.B. 'er' (Eingangsrechnung), 'vertrag', 'bescheid', 'd' (Dokument).",
+          "examples": ["er", "vertrag", "bescheid", "d", "gutschrift", "lieferschein"]
+        },
+        "template": {
+          "type": "string",
+          "description": "Template-String mit Platzhaltern für den Dateinamen. Platzhalter in geschweiften Klammern werden durch extrahierte Felder ersetzt. Noch nicht aktiv im Runtime-Compiler.",
+          "examples": [
+            "{date}_er_{category}_{supplier}_{amount}_{payment}",
+            "{date}_vertrag_{party}_{topic}",
+            "{date}_bescheid_{authority}_{topic}_{year}",
+            "{date}_d_{topic}"
+          ]
+        },
+        "fallback_values": {
+          "type": "object",
+          "description": "Fallback-Werte für Template-Platzhalter, die nicht extrahiert werden konnten.",
+          "additionalProperties": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "DocumentProfile": {
+      "type": "object",
+      "required": ["id", "label", "document_type"],
+      "additionalProperties": false,
+      "description": "Nutzerdefiniertes Profil für einen Dokumenttyp. Definiert Erkennung, Extraktion, Benennung und Ablage. MVP-Schema – Runtime-Compiler-Erweiterung noch nicht implementiert. Erster stabiler Typ: 'invoice'.",
+      "properties": {
+
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Eindeutiger technischer Schlüssel dieses Profils, z.B. 'rechnung', 'vertrag', 'lieferschein'. Darf keine Leerzeichen enthalten.",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nutzerfreundlicher Anzeigename, z.B. 'Eingangsrechnung', 'Vertrag'."
+        },
+
+        "description": {
+          "type": "string",
+          "description": "Optionale Beschreibung für UI-Tooltips oder Dokumentation."
+        },
+
+        "schema_version": {
+          "type": "string",
+          "description": "Schema-Version dieses Profils. Ermöglicht spätere Migration.",
+          "examples": ["1.0"]
+        },
+
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ob dieses Profil aktiv verwendet wird."
+        },
+
+        "document_type": {
+          "$ref": "#/$defs/DocumentTypeEnum",
+          "description": "Technischer Dokumenttyp. Bestimmt, welche Extraktionsfelder und Benennungsregeln gelten."
+        },
+
+        "classification_hints": {
+          "$ref": "#/$defs/StringList",
+          "description": "Keywords im PDF-Text, die auf diesen Dokumenttyp hinweisen (positive Erkennungsmerkmale). Für die spätere Klassifikationserweiterung."
+        },
+
+        "negative_hints": {
+          "$ref": "#/$defs/StringList",
+          "description": "Keywords im PDF-Text, die diesen Dokumenttyp ausschließen (negative Erkennungsmerkmale). Hat Vorrang vor classification_hints."
+        },
+
+        "required_fields": {
+          "$ref": "#/$defs/StringList",
+          "description": "Felder, die für diesen Dokumenttyp extrahiert werden müssen (z.B. 'date', 'supplier', 'amount'). Fehlende Pflichtfelder erhöhen die Unklarheitswahrscheinlichkeit."
+        },
+
+        "optional_fields": {
+          "$ref": "#/$defs/StringList",
+          "description": "Felder, die extrahiert werden sollen, aber nicht zwingend vorhanden sein müssen (z.B. 'reference_number', 'topic')."
+        },
+
+        "naming_schema": {
+          "$ref": "#/$defs/DocumentNamingSchema",
+          "description": "Dateinamensschema für diesen Dokumenttyp. Überschreibt das globale naming_profile wenn gesetzt. Noch nicht aktiv im Runtime-Compiler."
+        },
+
+        "target_folder_id": {
+          "type": "string",
+          "description": "ID des Zielordners aus folders[]. Dokumente dieses Typs werden dorthin abgelegt."
+        },
+
+        "fallback_folder_id": {
+          "type": "string",
+          "description": "ID des Fallback-Ordners aus folders[]. Wird verwendet wenn Confidence zu niedrig oder Routing unklar. Empfohlen: 'unklar'."
+        },
+
+        "confidence_threshold": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.5,
+          "description": "Minimaler Klassifikations-Confidence-Wert für dieses Profil. Unterhalb der Schwelle → fallback_folder. Noch nicht aktiv im Runtime-Compiler."
+        },
+
+        "duplicate_policy": {
+          "$ref": "#/$defs/DuplicatePolicyEnum",
+          "default": "flag",
+          "description": "Verhalten bei Duplikaterkennung für diesen Dokumenttyp. Überschreibt globale duplicate_handling-Einstellung wenn gesetzt."
+        },
+
+        "ui_help_text": {
+          "type": "string",
+          "description": "Optionaler Hilfetext für den Nutzer im UI-Profil-Editor. Wird im UI angezeigt, hat keinen technischen Effekt."
+        }
+
       }
     }
 

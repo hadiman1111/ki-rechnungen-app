@@ -354,7 +354,7 @@ Dateinamensschema: `{date}_bescheid_{authority}_{topic}_{year}.pdf`
 | `naming_profile` | Dateinamensstruktur | Schema ✓, Compiler MVP ✓ |
 | `review_policy` | Unklar-Verhalten | Schema ✓, Compiler MVP ✓ |
 | `payment_profiles` | Zahlungsarterkennung | Schema ✓, Compiler MVP ✓ |
-| `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | Zielbild, nicht implementiert |
+| `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | **Schema ✓ (Mai 2026)**, Compiler noch nicht |
 
 ### Trennung von Profil und Basisregeln
 
@@ -562,7 +562,8 @@ Empfohlene Reihenfolge (nicht verbindlicher Sprint-Plan, sondern Richtungspriori
 | 5 | **Profilvalidierung** – Schema-Prüfung, Konfliktprüfung | Profile Compiler |
 | 6 | **Nutzerverständlicher Report** – Trace und Report für Nicht-Techniker | Trace |
 | 7 | **UI MVP** – einfache Review-Oberfläche, Ergebnisanzeige | Run Manager, Report |
-| 8 | **document_profiles** – weitere Dokumenttypen | Klassifikation |
+| 8a | **document_profiles Schema** – Schema-Definition, Architekturbeziehung dokumentiert | Klassifikation | ✅ Mai 2026 |
+| 8b | **document_profiles Compiler** – Klassifikation, Routing, Dateiname nach Typ | 8a |
 | 9 | **Packaging / Installation** – Produktisierung | alle oben |
 
 ---
@@ -571,7 +572,8 @@ Empfohlene Reihenfolge (nicht verbindlicher Sprint-Plan, sondern Richtungspriori
 
 Folgendes ist heute **noch nicht** gebaut und explizit außerhalb des aktuellen Entwicklungsstandes:
 
-- ❌ Allgemeines `document_profiles`-System für beliebige Dokumenttypen
+- ✅ `document_profiles`-Schema in `profile_config.schema.json` definiert (Mai 2026) – Architekturbeziehung in `docs/roadmap/DOCUMENT_PROFILES_ARCHITECTURE.md` dokumentiert
+- ❌ `document_profiles`-Runtime-Compiler-Erweiterung (Klassifikation, Routing, Dateiname nach Dokumenttyp)
 - ❌ Vollständige UI (nur Planung)
 - ✅ Run Manager (`invoice_tool/run.py` – implementiert, produktiv nutzbar)
 - ✅ Runtime-Rules-Integration (Profil → Runtime Rules pro Lauf, vollständig verknüpft)
