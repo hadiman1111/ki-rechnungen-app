@@ -15,7 +15,9 @@ runtime/
 testing/output/
 testing/documents/*.pdf
 testing/input/*.pdf
+testing/input/*.xlsx
 testing/input/archiv/
+testing/260527_output/
 .cursor/*
 !.cursor/rules/
 !.cursor/rules/**
