@@ -46,6 +46,26 @@ def _extract_pruefbedarf_block(report_text: str) -> str | None:
     return "\n".join(collected).strip() or None
 
 
+def _load_profile_json(profile_path: Path) -> tuple[dict | None, str | None]:
+    """Liest und parst die Profil-JSON-Datei ohne Seiteneffekte.
+
+    Gibt (data, None) bei Erfolg zurück, (None, fehlermeldung) bei Fehler.
+    Schreibt keine Dateien und beeinflusst keine Verarbeitung.
+    """
+    try:
+        text = profile_path.read_text(encoding="utf-8")
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return None, "Profildatei hat unerwartetes Format (kein JSON-Objekt)."
+        return data, None
+    except FileNotFoundError:
+        return None, f"Profildatei nicht gefunden:\n{profile_path}"
+    except json.JSONDecodeError as exc:
+        return None, f"Profildatei enthält kein gültiges JSON:\n{exc}"
+    except OSError as exc:
+        return None, f"Profildatei konnte nicht gelesen werden:\n{exc}"
+
+
 def _find_report_in_run_dir(run_dir: Path) -> tuple[Path | None, Path | None]:
     """Sucht report.txt und report.json im von run_once() zurückgegebenen run_dir."""
     runs_dir = run_dir / "output" / "_runs"
@@ -382,21 +402,271 @@ def _ui(page: ft.Page) -> None:
 
     start_button.on_click = on_start_run
 
+    # --- Profildetail-Dialog (nur lesend) ---
+
+    def _build_profile_dialog_content() -> ft.Column:
+        """Erstellt den Inhalt des read-only Profildetail-Dialogs."""
+        rows: list[ft.Control] = []
+
+        # Hinweiszeile: nur lesend
+        rows.append(
+            ft.Container(
+                bgcolor=ft.Colors.BLUE_50,
+                border=ft.border.all(1, ft.Colors.BLUE_200),
+                border_radius=6,
+                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.LOCK_OUTLINE, size=15, color=ft.Colors.BLUE_700),
+                        ft.Text(
+                            "Diese Ansicht ist nur lesend. Profilbearbeitung folgt später.",
+                            color=ft.Colors.BLUE_700,
+                            size=13,
+                            italic=True,
+                        ),
+                    ],
+                    spacing=6,
+                ),
+            )
+        )
+
+        def _label_row(label: str, value: str, mono: bool = False) -> ft.Row:
+            return ft.Row(
+                [
+                    ft.Text(label, weight=ft.FontWeight.W_600, size=13, width=160),
+                    ft.Text(
+                        value,
+                        selectable=True,
+                        size=13,
+                        font_family="Courier New" if mono else None,
+                        expand=True,
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
+
+        def _section(title: str) -> ft.Text:
+            return ft.Text(
+                title,
+                size=14,
+                weight=ft.FontWeight.W_600,
+                color=ft.Colors.BLUE_GREY_700,
+            )
+
+        # Basisdaten
+        rows.append(ft.Divider(height=8))
+        rows.append(_section("Verarbeitungsprofil"))
+        rows.append(
+            _label_row(
+                "Lokales Profil:",
+                "gefunden" if profile_path else "nicht gefunden – nur Basis-Regeln",
+            )
+        )
+        rows.append(
+            _label_row(
+                "Profildatei:",
+                str(profile_path) if profile_path else "–",
+                mono=True,
+            )
+        )
+        rows.append(_label_row("Aktives Preset:", preset_label.value or "–"))
+
+        if profile_path is None:
+            rows.append(
+                ft.Container(
+                    bgcolor=ft.Colors.ORANGE_50,
+                    border=ft.border.all(1, ft.Colors.ORANGE_200),
+                    border_radius=6,
+                    padding=8,
+                    content=ft.Text(
+                        "Kein lokales Profil gefunden. Es gelten nur die Basis-Regeln aus office_rules.json.",
+                        color=ft.Colors.ORANGE_700,
+                        size=13,
+                    ),
+                )
+            )
+            return ft.Column(rows, spacing=6, scroll=ft.ScrollMode.AUTO)
+
+        # Profil-JSON lesen
+        data, err = _load_profile_json(profile_path)
+        if err:
+            rows.append(
+                ft.Container(
+                    bgcolor=ft.Colors.RED_50,
+                    border=ft.border.all(1, ft.Colors.RED_200),
+                    border_radius=6,
+                    padding=8,
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                "Profildatei konnte nicht gelesen werden:",
+                                color=ft.Colors.RED_700,
+                                weight=ft.FontWeight.W_600,
+                                size=13,
+                            ),
+                            ft.Text(err, color=ft.Colors.RED_700, size=12, selectable=True),
+                        ],
+                        spacing=4,
+                    ),
+                )
+            )
+            return ft.Column(rows, spacing=6, scroll=ft.ScrollMode.AUTO)
+
+        # Profilname und Beschreibung
+        rows.append(_label_row("Profilname:", data.get("profile_name", "–")))
+        desc = data.get("description", "")
+        if desc:
+            rows.append(
+                ft.Row(
+                    [
+                        ft.Text("Beschreibung:", weight=ft.FontWeight.W_600, size=13, width=160),
+                        ft.Text(desc, size=12, color=ft.Colors.BLUE_GREY_600, expand=True),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                )
+            )
+
+        # Ordner
+        folders = data.get("folders", [])
+        rows.append(ft.Divider(height=8))
+        rows.append(_section("Zielordner"))
+        if folders:
+            for f in folders:
+                f_id = f.get("id", "?")
+                f_label = f.get("label", "?")
+                f_name = f.get("folder_name", "?")
+                rows.append(
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.FOLDER_OUTLINED, size=14, color=ft.Colors.BLUE_GREY_400),
+                            ft.Text(f"{f_label} (id: {f_id})", size=13, width=240),
+                            ft.Text(
+                                f_name,
+                                size=12,
+                                font_family="Courier New",
+                                color=ft.Colors.BLUE_GREY_600,
+                            ),
+                        ],
+                        spacing=6,
+                    )
+                )
+        else:
+            rows.append(ft.Text("Keine Ordner konfiguriert.", size=13, color=ft.Colors.BLUE_GREY_500))
+
+        # Dokumenttypen (document_profiles)
+        doc_profiles = data.get("document_profiles", [])
+        rows.append(ft.Divider(height=8))
+        rows.append(_section("Dokumenttypen"))
+        if not doc_profiles:
+            rows.append(
+                ft.Container(
+                    bgcolor=ft.Colors.BLUE_GREY_50,
+                    border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                    border_radius=6,
+                    padding=8,
+                    content=ft.Text(
+                        "In diesem Profil sind noch keine zusätzlichen Dokumenttypen definiert.",
+                        size=13,
+                        color=ft.Colors.BLUE_GREY_600,
+                        italic=True,
+                    ),
+                )
+            )
+        else:
+            for dp in doc_profiles:
+                threshold = dp.get("confidence_threshold")
+                threshold_str = f"{threshold}" if threshold is not None else "–"
+                rows.append(
+                    ft.Container(
+                        bgcolor=ft.Colors.BLUE_GREY_50,
+                        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                        border_radius=6,
+                        padding=8,
+                        content=ft.Column(
+                            [
+                                ft.Text(
+                                    dp.get("label", dp.get("id", "?")),
+                                    weight=ft.FontWeight.W_600,
+                                    size=13,
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text("id:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
+                                        ft.Text(dp.get("id", "–"), size=12, font_family="Courier New"),
+                                    ]
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text("Typ:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
+                                        ft.Text(dp.get("document_type", "–"), size=12),
+                                    ]
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text("Zielordner:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
+                                        ft.Text(dp.get("target_folder_id", "–"), size=12, font_family="Courier New"),
+                                    ]
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text("Fallback:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
+                                        ft.Text(dp.get("fallback_folder_id", "–"), size=12, font_family="Courier New"),
+                                    ]
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text("Konfidenz:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
+                                        ft.Text(threshold_str, size=12),
+                                    ]
+                                ),
+                            ],
+                            spacing=2,
+                        ),
+                    )
+                )
+
+        return ft.Column(rows, spacing=6, scroll=ft.ScrollMode.AUTO)
+
+    def on_show_profile_details(_event: ft.ControlEvent) -> None:
+        content = _build_profile_dialog_content()
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                [
+                    ft.Icon(ft.Icons.POLICY_OUTLINED, color=ft.Colors.BLUE_GREY_700),
+                    ft.Text(
+                        "Verarbeitungsprofil – Details",
+                        weight=ft.FontWeight.W_600,
+                    ),
+                ],
+                spacing=8,
+            ),
+            content=ft.Container(
+                content=content,
+                width=620,
+                height=520,
+            ),
+            actions=[
+                ft.TextButton(
+                    "Schließen",
+                    on_click=lambda _: page.close(dialog),
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.open(dialog)
+
     # --- Layout ---
     controls = ft.Column(
         [
             ft.Text("KI-Rechnungen-App", size=30, weight=ft.FontWeight.BOLD),
 
-            # Info-Box: Preset + Profil (mit Tooltip für Profilerklärung)
+            # Info-Box: Preset + Profil
             ft.Container(
                 bgcolor=ft.Colors.BLUE_GREY_50,
                 border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
                 border_radius=8,
                 padding=12,
-                tooltip=(
-                    "Das Verarbeitungsprofil enthält lokale Regeln für Erkennung, "
-                    "Benennung und Ablage. Profildetails sind in Kürze einsehbar (nur lesend)."
-                ),
                 content=ft.Column(
                     [
                         ft.Row(
@@ -404,6 +674,19 @@ def _ui(page: ft.Page) -> None:
                         ),
                         ft.Row(
                             [ft.Text("Profil:", weight=ft.FontWeight.W_600), profile_label]
+                        ),
+                        ft.Row(
+                            [
+                                ft.TextButton(
+                                    "Profildetails ansehen",
+                                    icon=ft.Icons.INFO_OUTLINE,
+                                    on_click=on_show_profile_details,
+                                    style=ft.ButtonStyle(
+                                        color=ft.Colors.BLUE_700,
+                                        padding=ft.padding.symmetric(horizontal=0, vertical=0),
+                                    ),
+                                ),
+                            ]
                         ),
                     ],
                     spacing=6,
