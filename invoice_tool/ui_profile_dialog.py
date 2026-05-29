@@ -63,7 +63,10 @@ def _section(title: str) -> ft.Text:
 def _hints_col(items: list) -> ft.Column:
     """Aufzählungsspalte für Erkennungs- oder Ausschlusshinweise."""
     return ft.Column(
-        [ft.Text(f"• {h}", size=12, color=ft.Colors.BLUE_GREY_700) for h in items],
+        [
+            ft.Text(f"• {h}", size=12, color=ft.Colors.BLUE_GREY_700, selectable=True)
+            for h in items
+        ],
         spacing=1,
         expand=True,
     )
@@ -323,6 +326,8 @@ def _build_doc_profile_tile(
                         ", ".join(str(f) for f in required_fields),
                         size=12,
                         expand=True,
+                        selectable=True,
+                        font_family="Courier New",
                     ),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.START,
@@ -343,6 +348,8 @@ def _build_doc_profile_tile(
                         ", ".join(str(f) for f in optional_fields),
                         size=12,
                         expand=True,
+                        selectable=True,
+                        font_family="Courier New",
                     ),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.START,
@@ -532,6 +539,7 @@ def _build_profile_dialog_content(
                             size=12,
                             font_family="Courier New",
                             color=ft.Colors.BLUE_GREY_600,
+                            selectable=True,
                         ),
                     ],
                     spacing=6,
@@ -629,8 +637,8 @@ def show_profile_details_dialog(
         ),
         content=ft.Container(
             content=content,
-            width=620,
-            height=520,
+            width=820,
+            height=700,
         ),
         actions=[
             ft.TextButton(
@@ -988,7 +996,10 @@ def show_edit_document_profile_dialog(
 
         page.open(
             ft.SnackBar(
-                content=ft.Text(f"Gespeichert. Backup: {backup_path.name}"),
+                content=ft.Text(
+                    f"Gespeichert. Backup: {backup_path.name}",
+                    selectable=True,
+                ),
                 duration=4000,
             )
         )
@@ -1055,8 +1066,8 @@ def show_edit_document_profile_dialog(
         ),
         content=ft.Container(
             content=dialog_content,
-            width=620,
-            height=580,
+            width=820,
+            height=660,
         ),
         actions=[
             ft.TextButton("Abbrechen", on_click=do_cancel),
