@@ -637,8 +637,8 @@ def show_profile_details_dialog(
         ),
         content=ft.Container(
             content=content,
-            width=820,
-            height=700,
+            width=920,
+            height=780,
         ),
         actions=[
             ft.TextButton(
@@ -1066,8 +1066,8 @@ def show_edit_document_profile_dialog(
         ),
         content=ft.Container(
             content=dialog_content,
-            width=820,
-            height=660,
+            width=920,
+            height=720,
         ),
         actions=[
             ft.TextButton("Abbrechen", on_click=do_cancel),
