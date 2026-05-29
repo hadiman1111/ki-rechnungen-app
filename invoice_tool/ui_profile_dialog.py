@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import flet as ft
+
+from invoice_tool.profile_editor import (
+    ProfileEditorError,
+    hints_from_textarea,
+    load_profile_for_edit,
+    save_profile_atomic,
+    update_document_profile,
+    validate_profile_for_save,
+)
 
 # Menschenlesbare Bezeichnungen für document_type-Schlüssel aus dem Profil-JSON.
 _DOC_TYPE_LABELS: dict[str, str] = {
@@ -85,6 +95,34 @@ def _load_profile_json(profile_path: Path) -> tuple[dict | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
+# Einfacher Fehler-Dialog (intern)
+# ---------------------------------------------------------------------------
+
+
+def _open_simple_error_dialog(page: ft.Page, title: str, message: str) -> None:
+    """Zeigt einen modalen Fehlerdialog mit Schließen-Button."""
+    dlg_ref: list[ft.AlertDialog | None] = [None]
+
+    dlg = ft.AlertDialog(
+        modal=True,
+        title=ft.Row(
+            [
+                ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_700),
+                ft.Text(title, weight=ft.FontWeight.W_600),
+            ],
+            spacing=8,
+        ),
+        content=ft.Text(message, size=13, selectable=True),
+        actions=[
+            ft.TextButton("Schließen", on_click=lambda _: page.close(dlg_ref[0]))
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+    dlg_ref[0] = dlg
+    page.open(dlg)
+
+
+# ---------------------------------------------------------------------------
 # Dokumenttyp-Kachel
 # ---------------------------------------------------------------------------
 
@@ -92,6 +130,7 @@ def _load_profile_json(profile_path: Path) -> tuple[dict | None, str | None]:
 def _build_doc_profile_tile(
     dp: dict,
     folder_label_by_id: dict[str, str],
+    on_edit: Callable[[], None] | None = None,
 ) -> ft.ExpansionTile:
     """Baut eine ExpansionTile für einen einzelnen document_profile-Eintrag.
 
@@ -100,6 +139,9 @@ def _build_doc_profile_tile(
        unterhalb von Bezeichnung/Badge, vor der technischen ID.
     b) confidence_threshold None/fehlend → "0,5 (Standard)" statt "–".
     c) _hints_col ist jetzt Modul-Funktion statt Loop-Closure.
+
+    Phase 2b: on_edit-Callback ergänzt. Wenn gesetzt und dp hat gültige id,
+    erscheint ein "Bearbeiten"-Button am Anfang der aufgeklappten Detailansicht.
     """
     dp_id = dp.get("id", "–")
     dp_label = dp.get("label", dp_id)
@@ -152,6 +194,22 @@ def _build_doc_profile_tile(
         )
 
     detail_controls: list[ft.Control] = []
+
+    # Phase 2b: "Bearbeiten"-Button nur wenn Callback gesetzt und id gültig
+    if on_edit is not None and dp_id and dp_id != "–":
+        detail_controls.append(
+            ft.Row(
+                [
+                    ft.TextButton(
+                        "Bearbeiten",
+                        icon=ft.Icons.EDIT_OUTLINED,
+                        on_click=lambda _: on_edit(),
+                        style=ft.ButtonStyle(color=ft.Colors.BLUE_700),
+                    )
+                ],
+                alignment=ft.MainAxisAlignment.END,
+            )
+        )
 
     # Correction a: Beschreibung oben, vor technischer ID
     if dp_description:
@@ -333,6 +391,7 @@ def _build_doc_profile_tile(
 def _build_profile_dialog_content(
     profile_path: Path | None,
     preset_label_value: str,
+    on_edit: Callable[[str], None] | None = None,
 ) -> ft.Column:
     """Erstellt den Inhalt des read-only Profildetail-Dialogs.
 
@@ -342,6 +401,10 @@ def _build_profile_dialog_content(
         Pfad zur profile_config.local.json oder None, falls nicht gefunden.
     preset_label_value:
         Anzeigetext des aktiven Presets (z. B. aus rules.active_preset).
+    on_edit:
+        Optionaler Callback (dp_id: str) → None. Wenn gesetzt und Profil
+        erfolgreich geladen, erscheint pro document_profile ein
+        "Bearbeiten"-Button. Phase 2b.
     """
     rows: list[ft.Control] = []
 
@@ -500,13 +563,21 @@ def _build_profile_dialog_content(
         )
     else:
         for dp in doc_profiles:
-            rows.append(_build_doc_profile_tile(dp, folder_label_by_id))
+            dp_id = dp.get("id") if isinstance(dp, dict) else None
+            # Phase 2b: Bearbeiten-Callback nur wenn on_edit gesetzt und id gültig
+            if on_edit is not None and dp_id:
+                tile_on_edit: Callable[[], None] | None = (
+                    lambda did: lambda: on_edit(did)
+                )(dp_id)
+            else:
+                tile_on_edit = None
+            rows.append(_build_doc_profile_tile(dp, folder_label_by_id, on_edit=tile_on_edit))
 
     return ft.Column(rows, spacing=6, scroll=ft.ScrollMode.AUTO)
 
 
 # ---------------------------------------------------------------------------
-# Öffentliche API
+# Öffentliche API – read-only Dialog
 # ---------------------------------------------------------------------------
 
 
@@ -526,7 +597,24 @@ def show_profile_details_dialog(
     preset_label:
         Anzeigetext des aktiven Presets (z. B. aus rules.active_preset).
     """
-    content = _build_profile_dialog_content(profile_path, preset_label)
+    dialog_ref: list[ft.AlertDialog | None] = [None]
+
+    # Phase 2b: Bearbeiten-Callback – schließt Read-only-Dialog, öffnet Edit-Dialog.
+    # on_saved öffnet den Read-only-Dialog nach erfolgreichem Speichern neu.
+    def _on_edit_dp(dp_id: str) -> None:
+        if dialog_ref[0] is not None:
+            page.close(dialog_ref[0])
+        show_edit_document_profile_dialog(
+            page,
+            profile_path,  # type: ignore[arg-type]
+            dp_id,
+            on_saved=lambda: show_profile_details_dialog(page, profile_path, preset_label),
+        )
+
+    # Bearbeiten nur anbieten wenn profile_path vorhanden (Datei existiert/ladbar).
+    on_edit_fn: Callable[[str], None] | None = _on_edit_dp if profile_path else None
+
+    content = _build_profile_dialog_content(profile_path, preset_label, on_edit=on_edit_fn)
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row(
@@ -552,4 +640,429 @@ def show_profile_details_dialog(
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
+    dialog_ref[0] = dialog
+    page.open(dialog)
+
+
+# ---------------------------------------------------------------------------
+# Öffentliche API – Bearbeitungs-Dialog (Phase 2b)
+# ---------------------------------------------------------------------------
+
+
+def show_edit_document_profile_dialog(
+    page: ft.Page,
+    profile_path: Path,
+    profile_id: str,
+    on_saved: Callable[[], None] | None = None,
+) -> None:
+    """Öffnet den Bearbeitungsdialog für einen document_profile-Eintrag.
+
+    Bearbeitbare Felder (Phase 2b):
+        label, enabled, document_type, target_folder_id,
+        fallback_folder_id, confidence_threshold,
+        classification_hints, negative_hints
+
+    Alle Schreibvorgänge laufen ausschließlich über save_profile_atomic().
+    Alle Mutationen laufen über update_document_profile().
+
+    Parameters
+    ----------
+    page:
+        Das aktive Flet-Page-Objekt.
+    profile_path:
+        Pfad zur profile_config.local.json (darf nicht None sein).
+    profile_id:
+        id-Wert des zu bearbeitenden document_profile-Eintrags.
+    on_saved:
+        Optionaler Callback nach erfolgreichem Speichern (z. B. Dialog
+        neu öffnen). Wird aufgerufen nachdem der Edit-Dialog geschlossen
+        wurde.
+    """
+    # ------------------------------------------------------------------ #
+    #  1. Profil laden                                                     #
+    # ------------------------------------------------------------------ #
+    try:
+        profile = load_profile_for_edit(profile_path)
+    except ProfileEditorError as exc:
+        _open_simple_error_dialog(page, "Profil konnte nicht geladen werden", str(exc))
+        return
+
+    # ------------------------------------------------------------------ #
+    #  2. Eintrag suchen                                                   #
+    # ------------------------------------------------------------------ #
+    dps: list[dict] = [
+        p for p in (profile.get("document_profiles") or []) if isinstance(p, dict)
+    ]
+    dp = next((p for p in dps if p.get("id") == profile_id), None)
+    if dp is None:
+        _open_simple_error_dialog(
+            page,
+            "Dokumentprofil nicht gefunden",
+            f"Kein Eintrag mit ID '{profile_id}' in der Profildatei gefunden.",
+        )
+        return
+
+    # ------------------------------------------------------------------ #
+    #  3. Ordner-Optionen                                                  #
+    # ------------------------------------------------------------------ #
+    folders = [f for f in (profile.get("folders") or []) if isinstance(f, dict)]
+    folder_label_by_id: dict[str, str] = {
+        str(f.get("id", "")): str(
+            f.get("label") or f.get("folder_name") or f.get("id") or "–"
+        )
+        for f in folders
+    }
+    folder_opts = [
+        ft.dropdown.Option(key=str(f["id"]), text=folder_label_by_id[str(f["id"])])
+        for f in folders
+        if f.get("id")
+    ]
+    folder_opts_with_empty = [ft.dropdown.Option(key="", text="– kein –")] + folder_opts
+
+    # ------------------------------------------------------------------ #
+    #  4. Zustandsverfolgung                                               #
+    # ------------------------------------------------------------------ #
+    dirty: list[bool] = [False]
+    dialog_ref: list[ft.AlertDialog | None] = [None]
+
+    def _mark_dirty(_: ft.ControlEvent | None = None) -> None:
+        dirty[0] = True
+
+    # ------------------------------------------------------------------ #
+    #  5. Formular-Controls                                                #
+    # ------------------------------------------------------------------ #
+    tf_label = ft.TextField(
+        label="Bezeichnung *",
+        value=dp.get("label", ""),
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    sw_enabled = ft.Switch(
+        label="Aktiv",
+        value=bool(dp.get("enabled", True)),
+        on_change=_mark_dirty,
+    )
+
+    doc_type_opts = [
+        ft.dropdown.Option(key=k, text=v)
+        for k, v in _DOC_TYPE_LABELS.items()
+        if k != "invoice"
+    ]
+    dd_doc_type = ft.Dropdown(
+        label="Dokumenttyp",
+        value=dp.get("document_type") or None,
+        options=doc_type_opts,
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    current_target = str(dp.get("target_folder_id") or "")
+    dd_target = ft.Dropdown(
+        label="Zielordner",
+        value=current_target if current_target else None,
+        options=folder_opts,
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    current_fallback = str(dp.get("fallback_folder_id") or "")
+    dd_fallback = ft.Dropdown(
+        label="Fallback-Ordner (optional)",
+        value=current_fallback if current_fallback else "",
+        options=folder_opts_with_empty,
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    threshold_raw = dp.get("confidence_threshold")
+    tf_threshold = ft.TextField(
+        label="Konfidenzgrenze (0.0 – 1.0)",
+        value=str(threshold_raw) if threshold_raw is not None else "",
+        hint_text="leer = Standard (0,5)  ·  Komma oder Punkt möglich",
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    tf_class_hints = ft.TextField(
+        label="Erkennungshinweise (eine je Zeile)",
+        value="\n".join(dp.get("classification_hints") or []),
+        multiline=True,
+        min_lines=3,
+        max_lines=6,
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    tf_neg_hints = ft.TextField(
+        label="Ausschlusshinweise (eine je Zeile)",
+        value="\n".join(dp.get("negative_hints") or []),
+        multiline=True,
+        min_lines=3,
+        max_lines=6,
+        expand=True,
+        on_change=_mark_dirty,
+    )
+
+    # Inline-Fehleranzeige
+    err_text = ft.Text("", color=ft.Colors.RED_700, size=12, selectable=True)
+    err_container = ft.Container(
+        content=err_text,
+        bgcolor=ft.Colors.RED_50,
+        border=ft.border.all(1, ft.Colors.RED_200),
+        border_radius=6,
+        padding=8,
+        visible=False,
+    )
+
+    def _show_err(msg: str) -> None:
+        err_text.value = msg
+        err_container.visible = True
+        page.update()
+
+    def _clear_err() -> None:
+        err_container.visible = False
+        page.update()
+
+    # ------------------------------------------------------------------ #
+    #  6. Nur-lesen-Abschnitt                                              #
+    # ------------------------------------------------------------------ #
+    naming: dict = dp.get("naming_schema") or {}
+    naming_template = naming.get("template") or "–"
+    dup_policy = dp.get("duplicate_policy") or "–"
+    req_fields: list = dp.get("required_fields") or []
+    opt_fields: list = dp.get("optional_fields") or []
+
+    ro_rows: list[ft.Control] = [
+        ft.Text(
+            "Dateinamensschema und weitere Felder sind in dieser Version nur lesend.",
+            size=12,
+            color=ft.Colors.BLUE_GREY_600,
+            italic=True,
+        ),
+        _label_row("ID:", profile_id, mono=True),
+        _label_row("Namensschema:", naming_template, mono=True),
+        _label_row("Duplikat-Policy:", dup_policy),
+    ]
+    if req_fields:
+        ro_rows.append(
+            _label_row("Pflichtfelder:", ", ".join(str(f) for f in req_fields))
+        )
+    if opt_fields:
+        ro_rows.append(
+            _label_row("Optionale Felder:", ", ".join(str(f) for f in opt_fields))
+        )
+
+    ro_section = ft.Container(
+        bgcolor=ft.Colors.BLUE_GREY_50,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        border_radius=6,
+        padding=ft.padding.symmetric(horizontal=10, vertical=6),
+        content=ft.Column(ro_rows, spacing=3),
+    )
+
+    # ------------------------------------------------------------------ #
+    #  7. Dialog-Inhalt zusammenbauen                                      #
+    # ------------------------------------------------------------------ #
+    dialog_content = ft.Column(
+        [
+            # Warnhinweis: Änderungen wirken ab dem nächsten Lauf
+            ft.Container(
+                bgcolor=ft.Colors.AMBER_50,
+                border=ft.border.all(1, ft.Colors.AMBER_200),
+                border_radius=6,
+                padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                content=ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_OUTLINED,
+                            size=15,
+                            color=ft.Colors.AMBER_700,
+                        ),
+                        ft.Text(
+                            "Änderungen wirken ab dem nächsten Lauf.",
+                            color=ft.Colors.AMBER_700,
+                            size=12,
+                        ),
+                    ],
+                    spacing=6,
+                ),
+            ),
+            # Nur-lesen-Abschnitt
+            ro_section,
+            ft.Divider(height=4),
+            _section("Bearbeitbare Felder"),
+            tf_label,
+            sw_enabled,
+            dd_doc_type,
+            ft.Row([dd_target, dd_fallback], spacing=8),
+            tf_threshold,
+            ft.Divider(height=4),
+            _section("Hinweise"),
+            tf_class_hints,
+            tf_neg_hints,
+            ft.Divider(height=4),
+            err_container,
+        ],
+        spacing=8,
+        scroll=ft.ScrollMode.AUTO,
+    )
+
+    # ------------------------------------------------------------------ #
+    #  8. Speichern-Logik                                                  #
+    # ------------------------------------------------------------------ #
+    def do_save(_: ft.ControlEvent) -> None:
+        _clear_err()
+        patch: dict = {}
+
+        # label
+        label_val = (tf_label.value or "").strip()
+        if not label_val:
+            _show_err("Bezeichnung darf nicht leer sein.")
+            return
+        patch["label"] = label_val
+
+        # enabled
+        patch["enabled"] = bool(sw_enabled.value)
+
+        # document_type
+        doc_type_val = dd_doc_type.value or ""
+        if not doc_type_val:
+            _show_err("Bitte einen Dokumenttyp auswählen.")
+            return
+        patch["document_type"] = doc_type_val
+
+        # target_folder_id: leerer String → None
+        patch["target_folder_id"] = dd_target.value or None
+
+        # fallback_folder_id: leerer String (= "– kein –") → None
+        fallback_val = dd_fallback.value or ""
+        patch["fallback_folder_id"] = fallback_val if fallback_val else None
+
+        # confidence_threshold: leer → None, sonst float
+        thresh_str = (tf_threshold.value or "").strip().replace(",", ".")
+        if thresh_str:
+            try:
+                thresh_float = float(thresh_str)
+            except ValueError:
+                _show_err("Konfidenzgrenze: Ungültige Zahl (z. B. 0.7 oder 0,7).")
+                return
+            if not (0.0 <= thresh_float <= 1.0):
+                _show_err(
+                    f"Konfidenzgrenze muss zwischen 0.0 und 1.0 liegen (eingegeben: {thresh_float})."
+                )
+                return
+            patch["confidence_threshold"] = thresh_float
+        else:
+            patch["confidence_threshold"] = None
+
+        # hints
+        patch["classification_hints"] = hints_from_textarea(tf_class_hints.value or "")
+        patch["negative_hints"] = hints_from_textarea(tf_neg_hints.value or "")
+
+        # Patch anwenden
+        try:
+            updated = update_document_profile(profile, profile_id, patch)
+        except ProfileEditorError as exc:
+            _show_err(f"Patch-Fehler: {exc}")
+            return
+
+        # Validieren
+        val_errors = validate_profile_for_save(updated)
+        if val_errors:
+            _show_err(
+                "Validierungsfehler:\n" + "\n".join(f"• {e}" for e in val_errors)
+            )
+            return
+
+        # Atomar speichern
+        try:
+            backup_path = save_profile_atomic(profile_path, updated)
+        except ProfileEditorError as exc:
+            _show_err(f"Speichern fehlgeschlagen:\n{exc}")
+            return
+
+        # Erfolg: Dialog schließen, Meldung anzeigen, Callback aufrufen
+        if dialog_ref[0] is not None:
+            page.close(dialog_ref[0])
+
+        page.open(
+            ft.SnackBar(
+                content=ft.Text(f"Gespeichert. Backup: {backup_path.name}"),
+                duration=4000,
+            )
+        )
+
+        if on_saved is not None:
+            on_saved()
+
+    # ------------------------------------------------------------------ #
+    #  9. Abbrechen-Logik                                                  #
+    # ------------------------------------------------------------------ #
+    def do_cancel(_: ft.ControlEvent) -> None:
+        if not dirty[0]:
+            if dialog_ref[0] is not None:
+                page.close(dialog_ref[0])
+            return
+
+        # Änderungen vorhanden: Bestätigungsdialog anzeigen
+        confirm_ref: list[ft.AlertDialog | None] = [None]
+
+        def _confirm_discard(_: ft.ControlEvent) -> None:
+            if confirm_ref[0] is not None:
+                page.close(confirm_ref[0])
+            if dialog_ref[0] is not None:
+                page.close(dialog_ref[0])
+
+        def _cancel_discard(_: ft.ControlEvent) -> None:
+            if confirm_ref[0] is not None:
+                page.close(confirm_ref[0])
+
+        confirm_dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Änderungen verwerfen?", weight=ft.FontWeight.W_600),
+            content=ft.Text(
+                "Die eingegebenen Änderungen werden nicht gespeichert.",
+                size=13,
+            ),
+            actions=[
+                ft.TextButton("Weiter bearbeiten", on_click=_cancel_discard),
+                ft.FilledButton(
+                    "Verwerfen",
+                    on_click=_confirm_discard,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        confirm_ref[0] = confirm_dlg
+        page.open(confirm_dlg)
+
+    # ------------------------------------------------------------------ #
+    #  10. Dialog öffnen                                                   #
+    # ------------------------------------------------------------------ #
+    dialog = ft.AlertDialog(
+        modal=True,
+        title=ft.Row(
+            [
+                ft.Icon(ft.Icons.EDIT_OUTLINED, color=ft.Colors.BLUE_700),
+                ft.Text(
+                    "Dokumentprofil bearbeiten",
+                    weight=ft.FontWeight.W_600,
+                ),
+            ],
+            spacing=8,
+        ),
+        content=ft.Container(
+            content=dialog_content,
+            width=620,
+            height=580,
+        ),
+        actions=[
+            ft.TextButton("Abbrechen", on_click=do_cancel),
+            ft.FilledButton("Speichern", on_click=do_save),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+    dialog_ref[0] = dialog
     page.open(dialog)
