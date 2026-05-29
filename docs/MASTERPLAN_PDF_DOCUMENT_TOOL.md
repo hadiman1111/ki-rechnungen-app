@@ -354,7 +354,7 @@ Dateinamensschema: `{date}_bescheid_{authority}_{topic}_{year}.pdf`
 | `naming_profile` | Dateinamensstruktur | Schema ✓, Compiler MVP ✓ |
 | `review_policy` | Unklar-Verhalten | Schema ✓, Compiler MVP ✓ |
 | `payment_profiles` | Zahlungsarterkennung | Schema ✓, Compiler MVP ✓ |
-| `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | **Schema ✓ (Mai 2026)**, Compiler noch nicht |
+| `document_profiles` | Dokumenttypen (Rechnung, Vertrag…) | **Schema ✓, Compiler ✓ (Mai 2026, Schritt 8b/8c)** |
 
 ### Trennung von Profil und Basisregeln
 
@@ -563,7 +563,8 @@ Empfohlene Reihenfolge (nicht verbindlicher Sprint-Plan, sondern Richtungspriori
 | 6 | **Nutzerverständlicher Report** – Trace und Report für Nicht-Techniker | Trace |
 | 7 | **UI MVP** – einfache Review-Oberfläche, Ergebnisanzeige | Run Manager, Report |
 | 8a | **document_profiles Schema** – Schema-Definition, Architekturbeziehung dokumentiert | Klassifikation | ✅ Mai 2026 |
-| 8b | **document_profiles Compiler** – Klassifikation, Routing, Dateiname nach Typ | 8a |
+| 8b | **document_profiles Compiler** – Klassifikation, Routing, Dateiname nach Typ | 8a | ✅ Mai 2026 |
+| 8c | **document_profiles E2E-Validierung** – kontrollierter Validierungslauf mit synthetischen Daten | 8b | ✅ Mai 2026 |
 | 9 | **Packaging / Installation** – Produktisierung | alle oben |
 
 ---
@@ -572,8 +573,8 @@ Empfohlene Reihenfolge (nicht verbindlicher Sprint-Plan, sondern Richtungspriori
 
 Folgendes ist heute **noch nicht** gebaut und explizit außerhalb des aktuellen Entwicklungsstandes:
 
-- ✅ `document_profiles`-Schema in `profile_config.schema.json` definiert (Mai 2026) – Architekturbeziehung in `docs/roadmap/DOCUMENT_PROFILES_ARCHITECTURE.md` dokumentiert
-- ❌ `document_profiles`-Runtime-Compiler-Erweiterung (Klassifikation, Routing, Dateiname nach Dokumenttyp)
+- ✅ `document_profiles`-Schema in `profile_config.schema.json` definiert (Mai 2026)
+- ✅ `document_profiles`-Runtime-Compiler-Erweiterung implementiert (Schritt 8b, Mai 2026): Klassifikation, Routing, Dateiname, Fallback-Logik, Negative-Hints, Trace-Integration
 - ❌ Vollständige UI (nur Planung)
 - ✅ Run Manager (`invoice_tool/run.py` – implementiert, produktiv nutzbar)
 - ✅ Runtime-Rules-Integration (Profil → Runtime Rules pro Lauf, vollständig verknüpft)
@@ -626,8 +627,8 @@ Die Entwicklung tritt in den Stabilisierungsmodus.
 
 ### Abgeschlossener MVP-Umfang
 
-- ✅ 8 Profile-Compiler: address, account_card, business_context, vendor, classification,
-  naming, review_policy, payment_profiles
+- ✅ 9 Profile-Compiler: address, account_card, business_context, vendor, classification,
+  naming, review_policy, payment_profiles, document_profiles
 - ✅ Runtime-Rules-Integration (profile_config → runtime_rules.json pro Lauf)
 - ✅ Run Manager (`invoice_tool/run.py`)
 - ✅ Smoke-Test + Run-Verifikation (`scripts/check_profile_run.py`)

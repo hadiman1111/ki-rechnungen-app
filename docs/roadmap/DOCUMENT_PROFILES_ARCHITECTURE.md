@@ -1,7 +1,7 @@
 # Architektur: document_profiles
 
 Stand: Mai 2026  
-Status: Schema definiert – Runtime-Compiler-Erweiterung noch nicht implementiert
+Status: Schema definiert + Runtime-Compiler-Erweiterung implementiert (Schritt 8b/8c abgeschlossen)
 
 ---
 
@@ -151,15 +151,15 @@ Gilt nur für den jeweiligen Lauf.
 | `description` | string | Beschreibung für UI/Doku | ✓ Schema |
 | `schema_version` | string | Für spätere Migration | ✓ Schema |
 | `enabled` | boolean | Aktiv/inaktiv | ✓ Schema |
-| `classification_hints` | string[] | Positive Erkennungs-Keywords | ✓ Schema, Compiler noch nicht |
-| `negative_hints` | string[] | Ausschluss-Keywords | ✓ Schema, Compiler noch nicht |
-| `required_fields` | string[] | Pflicht-Extraktionsfelder | ✓ Schema, Compiler noch nicht |
-| `optional_fields` | string[] | Optionale Extraktionsfelder | ✓ Schema, Compiler noch nicht |
-| `naming_schema` | DocumentNamingSchema | Dateinamens-Template | ✓ Schema, Compiler noch nicht |
-| `target_folder_id` | string | Zielordner-ID aus folders[] | ✓ Schema, Compiler noch nicht |
-| `fallback_folder_id` | string | Fallback-Ordner-ID | ✓ Schema, Compiler noch nicht |
-| `confidence_threshold` | number | Minimaler Confidence-Wert | ✓ Schema, Compiler noch nicht |
-| `duplicate_policy` | DuplicatePolicyEnum | Duplikat-Verhalten | ✓ Schema, Compiler noch nicht |
+| `classification_hints` | string[] | Positive Erkennungs-Keywords | ✓ Schema, ✓ Compiler (8b) |
+| `negative_hints` | string[] | Ausschluss-Keywords | ✓ Schema, ✓ Compiler (8b) |
+| `required_fields` | string[] | Pflicht-Extraktionsfelder | ✓ Schema |
+| `optional_fields` | string[] | Optionale Extraktionsfelder | ✓ Schema |
+| `naming_schema` | DocumentNamingSchema | Dateinamens-Template | ✓ Schema, ✓ Compiler (8b) |
+| `target_folder_id` | string | Zielordner-ID aus folders[] | ✓ Schema, ✓ Compiler (8b) |
+| `fallback_folder_id` | string | Fallback-Ordner-ID | ✓ Schema, ✓ Compiler (8b) |
+| `confidence_threshold` | number | Minimaler Confidence-Wert | ✓ Schema, ✓ Compiler (8b) |
+| `duplicate_policy` | DuplicatePolicyEnum | Duplikat-Verhalten | ✓ Schema, ✓ Compiler (8b) |
 | `ui_help_text` | string | UI-Hilfetext (kein technischer Effekt) | ✓ Schema |
 
 ### Bekannte DocumentTypeEnum-Werte
@@ -188,40 +188,48 @@ generic_document     – Sonstiges PDF-Dokument
 - ✅ Architekturbeziehung dokumentiert (dieses Dokument)
 - ✅ Masterplan aktualisiert
 
+### Was implementiert ist (nach Schritt 8b/8c)
+
+- ✅ Profile Compiler: `_compile_document_profiles()` in `invoice_tool/profile_compiler.py`
+- ✅ Matching: `_match_document_profile()` in `invoice_tool/processing.py`
+- ✅ Dateinamens-Renderer: `render_document_filename()` in `invoice_tool/filename_schema.py`
+- ✅ Confidence-Threshold: Klassifikations-Score gegen `confidence_threshold` geprüft
+- ✅ Zielordner-Routing anhand von `target_folder_id` (resolved via folders[])
+- ✅ Fallback-Ordner bei fehlenden Pflicht-Platzhaltern
+- ✅ Negative-Hints blockieren Profile korrekt
+- ✅ Trace-Felder: `matched_document_profile_id`, `matched_document_profile_score`, `document_profile_used_fallback`, `document_profile_missing_placeholders`
+- ✅ runtime_rules.json enthält `document_profiles[]` (top-level, außerhalb von presets)
+- ✅ End-to-End-Validierung (Schritt 8c) bestanden
+
 ### Was noch nicht implementiert ist
 
-- ❌ Profile Compiler: `document_profiles` → Runtime-Regeln übersetzen
-- ❌ Klassifikations-Erweiterung: Routing anhand von `document_type`
-- ❌ Dateinamens-Compiler: `DocumentNamingSchema.template` auswerten
-- ❌ Confidence-Threshold: Klassifikations-Score gegen Profil-Schwellwert prüfen
-- ❌ Zielordner-Routing anhand von `target_folder_id`
-- ❌ Duplikat-Policy pro Dokumenttyp
-- ❌ UI-Profil-Editor für `document_profiles`
+- ❌ UI-Profil-Editor für `document_profiles` (explizit außerhalb des Umfangs)
+- ❌ `required_fields` / `optional_fields`: Schema definiert, kein Runtime-Effekt
+- ❌ Duplikat-Policy pro Dokumenttyp (Feld vorhanden, aber Runtime-Logik noch nicht aktiv)
 
 ---
 
-## 6. Abhängigkeiten für spätere Implementierung
+## 6. Implementierungsreferenz (nach Schritt 8b/8c)
 
-Der nächste Entwicklungsschritt für `document_profiles` erfordert:
+Die folgenden Module sind die zentralen Implementierungspunkte:
 
-1. **Klassifikation erweitern** (`invoice_tool/classification.py`):
-   Klassifizierung nicht mehr nur invoice/document, sondern gegen alle aktiven
-   `document_profiles` mit ihren `classification_hints` und `negative_hints`.
+1. **`invoice_tool/profile_compiler.py`** – `_compile_document_profiles()`:
+   Übersetzt `document_profiles[]` aus `profile_config` in compilierte Runtime-Dicts.
+   Validiert `target_folder_id`, `fallback_folder_id`, blockiert `document_type=invoice`.
 
-2. **Profile Compiler erweitern** (`invoice_tool/profile_compiler.py`):
-   `_compile_document_profiles()` – übersetzt `document_profiles` in technische
-   Klassifikations- und Routing-Regeln für die Runtime.
+2. **`invoice_tool/processing.py`** – `_match_document_profile()` + `_process_document_with_profile()`:
+   Matching mit `classification_hints`/`negative_hints`, Confidence-Threshold-Prüfung,
+   Fallback-Folder-Logik bei fehlenden Platzhaltern.
 
-3. **Dateinamens-Schema erweitern** (`invoice_tool/filename_schema.py`):
-   Template-Auswertung für `DocumentNamingSchema.template` und `type_literal`.
+3. **`invoice_tool/filename_schema.py`** – `render_document_filename()`:
+   Template-Auswertung, Fallback-Werte, Sanitisierung, Reporting von fehlenden Platzhaltern.
 
-4. **Routing erweitern** (`invoice_tool/routing.py`):
-   Routing nach `document_type` und `target_folder_id`.
+4. **`invoice_tool/run.py`** – `run_once()`:
+   Propagiert `document_profiles` aus dem compilierten Profil in `runtime_rules.json`
+   und übergibt sie an `InvoiceProcessor`.
 
-**Reihenfolge:** Klassifikation → Profile Compiler → Dateiname → Routing
-
-**Kritische Einschränkung:** Die bestehende Rechnung-Pipeline darf nicht gebrochen werden.
-Rechnungen müssen auch ohne `document_profiles` weiter korrekt verarbeitet werden.
+**Rechnungen bleiben unberührt:** Die bestehende `_process_invoice()`-Pipeline läuft
+unabhängig davon, ob `document_profiles` geladen sind oder nicht.
 Wenn `document_profiles` fehlt oder leer ist, verhält sich das System wie bisher.
 
 ---
@@ -240,10 +248,9 @@ Für `document_profiles` gelten dieselben Prinzipien wie für alle anderen Profi
 
 ## 8. Illustrative Beispielprofile (nicht operativ)
 
-> **⚠ HINWEIS:** Die folgenden Beispiele sind ausschließlich zur Illustration des Schemas.
-> Sie sind **nicht aktiv**, nicht in einer Konfigurationsdatei gespeichert und haben
-> keinen Effekt auf die Verarbeitung. Die Runtime-Compiler-Erweiterung für
-> `document_profiles` ist noch nicht implementiert.
+> **Hinweis:** Die folgenden Beispiele illustrieren das Schema.
+> Sie sind nicht in einer produktiven Konfigurationsdatei gespeichert.
+> Das Schema und der Runtime-Compiler sind seit Schritt 8b implementiert.
 
 ### 8.1 Eingangsrechnung (invoice) – heute stabiler Anwendungsfall
 
@@ -399,4 +406,4 @@ Für `document_profiles` gelten dieselben Prinzipien wie für alle anderen Profi
 
 ---
 
-*Stand: Mai 2026. Zu aktualisieren wenn Profile-Compiler-Erweiterung implementiert wird.*
+*Stand: Mai 2026. Zuletzt aktualisiert nach Schritt 8c (End-to-End-Validierung bestanden).*
