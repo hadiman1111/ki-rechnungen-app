@@ -72,8 +72,15 @@ def _build_review_item_card(item: dict) -> ft.Container:
     badge_bg = ft.Colors.RED_50 if is_error else ft.Colors.AMBER_50
     badge_border = ft.Colors.RED_200 if is_error else ft.Colors.AMBER_200
 
+    _STATUS_LABELS = {
+        "unklar": "unklar",
+        "error": "Fehler",
+        "failed": "Fehlgeschlagen",
+    }
+    badge_label = _STATUS_LABELS.get(status, status)
+
     status_badge = ft.Container(
-        content=ft.Text(status, size=11, color=badge_text_color, weight=ft.FontWeight.W_600),
+        content=ft.Text(badge_label, size=11, color=badge_text_color, weight=ft.FontWeight.W_600),
         bgcolor=badge_bg,
         border=ft.border.all(1, badge_border),
         border_radius=8,
@@ -146,7 +153,7 @@ def _build_review_item_card(item: dict) -> ft.Container:
                             color=ft.Colors.AMBER_700,
                         ),
                         ft.Text(
-                            "Unklares Dokument",
+                            "Verarbeitungsfehler" if is_error else "Unklares Dokument",
                             size=13,
                             weight=ft.FontWeight.W_600,
                             color=ft.Colors.AMBER_800,
@@ -391,21 +398,11 @@ def _ui(page: ft.Page) -> None:
                         size=20,
                         color=ft.Colors.AMBER_700,
                     ),
-                    ft.Column(
-                        [
-                            ft.Text(
-                                "Manuelle Prüfung erforderlich",
-                                weight=ft.FontWeight.W_700,
-                                size=15,
-                                color=ft.Colors.AMBER_800,
-                            ),
-                            ft.Text(
-                                "Diese Dokumente brauchen deine Prüfung.",
-                                size=13,
-                                color=ft.Colors.AMBER_700,
-                            ),
-                        ],
-                        spacing=2,
+                    ft.Text(
+                        "Manuelle Prüfung erforderlich",
+                        weight=ft.FontWeight.W_700,
+                        size=15,
+                        color=ft.Colors.AMBER_800,
                     ),
                 ],
                 spacing=10,
