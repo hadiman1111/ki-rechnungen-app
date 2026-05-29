@@ -201,9 +201,21 @@ generic_document     – Sonstiges PDF-Dokument
 - ✅ runtime_rules.json enthält `document_profiles[]` (top-level, außerhalb von presets)
 - ✅ End-to-End-Validierung (Schritt 8c) bestanden
 
-### Was noch nicht implementiert ist
+### Phase 2b: UI-Profil-Editor für document_profiles
 
-- ❌ UI-Profil-Editor für `document_profiles` (explizit außerhalb des Umfangs)
+- ✅ UI-Profil-Editor für `document_profiles`: Phase 2b implementiert (nur Bearbeiten bestehender Einträge)
+- Bearbeitbare Felder: `label`, `enabled`, `document_type`, `target_folder_id`, `fallback_folder_id`,
+  `confidence_threshold`, `classification_hints`, `negative_hints`
+- Für `document_type == "invoice"` wird kein „Bearbeiten"-Button angezeigt (UI-Schutz)
+
+**Noch nicht implementiert (explizit außerhalb des Umfangs):**
+- ❌ Hinzufügen / Löschen von `document_profiles`
+- ❌ `naming_schema`-Bearbeitung
+- ❌ `duplicate_policy`-Bearbeitung
+- ❌ Import / Export von Profilen
+
+### Sonstige offene Punkte
+
 - ❌ `required_fields` / `optional_fields`: Schema definiert, kein Runtime-Effekt
 - ❌ Duplikat-Policy pro Dokumenttyp (Feld vorhanden, aber Runtime-Logik noch nicht aktiv)
 
@@ -406,4 +418,4 @@ Für `document_profiles` gelten dieselben Prinzipien wie für alle anderen Profi
 
 ---
 
-*Stand: Mai 2026. Zuletzt aktualisiert nach Schritt 8c (End-to-End-Validierung bestanden).*
+*Stand: Mai 2026. Zuletzt aktualisiert nach Phase 2b (UI-Profil-Editor für document_profiles implementiert).*

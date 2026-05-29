@@ -195,8 +195,8 @@ def _build_doc_profile_tile(
 
     detail_controls: list[ft.Control] = []
 
-    # Phase 2b: "Bearbeiten"-Button nur wenn Callback gesetzt und id gültig
-    if on_edit is not None and dp_id and dp_id != "–":
+    # Phase 2b: "Bearbeiten"-Button nur wenn Callback gesetzt, id gültig und kein invoice-Typ
+    if on_edit is not None and dp_id and dp_id != "–" and dp.get("document_type") != "invoice":
         detail_controls.append(
             ft.Row(
                 [
@@ -564,8 +564,8 @@ def _build_profile_dialog_content(
     else:
         for dp in doc_profiles:
             dp_id = dp.get("id") if isinstance(dp, dict) else None
-            # Phase 2b: Bearbeiten-Callback nur wenn on_edit gesetzt und id gültig
-            if on_edit is not None and dp_id:
+            # Phase 2b: Bearbeiten-Callback nur wenn on_edit gesetzt, id gültig und kein invoice-Typ
+            if on_edit is not None and dp_id and dp.get("document_type") != "invoice":
                 tile_on_edit: Callable[[], None] | None = (
                     lambda did: lambda: on_edit(did)
                 )(dp_id)
