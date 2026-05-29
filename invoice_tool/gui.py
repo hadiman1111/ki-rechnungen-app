@@ -803,63 +803,159 @@ def _ui(page: ft.Page) -> None:
             )
         else:
             for dp in doc_profiles:
+                dp_id = dp.get("id", "–")
+                dp_label = dp.get("label", dp_id)
+                enabled_val = dp.get("enabled", True)
+
                 threshold = dp.get("confidence_threshold")
                 threshold_str = f"{threshold}" if threshold is not None else "–"
-                rows.append(
-                    ft.Container(
+
+                target_fid = str(dp.get("target_folder_id") or "")
+                fallback_fid = str(dp.get("fallback_folder_id") or "")
+                target_label = folder_label_by_id.get(target_fid, target_fid or "–")
+                fallback_label = folder_label_by_id.get(fallback_fid, fallback_fid or "–")
+
+                classification_hints: list = dp.get("classification_hints") or []
+                negative_hints: list = dp.get("negative_hints") or []
+                naming: dict = dp.get("naming_schema") or {}
+                duplicate_policy = dp.get("duplicate_policy") or ""
+                required_fields: list = dp.get("required_fields") or []
+                optional_fields: list = dp.get("optional_fields") or []
+                ui_help_text = dp.get("ui_help_text") or ""
+
+                # Aktiv/Inaktiv-Badge
+                if enabled_val is False:
+                    enabled_badge = ft.Container(
+                        content=ft.Text("Inaktiv", size=11, color=ft.Colors.BLUE_GREY_600, weight=ft.FontWeight.W_600),
                         bgcolor=ft.Colors.BLUE_GREY_50,
-                        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
-                        border_radius=6,
-                        padding=8,
-                        content=ft.Column(
+                        border=ft.border.all(1, ft.Colors.BLUE_GREY_300),
+                        border_radius=8,
+                        padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                    )
+                else:
+                    enabled_badge = ft.Container(
+                        content=ft.Text("Aktiv", size=11, color=ft.Colors.GREEN_700, weight=ft.FontWeight.W_600),
+                        bgcolor=ft.Colors.GREEN_50,
+                        border=ft.border.all(1, ft.Colors.GREEN_200),
+                        border_radius=8,
+                        padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                    )
+
+                detail_controls: list[ft.Control] = [
+                    _label_row("ID:", dp_id, mono=True),
+                    _label_row(
+                        "Dokumenttyp:",
+                        _DOC_TYPE_LABELS.get(dp.get("document_type", ""), dp.get("document_type", "–")),
+                    ),
+                    _label_row("Zielordner:", target_label),
+                    _label_row("Fallback-Ordner:", fallback_label),
+                    _label_row("Konfidenzgrenze:", threshold_str),
+                ]
+
+                if duplicate_policy:
+                    detail_controls.append(_label_row("Duplikat-Policy:", duplicate_policy))
+
+                def _hints_col(items: list) -> ft.Column:
+                    return ft.Column(
+                        [ft.Text(f"• {h}", size=12, color=ft.Colors.BLUE_GREY_700) for h in items],
+                        spacing=1,
+                        expand=True,
+                    )
+
+                if classification_hints:
+                    detail_controls.append(
+                        ft.Row(
                             [
-                                ft.Text(
-                                    dp.get("label", dp.get("id", "?")),
-                                    weight=ft.FontWeight.W_600,
-                                    size=13,
-                                ),
-                                ft.Row(
-                                    [
-                                        ft.Text("id:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(dp.get("id", "–"), size=12, font_family="Courier New"),
-                                    ]
-                                ),
-                                ft.Row(
-                                    [
-                                        ft.Text("Typ:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(
-                                            _DOC_TYPE_LABELS.get(dp.get("document_type", ""), dp.get("document_type", "–")),
-                                            size=12,
-                                        ),
-                                    ]
-                                ),
-                                ft.Row(
-                                    [
-                                        ft.Text("Zielordner:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(
-                                            folder_label_by_id.get(str(dp.get("target_folder_id", "")), dp.get("target_folder_id", "–")),
-                                            size=12,
-                                        ),
-                                    ]
-                                ),
-                                ft.Row(
-                                    [
-                                        ft.Text("Fallback:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(
-                                            folder_label_by_id.get(str(dp.get("fallback_folder_id", "")), dp.get("fallback_folder_id", "–")),
-                                            size=12,
-                                        ),
-                                    ]
-                                ),
-                                ft.Row(
-                                    [
-                                        ft.Text("Konfidenz:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(threshold_str, size=12),
-                                    ]
-                                ),
+                                ft.Text("Erkennungshinweise:", weight=ft.FontWeight.W_600, size=12, width=160),
+                                _hints_col(classification_hints),
                             ],
-                            spacing=2,
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+
+                if negative_hints:
+                    detail_controls.append(
+                        ft.Row(
+                            [
+                                ft.Text("Ausschlusshinweise:", weight=ft.FontWeight.W_600, size=12, width=160),
+                                _hints_col(negative_hints),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+
+                # Dateinamensschema
+                naming_template = naming.get("template", "")
+                naming_type_literal = naming.get("type_literal", "")
+                naming_fallback = naming.get("fallback_values") or {}
+                if naming_template or naming_type_literal or naming_fallback:
+                    schema_rows: list[ft.Control] = [
+                        ft.Text("Dateinamensschema", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE_GREY_700),
+                    ]
+                    if naming_template:
+                        schema_rows.append(_label_row("Vorlage:", naming_template, mono=True))
+                    if naming_type_literal:
+                        schema_rows.append(_label_row("Typ-Literal:", naming_type_literal, mono=True))
+                    for k, v in naming_fallback.items():
+                        schema_rows.append(_label_row(f"  {k}:", str(v), mono=True))
+                    detail_controls.append(
+                        ft.Container(
+                            bgcolor=ft.Colors.BLUE_GREY_50,
+                            border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                            border_radius=4,
+                            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                            content=ft.Column(schema_rows, spacing=2),
+                        )
+                    )
+
+                if required_fields:
+                    detail_controls.append(
+                        ft.Row(
+                            [
+                                ft.Text("Prüfregeln (Pflicht):", weight=ft.FontWeight.W_600, size=12, width=160),
+                                ft.Text(", ".join(str(f) for f in required_fields), size=12, expand=True),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+
+                if optional_fields:
+                    detail_controls.append(
+                        ft.Row(
+                            [
+                                ft.Text("Prüfregeln (Optional):", weight=ft.FontWeight.W_600, size=12, width=160),
+                                ft.Text(", ".join(str(f) for f in optional_fields), size=12, expand=True),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+
+                if ui_help_text:
+                    detail_controls.append(
+                        ft.Row(
+                            [
+                                ft.Text("Hilfetext:", weight=ft.FontWeight.W_600, size=12, width=160),
+                                ft.Text(ui_help_text, size=12, color=ft.Colors.BLUE_GREY_600, italic=True, expand=True),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+
+                rows.append(
+                    ft.ExpansionTile(
+                        title=ft.Row(
+                            [ft.Text(dp_label, size=13, weight=ft.FontWeight.W_600), enabled_badge],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
+                        subtitle=ft.Text(
+                            _DOC_TYPE_LABELS.get(dp.get("document_type", ""), dp.get("document_type", "")),
+                            size=11,
+                            color=ft.Colors.BLUE_GREY_500,
+                        ),
+                        controls=detail_controls,
+                        initially_expanded=False,
+                        tile_padding=ft.padding.symmetric(horizontal=8, vertical=2),
                     )
                 )
 
