@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -321,6 +322,12 @@ class TestValidateProfileForSave:
         profile = _minimal_profile(with_doc_profiles=False)
         assert validate_profile_for_save(profile) == []
 
+    def test_missing_document_type_returns_error(self) -> None:
+        profile = _minimal_profile()
+        del profile["document_profiles"][0]["document_type"]
+        errors = validate_profile_for_save(profile)
+        assert any("document_type" in e and "fehlt" in e for e in errors)
+
 
 # ---------------------------------------------------------------------------
 # save_profile_atomic
@@ -441,3 +448,29 @@ class TestSaveProfileAtomic:
 
         raw = p.read_text(encoding="utf-8")
         assert '  "' in raw
+
+    def test_two_rapid_saves_produce_distinct_backups(self, tmp_path: Path) -> None:
+        profile = _minimal_profile()
+        p = tmp_path / "profile_config.local.json"
+        _write_profile(p, profile)
+
+        backup1 = save_profile_atomic(p, profile)
+        backup2 = save_profile_atomic(p, profile)
+
+        assert backup1.exists()
+        assert backup2.exists()
+        assert backup1 != backup2
+
+    def test_non_serializable_profile_raises_profile_editor_error(self, tmp_path: Path) -> None:
+        profile = _minimal_profile()
+        p = tmp_path / "profile_config.local.json"
+        _write_profile(p, profile)
+        original_text = p.read_text(encoding="utf-8")
+
+        bad_profile = dict(profile)
+        bad_profile["unserializable"] = datetime.now()
+
+        with pytest.raises(ProfileEditorError, match="serialisiert"):
+            save_profile_atomic(p, bad_profile)
+
+        assert p.read_text(encoding="utf-8") == original_text

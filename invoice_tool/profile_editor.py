@@ -231,16 +231,17 @@ def validate_profile_for_save(profile: dict) -> list[str]:
             errors.append(f"{prefix}: 'label' fehlt oder ist leer.")
 
         doc_type = dp.get("document_type")
-        if doc_type is not None:
-            if doc_type == "invoice":
-                errors.append(
-                    f"{prefix}: document_type 'invoice' ist in bearbeitbaren "
-                    "Profilen nicht erlaubt."
-                )
-            elif doc_type not in _KNOWN_DOCUMENT_TYPES:
-                errors.append(
-                    f"{prefix}: Unbekannter document_type '{doc_type}'."
-                )
+        if not doc_type or not isinstance(doc_type, str):
+            errors.append(f"{prefix}: 'document_type' fehlt oder ist leer.")
+        elif doc_type == "invoice":
+            errors.append(
+                f"{prefix}: document_type 'invoice' ist in bearbeitbaren "
+                "Profilen nicht erlaubt."
+            )
+        elif doc_type not in _KNOWN_DOCUMENT_TYPES:
+            errors.append(
+                f"{prefix}: Unbekannter document_type '{doc_type}'."
+            )
 
         target_id = dp.get("target_folder_id")
         if target_id is not None and target_id != "":
@@ -298,7 +299,7 @@ def save_profile_atomic(profile_path: Path, profile: dict) -> Path:
 
     Ablauf:
     1. Originaldatei lesen (Inhalt für Backup).
-    2. Backup-Datei anlegen: <name>.bak_YYYYMMDD_HHMMSS (lokale Zeit).
+    2. Backup-Datei anlegen: <name>.bak_YYYYMMDD_HHMMSS_ffffff (lokale Zeit, mit Mikrosekunden).
     3. JSON in Temp-Datei schreiben: <name>.tmp_<pid>.
     4. Temp-Datei atomar mit os.replace() umbenennen.
     5. Backup-Pfad zurückgeben.
@@ -319,7 +320,7 @@ def save_profile_atomic(profile_path: Path, profile: dict) -> Path:
             f"Zieldatei konnte nicht gelesen werden: {profile_path} – {exc}"
         ) from exc
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = profile_path.with_name(
         f"{profile_path.name}.bak_{timestamp}"
     )
@@ -334,7 +335,12 @@ def save_profile_atomic(profile_path: Path, profile: dict) -> Path:
             f"Backup konnte nicht erstellt werden: {backup_path} – {exc}"
         ) from exc
 
-    new_content = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
+    try:
+        new_content = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
+    except (TypeError, ValueError) as exc:
+        raise ProfileEditorError(
+            f"Profil konnte nicht als JSON serialisiert werden: {exc}"
+        ) from exc
 
     try:
         tmp_path.write_text(new_content, encoding="utf-8")
