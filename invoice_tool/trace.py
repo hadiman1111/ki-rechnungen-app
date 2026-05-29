@@ -116,6 +116,13 @@ class DecisionTrace:
     normalization_warnings: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
 
+    # --- Document profile (non-invoice only; None/empty when not applicable) ---
+    matched_document_profile_id: str | None = None
+    matched_document_profile_score: float | None = None
+    document_profile_used_fallback: bool | None = None
+    document_profile_missing_placeholders: list[str] = field(default_factory=list)
+    document_profile_missing_required_fields: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return asdict(self)
 

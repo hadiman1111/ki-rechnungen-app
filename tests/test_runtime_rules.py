@@ -369,7 +369,7 @@ def test_run_once_with_profile_applies_generated_strassen(tmp_path: Path) -> Non
 
     received_rules = {}
 
-    def capture_processor(config, extractor, *, office_rules):
+    def capture_processor(config, extractor, *, office_rules, **kwargs):
         received_rules["rules"] = office_rules
         mock = type("M", (), {"process_all": lambda self: []})()
         return mock
@@ -537,7 +537,7 @@ def test_run_once_with_profile_applies_generated_konten(tmp_path: Path) -> None:
 
     received = {}
 
-    def capture(config, extractor, *, office_rules):
+    def capture(config, extractor, *, office_rules, **kwargs):
         received["rules"] = office_rules
         return type("M", (), {"process_all": lambda self: []})()
 
@@ -724,7 +724,7 @@ def test_run_once_with_profile_applies_generated_business_context_rules(tmp_path
 
     received = {}
 
-    def capture(config, extractor, *, office_rules):
+    def capture(config, extractor, *, office_rules, **kwargs):
         received["rules"] = office_rules
         return type("M", (), {"process_all": lambda self: []})()
 
@@ -910,7 +910,7 @@ def test_run_once_with_profile_applies_generated_classification(tmp_path: Path) 
 
     received = {}
 
-    def capture(config, extractor, *, office_rules):
+    def capture(config, extractor, *, office_rules, **kwargs):
         received["rules"] = office_rules
         return type("M", (), {"process_all": lambda self: []})()
 
@@ -1078,7 +1078,7 @@ def test_run_once_with_profile_applies_generated_pdr(tmp_path: Path) -> None:
 
     received = {}
 
-    def capture(config, extractor, *, office_rules):
+    def capture(config, extractor, *, office_rules, **kwargs):
         received["rules"] = office_rules
         return type("M", (), {"process_all": lambda self: []})()
 

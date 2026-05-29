@@ -29,7 +29,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from invoice_tool.config import ConfigError, load_app_config, load_office_rules, merge_rules_dicts, load_office_rules_from_dict
+from invoice_tool.config import (
+    ConfigError,
+    load_app_config,
+    load_document_profiles_from_runtime_rules,
+    load_office_rules,
+    load_office_rules_from_dict,
+    merge_rules_dicts,
+)
 from invoice_tool.extraction import ExtractionCoordinator, OpenAIVisionExtractor, TesseractExtractor
 from invoice_tool.models import AppConfig
 from invoice_tool.processing import InvoiceProcessor, ProcessorError
@@ -348,7 +355,21 @@ def run_once(
             "merge_strategy": "replace_generated_sections_prepend_payment_detection",
         }
 
-        # 5. Write runtime_rules.json into the run directory.
+        # 5a. Propagate top-level document_profiles from the compiled profile
+        #     into the merged dict so load_document_profiles_from_runtime_rules()
+        #     can read it below.  This key is intentionally outside of presets.
+        if "document_profiles" in generated:
+            merged_dict["document_profiles"] = generated["document_profiles"]
+
+        # 5b. Annotate document_profiles compiler warnings in _meta.
+        doc_profile_warnings = generated.get("_meta", {}).get(
+            "document_profiles_warnings", []
+        )
+        if doc_profile_warnings:
+            merged_dict.setdefault("_meta", {})
+            merged_dict["_meta"]["document_profiles_warnings"] = doc_profile_warnings
+
+        # 6. Write runtime_rules.json into the run directory.
         runtime_rules_path = run_dir / _RUNTIME_RULES_FILENAME
         runtime_rules_path.write_text(
             json.dumps(merged_dict, ensure_ascii=False, indent=2) + "\n",
@@ -356,18 +377,24 @@ def run_once(
         )
         print(f"[run] Runtime-Regeln geschrieben: {runtime_rules_path}")
 
-        # 6. Build OfficeRules from merged dict (no file I/O on office_rules.json).
+        # 7. Build OfficeRules from merged dict (no file I/O on office_rules.json).
         office_rules = load_office_rules_from_dict(
             merged_dict,
             base_rules_dir,
             active_preset_override=active_preset,
         )
+
+        # 8. Load compiled document_profiles for runtime use.
+        document_profiles = load_document_profiles_from_runtime_rules(merged_dict)
+        if document_profiles:
+            print(f"[run] {len(document_profiles)} document_profile(s) geladen.")
     else:
-        # No profile: use base rules unchanged.
+        # No profile: use base rules unchanged.  Behavior identical to before.
         office_rules = load_office_rules(
             base_config.regeln_datei,
             active_preset_override=base_config.aktives_preset,
         )
+        document_profiles = []
 
     # --- build isolated config ---
     run_config = build_run_config(base_config, run_dir, snapshot_dir)
@@ -384,7 +411,12 @@ def run_once(
     )
 
     # --- run ---
-    processor = InvoiceProcessor(run_config, extractor, office_rules=office_rules)
+    processor = InvoiceProcessor(
+        run_config,
+        extractor,
+        office_rules=office_rules,
+        document_profiles=document_profiles if document_profiles else None,
+    )
     processor.process_all()
 
     return run_dir

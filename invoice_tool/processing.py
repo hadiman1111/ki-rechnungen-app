@@ -12,6 +12,7 @@ from invoice_tool.logging_utils import RunLogger
 from invoice_tool.models import (
     AppConfig,
     ClassificationDecision,
+    DocumentProfileRule,
     NormalizedInvoice,
     OfficeRules,
     ProcessResult,
@@ -66,6 +67,7 @@ class InvoiceProcessor:
         *,
         office_rules: OfficeRules | None = None,
         logger: RunLogger | None = None,
+        document_profiles: list[DocumentProfileRule] | None = None,
     ) -> None:
         self.config = config
         self.office_rules = office_rules or load_office_rules(
@@ -75,6 +77,8 @@ class InvoiceProcessor:
         self.preset = self.office_rules.preset
         self.extractor = extractor
         self.run_logger = logger or RunLogger(self.config.log_ordner)
+        # None and [] both mean "no profiles loaded" → use existing _process_document().
+        self.document_profiles: list[DocumentProfileRule] = document_profiles or []
 
         self.config.ausgangsordner.mkdir(parents=True, exist_ok=True)
         self.preset.dokumente.basis_pfad.mkdir(parents=True, exist_ok=True)
@@ -154,13 +158,29 @@ class InvoiceProcessor:
                         historical_match=historical_match,
                     )
                 else:
-                    result = self._process_document(
-                        pdf_path=pdf_path,
-                        fingerprint=fingerprint,
-                        extracted=extracted,
-                        classification=classification,
-                        historical_match=historical_match,
+                    # document branch: try profile matching first when profiles are loaded.
+                    matched_profile, match_score, match_meta = (
+                        self._match_document_profile(extracted)
                     )
+                    if matched_profile is not None:
+                        result = self._process_document_with_profile(
+                            pdf_path=pdf_path,
+                            fingerprint=fingerprint,
+                            extracted=extracted,
+                            classification=classification,
+                            historical_match=historical_match,
+                            matched_profile=matched_profile,
+                            match_score=match_score,
+                            match_meta=match_meta,
+                        )
+                    else:
+                        result = self._process_document(
+                            pdf_path=pdf_path,
+                            fingerprint=fingerprint,
+                            extracted=extracted,
+                            classification=classification,
+                            historical_match=historical_match,
+                        )
                 return result
         except Exception as exc:  # noqa: BLE001
             self._log_file_event(
@@ -521,6 +541,271 @@ class InvoiceProcessor:
                 conflicts=[],
             )
         )
+        return ProcessResult(
+            input_file=pdf_path,
+            dokumenttyp="document",
+            status="document",
+            storage_file=output_target,
+            archive_file=archive_target,
+            used_extractor=extracted.source_method,
+            fallback_used=bool(extracted.fallback_used),
+            fingerprint=fingerprint,
+            supplier=extracted.supplier_raw,
+            date=document_date,
+            amount=extracted.amount_raw,
+            art=None,
+        )
+
+    def _match_document_profile(
+        self,
+        extracted,
+    ) -> tuple[DocumentProfileRule | None, float | None, dict]:
+        """Match extracted data against loaded document_profiles.
+
+        Returns (matched_profile, score, meta_dict).
+        Returns (None, None, {}) when no profiles are loaded or no match
+        exceeds the confidence threshold of the best candidate.
+
+        Matching rules:
+        - Search text is built from raw_text, supplier_raw, document_name_raw.
+        - negative_hints disqualify the entire profile.
+        - score = matched_hints / max(total_hints, 1).
+        - Threshold = profile.confidence_threshold.
+        - Highest score wins; ties resolved by list order (first wins).
+        """
+        if not self.document_profiles:
+            return None, None, {}
+
+        search_parts: list[str] = []
+        if extracted.raw_text:
+            search_parts.append(extracted.raw_text.lower())
+        if extracted.supplier_raw:
+            search_parts.append(extracted.supplier_raw.lower())
+        if extracted.document_name_raw:
+            search_parts.append(extracted.document_name_raw.lower())
+        search_text = " ".join(search_parts)
+
+        best_profile: DocumentProfileRule | None = None
+        best_score: float = -1.0
+
+        for profile in self.document_profiles:
+            if any(hint.lower() in search_text for hint in profile.negative_hints):
+                continue
+
+            total_hints = len(profile.classification_hints)
+            matched = sum(
+                1
+                for hint in profile.classification_hints
+                if hint.lower() in search_text
+            )
+            score = matched / max(total_hints, 1)
+
+            if score > best_score:
+                best_score = score
+                best_profile = profile
+
+        if best_profile is None:
+            return None, None, {}
+
+        meta: dict = {
+            "best_profile_id": best_profile.id,
+            "best_score": best_score,
+            "threshold": best_profile.confidence_threshold,
+        }
+
+        if best_score < best_profile.confidence_threshold:
+            return None, best_score, meta
+
+        return best_profile, best_score, meta
+
+    def _process_document_with_profile(
+        self,
+        *,
+        pdf_path: Path,
+        fingerprint: str,
+        extracted,
+        classification: ClassificationDecision,
+        historical_match: dict | None,
+        matched_profile: DocumentProfileRule,
+        match_score: float | None,
+        match_meta: dict,
+    ) -> ProcessResult:
+        """Process a non-invoice document using a matched DocumentProfileRule.
+
+        Only called when classify_document_type() == "document" and a profile
+        matched above its confidence_threshold.  Never called for invoices.
+        Never modifies _process_invoice() or _process_document() behavior.
+
+        Folder selection:
+        - target_folder: used when match is above threshold AND no serious
+          template problems (missing required placeholders).
+        - fallback_folder: used when serious missing placeholders are detected.
+
+        Filename:
+        - If naming_template is set: rendered via render_document_filename().
+        - If no naming_template: uses the same derivation as _process_document().
+
+        The .pdf extension is appended here if the rendered stem lacks it.
+        """
+        from invoice_tool.filename_schema import render_document_filename  # noqa: PLC0415
+
+        document_date = self._document_date(extracted.invoice_date_raw)
+
+        values: dict[str, str] = {
+            "date": document_date,
+            "supplier": (
+                (extracted.supplier_raw or "").strip().lower() or "unbekannt"
+            ),
+            "amount": (extracted.amount_raw or "").strip() or "unbekannt",
+            "type_literal": (
+                matched_profile.type_literal or matched_profile.document_type
+            ),
+        }
+
+        use_fallback_folder = False
+        profile_missing_placeholders: list[str] = []
+        profile_missing_required_fields: list[str] = []
+
+        if matched_profile.naming_template:
+            render_result = render_document_filename(
+                matched_profile.naming_template,
+                values,
+                fallback_values=matched_profile.fallback_values,
+            )
+            filename_stem = render_result.filename
+            profile_missing_placeholders = list(render_result.missing_placeholders)
+            if render_result.missing_placeholders:
+                use_fallback_folder = True
+        else:
+            descriptive_name = self._document_name(extracted)
+            filename_stem = (
+                f"{document_date}_{self.preset.dokumente.prefix}_"
+                f"{descriptive_name}_{self.preset.dokumente.suffix_placeholder}"
+            )
+
+        if not filename_stem.lower().endswith(".pdf"):
+            filename = filename_stem + ".pdf"
+        else:
+            filename = filename_stem
+
+        folder_name = (
+            matched_profile.fallback_folder if use_fallback_folder
+            else matched_profile.target_folder
+        )
+        folder_path = self.config.ausgangsordner / folder_name
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        output_target, output_action = self._write_active_output(
+            pdf_path,
+            folder_path / filename,
+            historical_match=historical_match,
+        )
+
+        archive_target = self._archive_original(pdf_path)
+        self._remember_processed(
+            fingerprint=fingerprint,
+            dokumenttyp="document",
+            status="document",
+            normalized=None,
+            output_target=output_target,
+            archive_target=archive_target,
+            used_extractor=extracted.source_method,
+            fallback_used=bool(extracted.fallback_used),
+            konto=None,
+            payment_field=None,
+            street=None,
+        )
+        self.run_seen_fingerprints[fingerprint] = output_target
+        self._log_output_size(output_target)
+
+        score_str = f"{match_score:.2f}" if match_score is not None else "n/a"
+        routing_decision = (
+            f"document_profile='{matched_profile.id}' score={score_str} "
+            f"folder={'fallback' if use_fallback_folder else 'target'}='{folder_name}'"
+        )
+        if profile_missing_placeholders:
+            routing_decision += f"; missing_placeholders={profile_missing_placeholders}"
+        routing_decision += f"; {classification.begruendung}"
+
+        historical_report = None
+        if historical_match is not None:
+            historical_report = self._create_historical_reprocessing_report(
+                input_file=pdf_path,
+                fingerprint=fingerprint,
+                current_storage=output_target,
+                current_archive=archive_target,
+                historical=historical_match,
+            )
+        if historical_report is not None:
+            routing_decision += (
+                f"; Historischer Treffer erneut verarbeitet, Report={historical_report}"
+            )
+
+        self._log_file_event(
+            filename=pdf_path.name,
+            dokumenttyp="document",
+            supplier=extracted.supplier_raw,
+            date=document_date,
+            amount=extracted.amount_raw,
+            account=None,
+            payment_field=None,
+            street=None,
+            routing_decision=routing_decision,
+            storage_path=output_target,
+            archive_path=archive_target,
+            fallback_used=bool(extracted.fallback_used),
+            preset_used=self.office_rules.active_preset,
+            status="document",
+            output_action=output_action,
+            error=None,
+        )
+
+        self._trace_writer.record(
+            DecisionTrace(
+                run_id=self.run_logger.run_id,
+                original_filename=pdf_path.name,
+                final_filename=output_target.name,
+                source_path=str(pdf_path),
+                target_path=str(output_target),
+                archive_path=str(archive_target),
+                document_type="document",
+                classification_reason=mask_sensitive(classification.begruendung),
+                extracted_invoice_date=document_date,
+                extracted_supplier=mask_sensitive(extracted.supplier_raw),
+                extracted_amount=mask_sensitive(extracted.amount_raw),
+                extraction_method=extracted.source_method,
+                fallback_used=bool(extracted.fallback_used),
+                detected_street_key=None,
+                business_context_art=None,
+                business_context_reason=None,
+                account_konto=None,
+                account_payment_field=None,
+                account_match_source=None,
+                account_match_reason=None,
+                account_matched_rule=None,
+                detected_payment_method=None,
+                payment_rule_name=None,
+                payment_explicit=None,
+                payment_signals=None,
+                priority_rule_name=None,
+                final_assignment_rule_name=None,
+                final_art=None,
+                final_konto=None,
+                final_payment_field=None,
+                final_status="document",
+                output_route_rule_name=None,
+                final_output_folder=folder_name,
+                filename_fields_used=[],
+                normalization_warnings=[],
+                conflicts=[],
+                matched_document_profile_id=matched_profile.id,
+                matched_document_profile_score=match_score,
+                document_profile_used_fallback=use_fallback_folder,
+                document_profile_missing_placeholders=profile_missing_placeholders,
+                document_profile_missing_required_fields=profile_missing_required_fields,
+            )
+        )
+
         return ProcessResult(
             input_file=pdf_path,
             dokumenttyp="document",
