@@ -244,7 +244,7 @@ def _build_doc_profile_tile(
         ),
         _label_row("Zielordner:", target_label),
         _label_row("Fallback-Ordner:", fallback_label),
-        _label_row("Konfidenzgrenze:", threshold_str),
+        _label_row("Konfidenzschwelle:", threshold_str),
     ]
 
     if duplicate_policy:
@@ -424,7 +424,7 @@ def _build_profile_dialog_content(
             padding=ft.padding.symmetric(horizontal=10, vertical=6),
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.LOCK_OUTLINE, size=15, color=ft.Colors.BLUE_700),
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=15, color=ft.Colors.BLUE_700),
                     ft.Text(
                         "Diese Ansicht ist nur lesend. Änderungen sind hier nicht möglich.",
                         color=ft.Colors.BLUE_700,
@@ -439,21 +439,38 @@ def _build_profile_dialog_content(
 
     # Basisdaten
     rows.append(ft.Divider(height=8))
-    rows.append(_section("Verarbeitungsprofil"))
+    rows.append(_section("Einstellungen"))
+    rows.append(_label_row("Aktives Preset:", preset_label_value or "–"))
     rows.append(
         _label_row(
-            "Lokales Profil:",
+            "Profil:",
             "gefunden" if profile_path else "nicht gefunden – nur Basis-Regeln",
         )
     )
     rows.append(
-        _label_row(
-            "Profildatei:",
-            str(profile_path) if profile_path else "–",
-            mono=True,
+        ft.Container(
+            bgcolor=ft.Colors.BLUE_GREY_50,
+            border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+            border_radius=4,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "Technische Details",
+                        size=11,
+                        color=ft.Colors.BLUE_GREY_400,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    _label_row(
+                        "Profildatei:",
+                        str(profile_path) if profile_path else "–",
+                        mono=True,
+                    ),
+                ],
+                spacing=2,
+            ),
         )
     )
-    rows.append(_label_row("Aktives Preset:", preset_label_value or "–"))
 
     if profile_path is None:
         rows.append(
@@ -550,10 +567,10 @@ def _build_profile_dialog_content(
             ft.Text("Keine Ordner konfiguriert.", size=13, color=ft.Colors.BLUE_GREY_500)
         )
 
-    # Dokumenttypen (document_profiles)
+    # Dokumentregeln (document_profiles)
     doc_profiles = data.get("document_profiles", [])
     rows.append(ft.Divider(height=8))
-    rows.append(_section("Dokumenttypen"))
+    rows.append(_section("Dokumentregeln"))
     if not doc_profiles:
         rows.append(
             ft.Container(
@@ -561,11 +578,28 @@ def _build_profile_dialog_content(
                 border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
                 border_radius=6,
                 padding=8,
-                content=ft.Text(
-                    "In diesem Profil sind noch keine zusätzlichen Dokumenttypen definiert.",
-                    size=13,
-                    color=ft.Colors.BLUE_GREY_600,
-                    italic=True,
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Noch keine Dokumentregeln angelegt.",
+                            size=13,
+                            color=ft.Colors.BLUE_GREY_700,
+                            weight=ft.FontWeight.W_500,
+                        ),
+                        ft.Text(
+                            "Dokumentregeln legen fest, wie Dateien erkannt, benannt und "
+                            "einsortiert werden.",
+                            size=12,
+                            color=ft.Colors.BLUE_GREY_600,
+                        ),
+                        ft.Text(
+                            "Das Anlegen neuer Regeln folgt im nächsten Schritt.",
+                            size=12,
+                            color=ft.Colors.BLUE_GREY_500,
+                            italic=True,
+                        ),
+                    ],
+                    spacing=4,
                 ),
             )
         )
@@ -625,15 +659,26 @@ def show_profile_details_dialog(
     content = _build_profile_dialog_content(profile_path, preset_label, on_edit=on_edit_fn)
     dialog = ft.AlertDialog(
         modal=True,
-        title=ft.Row(
+        title=ft.Column(
             [
-                ft.Icon(ft.Icons.POLICY_OUTLINED, color=ft.Colors.BLUE_GREY_700),
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.RULE_OUTLINED, color=ft.Colors.BLUE_GREY_700),
+                        ft.Text(
+                            "Dokumentregeln",
+                            weight=ft.FontWeight.W_600,
+                        ),
+                    ],
+                    spacing=8,
+                ),
                 ft.Text(
-                    "Verarbeitungsprofil – Details",
-                    weight=ft.FontWeight.W_600,
+                    "Hier legst du fest, wie Dokumente erkannt, benannt und einsortiert werden.",
+                    size=12,
+                    color=ft.Colors.BLUE_GREY_500,
+                    italic=True,
                 ),
             ],
-            spacing=8,
+            spacing=2,
         ),
         content=ft.Container(
             content=content,
@@ -785,7 +830,7 @@ def show_edit_document_profile_dialog(
 
     threshold_raw = dp.get("confidence_threshold")
     tf_threshold = ft.TextField(
-        label="Konfidenzgrenze (0.0 – 1.0)",
+        label="Konfidenzschwelle (0.0 – 1.0)",
         value=str(threshold_raw) if threshold_raw is not None else "",
         hint_text="leer = Standard (0,5)  ·  Komma oder Punkt möglich",
         expand=True,
@@ -849,7 +894,7 @@ def show_edit_document_profile_dialog(
             italic=True,
         ),
         _label_row("ID:", profile_id, mono=True),
-        _label_row("Namensschema:", naming_template, mono=True),
+        _label_row("Dateinamensschema:", naming_template, mono=True),
         _label_row("Duplikat-Policy:", dup_policy),
     ]
     if req_fields:
@@ -953,11 +998,11 @@ def show_edit_document_profile_dialog(
             try:
                 thresh_float = float(thresh_str)
             except ValueError:
-                _show_err("Konfidenzgrenze: Ungültige Zahl (z. B. 0.7 oder 0,7).")
+                _show_err("Konfidenzschwelle: Ungültige Zahl (z. B. 0.7 oder 0,7).")
                 return
             if not (0.0 <= thresh_float <= 1.0):
                 _show_err(
-                    f"Konfidenzgrenze muss zwischen 0.0 und 1.0 liegen (eingegeben: {thresh_float})."
+                    f"Konfidenzschwelle muss zwischen 0.0 und 1.0 liegen (eingegeben: {thresh_float})."
                 )
                 return
             patch["confidence_threshold"] = thresh_float

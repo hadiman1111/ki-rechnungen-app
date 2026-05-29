@@ -596,3 +596,25 @@ dann read-only Profilansicht implementieren.
 *Dieses Dokument ist ein Zieldokument ohne Implementierungsauftrag.*  
 *Es darf als Grundlage für spätere UI-Entwicklungstasks verwendet werden.*  
 *Letzter Stand: Mai 2026.*
+
+---
+
+## Statusnotiz – Strukturelle UI-Bereinigung (Mai 2026)
+
+Der aktuelle UI-Stand nach der Bereinigung:
+
+- **Hauptseite:** Einstiegspunkt heißt jetzt „Dokumentregeln" (vorher: „Profildetails ansehen").
+  Ein Helper-Text erklärt den Zweck direkt im UI.
+- **Profildatei-Pfad** ist aus der Hauptansicht entfernt und sekundär/technisch platziert.
+- **Dialog-Titel** ist „Dokumentregeln" (vorher: „Verarbeitungsprofil – Details"), ergänzt durch
+  einen erklärenden Untertitel.
+- **Leerer Zustand** bei fehlenden Dokumentregeln erklärt den Zweck und kündigt den nächsten
+  Schritt an, statt eine tote Sackgasse zu sein.
+- **Report-Bereich:** Alle Labels sind jetzt deutsch und nutzergerecht
+  (Zusammenfassung, Verarbeitet, Dokumente, Duplikate, Fehler, System-Ersatzwerte,
+  Technischer Verlauf).
+- **Originalschutz-Hinweis:** Info-Icon statt Lock-Icon, kein interaktiver Eindruck mehr.
+- **Leere Log-/Report-Felder** sind kleiner (weniger Leeraum vor einem Lauf).
+
+**Nächster großer UX-Schritt:** Kloth Design Redesign auf Basis des „Dokumentregeln"-Konzepts.
+Die aktuelle Bereinigung ist nur eine strukturelle Vorbereitung, nicht das finale UI.

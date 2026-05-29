@@ -202,7 +202,8 @@ def _ui(page: ft.Page) -> None:
     profile_label = ft.Text(
         str(profile_path) if profile_path else "nicht gefunden – nur Basis-Regeln",
         selectable=True,
-        color=ft.Colors.GREEN_700 if profile_path else ft.Colors.ORANGE_700,
+        size=11,
+        color=ft.Colors.BLUE_GREY_500 if profile_path else ft.Colors.ORANGE_700,
         font_family="Courier New",  # Monospace für Pfadanzeige
     )
 
@@ -252,19 +253,20 @@ def _ui(page: ft.Page) -> None:
     log_output = ft.TextField(
         value="",
         multiline=True,
-        min_lines=10,
+        min_lines=4,
         max_lines=12,
         read_only=True,
         expand=True,
+        hint_text="Noch kein Lauf gestartet. Nach der Verarbeitung erscheinen hier Verlauf und Meldungen.",
     )
 
-    # --- Summary ---
-    summary_processed = ft.Text("Processed: -")
-    summary_documents = ft.Text("Documents: -")
-    summary_duplicates = ft.Text("Duplicates: -")
-    summary_unklar = ft.Text("Unklar: -")
-    summary_errors = ft.Text("Errors: -")
-    summary_fallbacks = ft.Text("System Fallbacks: -")
+    # --- Zusammenfassung ---
+    summary_processed = ft.Text("Verarbeitet: –")
+    summary_documents = ft.Text("Dokumente: –")
+    summary_duplicates = ft.Text("Duplikate: –")
+    summary_unklar = ft.Text("Unklar: –")
+    summary_errors = ft.Text("Fehler: –")
+    summary_fallbacks = ft.Text("System-Ersatzwerte: –")
 
     # --- Prüffälle (Manuelle Prüfung erforderlich) ---
     prueffaelle_col = ft.Column([], spacing=8)
@@ -277,17 +279,17 @@ def _ui(page: ft.Page) -> None:
         content=prueffaelle_col,
     )
 
-    # --- Report ---
+    # --- Bericht ---
     report_text = ft.TextField(
         value="",
         multiline=True,
-        min_lines=16,
+        min_lines=6,
         read_only=True,
         expand=True,
+        hint_text="Noch kein Lauf gestartet. Nach der Verarbeitung erscheinen hier Ergebnis und Bericht.",
     )
     latest_report_hint = ft.Text(
         "Kein Report geladen.",
-        font_family="Courier New",  # Monospace für Pfadanzeige
     )
 
     # Laufordner-Pfad-Hinweis (nach erfolgreichem Lauf sichtbar)
@@ -342,12 +344,12 @@ def _ui(page: ft.Page) -> None:
         status_badge.border = ft.border.all(1, palette[1])
 
     def reset_report_view() -> None:
-        summary_processed.value = "Processed: -"
-        summary_documents.value = "Documents: -"
-        summary_duplicates.value = "Duplicates: -"
-        summary_unklar.value = "Unklar: -"
-        summary_errors.value = "Errors: -"
-        summary_fallbacks.value = "System Fallbacks: -"
+        summary_processed.value = "Verarbeitet: –"
+        summary_documents.value = "Dokumente: –"
+        summary_duplicates.value = "Duplikate: –"
+        summary_unklar.value = "Unklar: –"
+        summary_errors.value = "Fehler: –"
+        summary_fallbacks.value = "System-Ersatzwerte: –"
         pruefbedarf_box.visible = False
         pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
         pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
@@ -452,6 +454,7 @@ def _ui(page: ft.Page) -> None:
             txt_content = report_txt.read_text(encoding="utf-8")
             report_text.value = txt_content
             latest_report_hint.value = str(report_txt)
+            latest_report_hint.font_family = "Courier New"
 
         json_loaded = False
         review_items: list[dict] = []
@@ -460,13 +463,13 @@ def _ui(page: ft.Page) -> None:
                 data = json.loads(report_json.read_text(encoding="utf-8"))
                 json_loaded = True
                 summary = data.get("summary", {})
-                summary_processed.value = f"Processed: {summary.get('processed', '-')}"
-                summary_documents.value = f"Documents: {summary.get('documents', '-')}"
-                summary_duplicates.value = f"Duplicates: {summary.get('duplicates', '-')}"
-                summary_unklar.value = f"Unklar: {summary.get('unklar', '-')}"
-                summary_errors.value = f"Errors: {summary.get('errors', '-')}"
+                summary_processed.value = f"Verarbeitet: {summary.get('processed', '–')}"
+                summary_documents.value = f"Dokumente: {summary.get('documents', '–')}"
+                summary_duplicates.value = f"Duplikate: {summary.get('duplicates', '–')}"
+                summary_unklar.value = f"Unklar: {summary.get('unklar', '–')}"
+                summary_errors.value = f"Fehler: {summary.get('errors', '–')}"
                 summary_fallbacks.value = (
-                    f"System Fallbacks: {summary.get('system_fallbacks', '-')}"
+                    f"System-Ersatzwerte: {summary.get('system_fallbacks', '–')}"
                 )
                 review_items = [
                     f
@@ -608,7 +611,7 @@ def _ui(page: ft.Page) -> None:
         [
             ft.Text("KI-Rechnungen-App", size=30, weight=ft.FontWeight.BOLD),
 
-            # Info-Box: Preset + Profil
+            # Info-Box: Preset + Dokumentregeln-Einstieg
             ft.Container(
                 bgcolor=ft.Colors.BLUE_GREY_50,
                 border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
@@ -620,13 +623,10 @@ def _ui(page: ft.Page) -> None:
                             [ft.Text("Aktives Preset:", weight=ft.FontWeight.W_600), preset_label]
                         ),
                         ft.Row(
-                            [ft.Text("Profil:", weight=ft.FontWeight.W_600), profile_label]
-                        ),
-                        ft.Row(
                             [
                                 ft.TextButton(
-                                    "Profildetails ansehen",
-                                    icon=ft.Icons.INFO_OUTLINE,
+                                    "Dokumentregeln",
+                                    icon=ft.Icons.RULE_OUTLINED,
                                     on_click=on_show_profile_details,
                                     style=ft.ButtonStyle(
                                         color=ft.Colors.BLUE_700,
@@ -635,8 +635,26 @@ def _ui(page: ft.Page) -> None:
                                 ),
                             ]
                         ),
+                        ft.Text(
+                            "Regeln für Erkennung, Benennung und Ablage.",
+                            size=12,
+                            color=ft.Colors.BLUE_GREY_500,
+                            italic=True,
+                        ),
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    "Profildatei:",
+                                    size=11,
+                                    color=ft.Colors.BLUE_GREY_400,
+                                    width=72,
+                                ),
+                                profile_label,
+                            ],
+                            spacing=4,
+                        ),
                     ],
-                    spacing=6,
+                    spacing=4,
                 ),
             ),
 
@@ -687,9 +705,9 @@ def _ui(page: ft.Page) -> None:
             # Originalschutz-Hinweis (dauerhaft sichtbar)
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.LOCK_OUTLINE, size=16, color=ft.Colors.BLUE_GREY_400),
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=ft.Colors.BLUE_GREY_400),
                     ft.Text(
-                        "Originaldateien werden nie verändert.",
+                        "Originale bleiben unverändert. Das Programm arbeitet mit Kopien.",
                         color=ft.Colors.BLUE_GREY_600,
                         size=13,
                     ),
@@ -725,9 +743,9 @@ def _ui(page: ft.Page) -> None:
             # Ausgabeordner-Pfad nach Laufabschluss (selektierbar, Monospace)
             run_dir_row,
 
-            # Lauflog
+            # Technischer Verlauf (Log)
             ft.Text(
-                "Lauflog",
+                "Technischer Verlauf",
                 size=14,
                 weight=ft.FontWeight.W_500,
                 color=ft.Colors.BLUE_GREY_700,
@@ -744,7 +762,7 @@ def _ui(page: ft.Page) -> None:
                 padding=12,
                 content=ft.Column(
                     [
-                        ft.Text("Summary (report.json)", weight=ft.FontWeight.W_600),
+                        ft.Text("Zusammenfassung", weight=ft.FontWeight.W_600),
                         summary_processed,
                         summary_documents,
                         summary_duplicates,
