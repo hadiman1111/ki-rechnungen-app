@@ -31,6 +31,9 @@ _STATUS_BADGE_PALETTE: dict[str, tuple[str, str, str]] = {
     "Fehler": (ft.Colors.RED_50, ft.Colors.RED_200, ft.Colors.RED_700),
 }
 
+# Statuswerte, die manuelle Prüfung erfordern
+_REVIEW_STATUSES: frozenset[str] = frozenset({"unklar", "error", "failed"})
+
 
 def _open_path(path: Path) -> None:
     system = platform.system().lower()
@@ -55,6 +58,109 @@ def _extract_pruefbedarf_block(report_text: str) -> str | None:
             break
         collected.append(line)
     return "\n".join(collected).strip() or None
+
+
+def _build_review_item_card(item: dict) -> ft.Container:
+    """Erstellt eine Karte für einen einzelnen Prüffall aus report.json."""
+    filename = item.get("filename") or "–"
+    output = item.get("output") or ""
+    notes = item.get("notes") or ""
+    status = item.get("status") or "unklar"
+
+    is_error = status in ("error", "failed")
+    badge_text_color = ft.Colors.RED_700 if is_error else ft.Colors.AMBER_700
+    badge_bg = ft.Colors.RED_50 if is_error else ft.Colors.AMBER_50
+    badge_border = ft.Colors.RED_200 if is_error else ft.Colors.AMBER_200
+
+    status_badge = ft.Container(
+        content=ft.Text(status, size=11, color=badge_text_color, weight=ft.FontWeight.W_600),
+        bgcolor=badge_bg,
+        border=ft.border.all(1, badge_border),
+        border_radius=8,
+        padding=ft.padding.symmetric(horizontal=8, vertical=2),
+    )
+
+    detail_rows: list[ft.Control] = [
+        ft.Row(
+            [
+                ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=14, color=ft.Colors.BLUE_GREY_400),
+                ft.Text("Original:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                ft.Text(
+                    filename,
+                    size=12,
+                    font_family="Courier New",
+                    selectable=True,
+                    expand=True,
+                ),
+            ],
+            spacing=4,
+        ),
+    ]
+    if notes:
+        detail_rows.append(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=ft.Colors.BLUE_GREY_400),
+                    ft.Text("Prüfgrund:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                    ft.Text(
+                        notes,
+                        size=12,
+                        color=ft.Colors.BLUE_GREY_700,
+                        expand=True,
+                        selectable=True,
+                    ),
+                ],
+                spacing=4,
+            )
+        )
+    if output:
+        detail_rows.append(
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.OUTPUT, size=14, color=ft.Colors.BLUE_GREY_400),
+                    ft.Text("Vorschlag:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                    ft.Text(
+                        Path(output).name,
+                        size=12,
+                        font_family="Courier New",
+                        selectable=True,
+                        expand=True,
+                    ),
+                ],
+                spacing=4,
+            )
+        )
+
+    return ft.Container(
+        bgcolor=ft.Colors.AMBER_50,
+        border=ft.border.all(1, ft.Colors.AMBER_200),
+        border_radius=8,
+        padding=10,
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_ROUNDED,
+                            size=16,
+                            color=ft.Colors.AMBER_700,
+                        ),
+                        ft.Text(
+                            "Unklares Dokument",
+                            size=13,
+                            weight=ft.FontWeight.W_600,
+                            color=ft.Colors.AMBER_800,
+                            expand=True,
+                        ),
+                        status_badge,
+                    ],
+                    spacing=6,
+                ),
+                *detail_rows,
+            ],
+            spacing=4,
+        ),
+    )
 
 
 def _load_profile_json(profile_path: Path) -> tuple[dict | None, str | None]:
@@ -182,18 +288,15 @@ def _ui(page: ft.Page) -> None:
     summary_errors = ft.Text("Errors: -")
     summary_fallbacks = ft.Text("System Fallbacks: -")
 
-    # --- Prüfbedarf ---
-    pruefbedarf_title = ft.Text(
-        "PRÜFBEDARF", weight=ft.FontWeight.W_700, color=ft.Colors.RED_700
-    )
-    pruefbedarf_text = ft.Text("-", selectable=True)
+    # --- Prüffälle (Manuelle Prüfung erforderlich) ---
+    prueffaelle_col = ft.Column([], spacing=8)
     pruefbedarf_box = ft.Container(
         visible=False,
-        bgcolor=ft.Colors.RED_50,
-        border=ft.border.all(1, ft.Colors.RED_200),
+        bgcolor=ft.Colors.AMBER_50,
+        border=ft.border.all(1, ft.Colors.AMBER_200),
         border_radius=8,
         padding=12,
-        content=ft.Column([pruefbedarf_title, pruefbedarf_text], spacing=6),
+        content=prueffaelle_col,
     )
 
     # --- Report ---
@@ -268,36 +371,150 @@ def _ui(page: ft.Page) -> None:
         summary_errors.value = "Errors: -"
         summary_fallbacks.value = "System Fallbacks: -"
         pruefbedarf_box.visible = False
-        pruefbedarf_text.value = "-"
+        pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
+        pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+        prueffaelle_col.controls = []
         report_text.value = ""
         latest_report_hint.value = "Kein Report geladen."
         run_dir_row.visible = False
         run_dir_hint.value = ""
 
+    def _show_review_items(items: list[dict]) -> None:
+        """Füllt die Prüffälle-Box mit Einzelkarten (aus report.json)."""
+        count = len(items)
+        count_suffix = "Dokument braucht" if count == 1 else "Dokumente brauchen"
+        prueffaelle_col.controls = [
+            ft.Row(
+                [
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        size=20,
+                        color=ft.Colors.AMBER_700,
+                    ),
+                    ft.Column(
+                        [
+                            ft.Text(
+                                "Manuelle Prüfung erforderlich",
+                                weight=ft.FontWeight.W_700,
+                                size=15,
+                                color=ft.Colors.AMBER_800,
+                            ),
+                            ft.Text(
+                                "Diese Dokumente brauchen deine Prüfung.",
+                                size=13,
+                                color=ft.Colors.AMBER_700,
+                            ),
+                        ],
+                        spacing=2,
+                    ),
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            ft.Text(
+                f"{count} {count_suffix} deine Prüfung.",
+                size=13,
+                weight=ft.FontWeight.W_600,
+                color=ft.Colors.AMBER_800,
+            ),
+            ft.Text(
+                "Unklare Dokumente",
+                size=12,
+                color=ft.Colors.AMBER_700,
+                weight=ft.FontWeight.W_500,
+            ),
+            *[_build_review_item_card(item) for item in items],
+        ]
+        pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
+        pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+        pruefbedarf_box.visible = True
+
+    def _show_review_empty() -> None:
+        """Zeigt eine ruhige Erfolgsmeldung wenn keine Prüffälle vorhanden."""
+        prueffaelle_col.controls = [
+            ft.Row(
+                [
+                    ft.Icon(
+                        ft.Icons.CHECK_CIRCLE_OUTLINE,
+                        size=16,
+                        color=ft.Colors.GREEN_600,
+                    ),
+                    ft.Text(
+                        "Keine Prüffälle im letzten Lauf.",
+                        size=13,
+                        color=ft.Colors.GREEN_700,
+                    ),
+                ],
+                spacing=6,
+            )
+        ]
+        pruefbedarf_box.bgcolor = ft.Colors.GREEN_50
+        pruefbedarf_box.border = ft.border.all(1, ft.Colors.GREEN_200)
+        pruefbedarf_box.visible = True
+
+    def _show_review_fallback(txt_content: str) -> None:
+        """Fallback: Prüfbedarf-Block aus report.txt extrahieren und anzeigen."""
+        pruefbedarf = _extract_pruefbedarf_block(txt_content)
+        if pruefbedarf and pruefbedarf != "PRÜFBEDARF: keiner":
+            prueffaelle_col.controls = [
+                ft.Text(
+                    "Manuelle Prüfung erforderlich",
+                    weight=ft.FontWeight.W_700,
+                    size=15,
+                    color=ft.Colors.AMBER_800,
+                ),
+                ft.Text(
+                    "Diese Dokumente brauchen deine Prüfung.",
+                    size=13,
+                    color=ft.Colors.AMBER_700,
+                ),
+                ft.Text(pruefbedarf, selectable=True, size=12, font_family="Courier New"),
+            ]
+            pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
+            pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+            pruefbedarf_box.visible = True
+        else:
+            pruefbedarf_box.visible = False
+
     def load_report_views(report_txt: Path, report_json: Path | None) -> None:
         nonlocal last_report_txt
         last_report_txt = report_txt
+        txt_content = ""
         if report_txt.exists():
-            text = report_txt.read_text(encoding="utf-8")
-            report_text.value = text
+            txt_content = report_txt.read_text(encoding="utf-8")
+            report_text.value = txt_content
             latest_report_hint.value = str(report_txt)
-            pruefbedarf = _extract_pruefbedarf_block(text)
-            if pruefbedarf:
-                pruefbedarf_text.value = pruefbedarf
-                pruefbedarf_box.visible = True
-            else:
-                pruefbedarf_box.visible = False
+
+        json_loaded = False
+        review_items: list[dict] = []
         if report_json and report_json.exists():
-            data = json.loads(report_json.read_text(encoding="utf-8"))
-            summary = data.get("summary", {})
-            summary_processed.value = f"Processed: {summary.get('processed', '-')}"
-            summary_documents.value = f"Documents: {summary.get('documents', '-')}"
-            summary_duplicates.value = f"Duplicates: {summary.get('duplicates', '-')}"
-            summary_unklar.value = f"Unklar: {summary.get('unklar', '-')}"
-            summary_errors.value = f"Errors: {summary.get('errors', '-')}"
-            summary_fallbacks.value = (
-                f"System Fallbacks: {summary.get('system_fallbacks', '-')}"
-            )
+            try:
+                data = json.loads(report_json.read_text(encoding="utf-8"))
+                json_loaded = True
+                summary = data.get("summary", {})
+                summary_processed.value = f"Processed: {summary.get('processed', '-')}"
+                summary_documents.value = f"Documents: {summary.get('documents', '-')}"
+                summary_duplicates.value = f"Duplicates: {summary.get('duplicates', '-')}"
+                summary_unklar.value = f"Unklar: {summary.get('unklar', '-')}"
+                summary_errors.value = f"Errors: {summary.get('errors', '-')}"
+                summary_fallbacks.value = (
+                    f"System Fallbacks: {summary.get('system_fallbacks', '-')}"
+                )
+                review_items = [
+                    f
+                    for f in data.get("files", [])
+                    if isinstance(f, dict) and f.get("status", "") in _REVIEW_STATUSES
+                ]
+            except (json.JSONDecodeError, OSError):
+                json_loaded = False
+
+        if json_loaded:
+            if review_items:
+                _show_review_items(review_items)
+            else:
+                _show_review_empty()
+        else:
+            _show_review_fallback(txt_content)
 
     def load_preset_info() -> None:
         """Lädt Preset-Info aus invoice_config.json und befüllt Felder vor, falls leer."""
