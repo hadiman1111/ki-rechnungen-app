@@ -11,6 +11,17 @@ import flet as ft
 from invoice_tool.config import ConfigError, load_app_config, load_office_rules
 from invoice_tool.run import RunError, run_once
 
+_DOC_TYPE_LABELS: dict[str, str] = {
+    "invoice": "Eingangsrechnung",
+    "credit_note": "Gutschrift",
+    "contract": "Vertrag",
+    "delivery_note": "Lieferschein",
+    "tax_notice": "Steuerbescheid",
+    "order_confirmation": "Bestellbestätigung",
+    "internal_document": "Interner Beleg",
+    "generic_document": "Sonstiges Dokument",
+}
+
 # Farbpalette für Status-Badges (bg, border, text_color)
 _STATUS_BADGE_PALETTE: dict[str, tuple[str, str, str]] = {
     "bereit": (ft.Colors.BLUE_50, ft.Colors.BLUE_200, ft.Colors.BLUE_700),
@@ -419,7 +430,7 @@ def _ui(page: ft.Page) -> None:
                     [
                         ft.Icon(ft.Icons.LOCK_OUTLINE, size=15, color=ft.Colors.BLUE_700),
                         ft.Text(
-                            "Diese Ansicht ist nur lesend. Profilbearbeitung folgt später.",
+                            "Diese Ansicht ist nur lesend. Änderungen sind hier nicht möglich.",
                             color=ft.Colors.BLUE_700,
                             size=13,
                             italic=True,
@@ -528,18 +539,22 @@ def _ui(page: ft.Page) -> None:
 
         # Ordner
         folders = data.get("folders", [])
+        folder_label_by_id = {
+            str(f.get("id", "")): str(f.get("label") or f.get("folder_name") or f.get("id") or "–")
+            for f in folders
+            if isinstance(f, dict)
+        }
         rows.append(ft.Divider(height=8))
         rows.append(_section("Zielordner"))
         if folders:
             for f in folders:
-                f_id = f.get("id", "?")
                 f_label = f.get("label", "?")
                 f_name = f.get("folder_name", "?")
                 rows.append(
                     ft.Row(
                         [
                             ft.Icon(ft.Icons.FOLDER_OUTLINED, size=14, color=ft.Colors.BLUE_GREY_400),
-                            ft.Text(f"{f_label} (id: {f_id})", size=13, width=240),
+                            ft.Text(f_label, size=13, width=240),
                             ft.Text(
                                 f_name,
                                 size=12,
@@ -598,19 +613,28 @@ def _ui(page: ft.Page) -> None:
                                 ft.Row(
                                     [
                                         ft.Text("Typ:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(dp.get("document_type", "–"), size=12),
+                                        ft.Text(
+                                            _DOC_TYPE_LABELS.get(dp.get("document_type", ""), dp.get("document_type", "–")),
+                                            size=12,
+                                        ),
                                     ]
                                 ),
                                 ft.Row(
                                     [
                                         ft.Text("Zielordner:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(dp.get("target_folder_id", "–"), size=12, font_family="Courier New"),
+                                        ft.Text(
+                                            folder_label_by_id.get(str(dp.get("target_folder_id", "")), dp.get("target_folder_id", "–")),
+                                            size=12,
+                                        ),
                                     ]
                                 ),
                                 ft.Row(
                                     [
                                         ft.Text("Fallback:", size=12, color=ft.Colors.BLUE_GREY_600, width=100),
-                                        ft.Text(dp.get("fallback_folder_id", "–"), size=12, font_family="Courier New"),
+                                        ft.Text(
+                                            folder_label_by_id.get(str(dp.get("fallback_folder_id", "")), dp.get("fallback_folder_id", "–")),
+                                            size=12,
+                                        ),
                                     ]
                                 ),
                                 ft.Row(
