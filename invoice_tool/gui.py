@@ -93,7 +93,7 @@ def _ui(page: ft.Page) -> None:
 
     # --- Source- und Output-Felder ---
     source_field = ft.TextField(
-        label="Source-Ordner (Eingangs-PDFs, wird nie verändert)",
+        label="Source-Ordner (Original-PDFs, werden nie verändert)",
         expand=True,
         hint_text="Pfad zum Ordner mit den Original-PDFs …",
     )
@@ -317,7 +317,7 @@ def _ui(page: ft.Page) -> None:
             # Ausgabeordner-Pfad nach Abschluss anzeigen
             run_dir_hint.value = str(run_dir / "output")
             run_dir_row.visible = True
-            page.title = "KI-Rechnungen – Lauf abgeschlossen"
+            page.title = "Lauf abgeschlossen"
 
             if report_txt:
                 load_report_views(report_txt, report_json)
@@ -395,7 +395,7 @@ def _ui(page: ft.Page) -> None:
                 padding=12,
                 tooltip=(
                     "Das Verarbeitungsprofil enthält lokale Regeln für Erkennung, "
-                    "Benennung und Ablage. Die Bearbeitung folgt später."
+                    "Benennung und Ablage. Profildetails sind in Kürze einsehbar (nur lesend)."
                 ),
                 content=ft.Column(
                     [
@@ -459,7 +459,7 @@ def _ui(page: ft.Page) -> None:
                 [
                     ft.Icon(ft.Icons.LOCK_OUTLINE, size=16, color=ft.Colors.BLUE_GREY_400),
                     ft.Text(
-                        "Originaldateien werden nicht verändert.",
+                        "Originaldateien werden nie verändert.",
                         color=ft.Colors.BLUE_GREY_600,
                         size=13,
                     ),
@@ -496,7 +496,12 @@ def _ui(page: ft.Page) -> None:
             run_dir_row,
 
             # Lauflog
-            ft.Text("Lauflog", size=18, weight=ft.FontWeight.W_600),
+            ft.Text(
+                "Lauflog",
+                size=14,
+                weight=ft.FontWeight.W_500,
+                color=ft.Colors.BLUE_GREY_700,
+            ),
             log_output,
 
             # Report-Pfad-Hinweis (Monospace)
