@@ -651,12 +651,12 @@ class InvoiceProcessor:
 
         document_date = self._document_date(extracted.invoice_date_raw)
 
+        # Pass actual values (possibly empty) so render_document_filename can
+        # correctly identify and report missing placeholders.
         values: dict[str, str] = {
             "date": document_date,
-            "supplier": (
-                (extracted.supplier_raw or "").strip().lower() or "unbekannt"
-            ),
-            "amount": (extracted.amount_raw or "").strip() or "unbekannt",
+            "supplier": (extracted.supplier_raw or "").strip().lower(),
+            "amount": (extracted.amount_raw or "").strip(),
             "type_literal": (
                 matched_profile.type_literal or matched_profile.document_type
             ),

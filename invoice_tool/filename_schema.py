@@ -15,7 +15,7 @@ class FilenameSchemaError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{(\w+)\}")
-_UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f{}]')
 
 # Standard placeholder keys supplied by the runtime caller.
 _ALLOWED_PLACEHOLDER_SOURCES: frozenset[str] = frozenset(
