@@ -11,6 +11,15 @@ import flet as ft
 from invoice_tool.config import ConfigError, load_app_config, load_office_rules
 from invoice_tool.run import RunError, run_once
 
+# Farbpalette für Status-Badges (bg, border, text_color)
+_STATUS_BADGE_PALETTE: dict[str, tuple[str, str, str]] = {
+    "bereit": (ft.Colors.BLUE_50, ft.Colors.BLUE_200, ft.Colors.BLUE_700),
+    "läuft …": (ft.Colors.ORANGE_50, ft.Colors.ORANGE_200, ft.Colors.ORANGE_700),
+    "fertig": (ft.Colors.GREEN_50, ft.Colors.GREEN_200, ft.Colors.GREEN_700),
+    "Prüfung nötig": (ft.Colors.RED_50, ft.Colors.RED_200, ft.Colors.RED_700),
+    "Fehler": (ft.Colors.RED_50, ft.Colors.RED_200, ft.Colors.RED_700),
+}
+
 
 def _open_path(path: Path) -> None:
     system = platform.system().lower()
@@ -79,6 +88,7 @@ def _ui(page: ft.Page) -> None:
         str(profile_path) if profile_path else "nicht gefunden – nur Basis-Regeln",
         selectable=True,
         color=ft.Colors.GREEN_700 if profile_path else ft.Colors.ORANGE_700,
+        font_family="Courier New",  # Monospace für Pfadanzeige
     )
 
     # --- Source- und Output-Felder ---
@@ -111,10 +121,19 @@ def _ui(page: ft.Page) -> None:
     output_picker.on_result = on_output_picked
     page.overlay.extend([source_picker, output_picker])
 
-    # --- Status / Log ---
+    # --- Status-Badge (farbige Kapsel) ---
     status_value = ft.Text(
         "bereit", color=ft.Colors.BLUE_700, size=16, weight=ft.FontWeight.W_600
     )
+    status_badge = ft.Container(
+        content=status_value,
+        bgcolor=ft.Colors.BLUE_50,
+        border=ft.border.all(1, ft.Colors.BLUE_200),
+        border_radius=12,
+        padding=ft.padding.symmetric(horizontal=14, vertical=4),
+    )
+
+    # --- Log ---
     log_output = ft.TextField(
         value="",
         multiline=True,
@@ -154,7 +173,35 @@ def _ui(page: ft.Page) -> None:
         read_only=True,
         expand=True,
     )
-    latest_report_hint = ft.Text("Kein Report geladen.")
+    latest_report_hint = ft.Text(
+        "Kein Report geladen.",
+        font_family="Courier New",  # Monospace für Pfadanzeige
+    )
+
+    # Laufordner-Pfad-Hinweis (nach erfolgreichem Lauf sichtbar)
+    run_dir_hint = ft.Text(
+        "",
+        selectable=True,
+        font_family="Courier New",
+        size=13,
+        color=ft.Colors.BLUE_GREY_700,
+        visible=False,
+    )
+    run_dir_row = ft.Container(
+        visible=False,
+        content=ft.Row(
+            [
+                ft.Icon(ft.Icons.FOLDER_OUTLINED, size=15, color=ft.Colors.BLUE_GREY_400),
+                ft.Text(
+                    "Ausgabeordner dieses Laufs:",
+                    size=13,
+                    color=ft.Colors.BLUE_GREY_600,
+                ),
+                run_dir_hint,
+            ],
+            spacing=6,
+        ),
+    )
 
     # --- Start-Button ---
     start_button = ft.ElevatedButton(
@@ -175,6 +222,12 @@ def _ui(page: ft.Page) -> None:
     def set_status(text: str, color: str) -> None:
         status_value.value = text
         status_value.color = color
+        palette = _STATUS_BADGE_PALETTE.get(
+            text,
+            (ft.Colors.BLUE_GREY_50, ft.Colors.BLUE_GREY_200, color),
+        )
+        status_badge.bgcolor = palette[0]
+        status_badge.border = ft.border.all(1, palette[1])
 
     def reset_report_view() -> None:
         summary_processed.value = "Processed: -"
@@ -187,6 +240,8 @@ def _ui(page: ft.Page) -> None:
         pruefbedarf_text.value = "-"
         report_text.value = ""
         latest_report_hint.value = "Kein Report geladen."
+        run_dir_row.visible = False
+        run_dir_hint.value = ""
 
     def load_report_views(report_txt: Path, report_json: Path | None) -> None:
         nonlocal last_report_txt
@@ -259,6 +314,11 @@ def _ui(page: ft.Page) -> None:
             start_button.disabled = False
             append_log(f"[fertig] Run-Ordner: {run_dir}")
 
+            # Ausgabeordner-Pfad nach Abschluss anzeigen
+            run_dir_hint.value = str(run_dir / "output")
+            run_dir_row.visible = True
+            page.title = "KI-Rechnungen – Lauf abgeschlossen"
+
             if report_txt:
                 load_report_views(report_txt, report_json)
             else:
@@ -327,12 +387,16 @@ def _ui(page: ft.Page) -> None:
         [
             ft.Text("KI-Rechnungen-App", size=30, weight=ft.FontWeight.BOLD),
 
-            # Info-Box: Preset + Profil
+            # Info-Box: Preset + Profil (mit Tooltip für Profilerklärung)
             ft.Container(
                 bgcolor=ft.Colors.BLUE_GREY_50,
                 border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
                 border_radius=8,
                 padding=12,
+                tooltip=(
+                    "Das Verarbeitungsprofil enthält lokale Regeln für Erkennung, "
+                    "Benennung und Ablage. Die Bearbeitung folgt später."
+                ),
                 content=ft.Column(
                     [
                         ft.Row(
@@ -345,6 +409,10 @@ def _ui(page: ft.Page) -> None:
                     spacing=6,
                 ),
             ),
+
+            # Abschnitt: Eingang / Ordnerauswahl
+            ft.Divider(),
+            ft.Text("Eingang", size=18, weight=ft.FontWeight.W_600),
 
             # Source-Ordner-Zeile
             ft.Row(
@@ -386,6 +454,23 @@ def _ui(page: ft.Page) -> None:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
 
+            # Originalschutz-Hinweis (dauerhaft sichtbar)
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.LOCK_OUTLINE, size=16, color=ft.Colors.BLUE_GREY_400),
+                    ft.Text(
+                        "Originaldateien werden nicht verändert.",
+                        color=ft.Colors.BLUE_GREY_600,
+                        size=13,
+                    ),
+                ],
+                spacing=6,
+            ),
+
+            # Abschnitt: Verarbeitung / Start
+            ft.Divider(),
+            ft.Text("Verarbeitung", size=18, weight=ft.FontWeight.W_600),
+
             # Aktions-Buttons
             ft.Row(
                 [
@@ -400,15 +485,21 @@ def _ui(page: ft.Page) -> None:
                 spacing=10,
             ),
 
-            # Status
-            ft.Row([ft.Text("Status:", weight=ft.FontWeight.W_600), status_value]),
+            # Status-Badge
+            ft.Row([ft.Text("Status:", weight=ft.FontWeight.W_600), status_badge]),
 
-            # Log
+            # Abschnitt: Bericht / Ergebnis
+            ft.Divider(),
+            ft.Text("Bericht / Ergebnis", size=18, weight=ft.FontWeight.W_600),
+
+            # Ausgabeordner-Pfad nach Laufabschluss (selektierbar, Monospace)
+            run_dir_row,
+
+            # Lauflog
             ft.Text("Lauflog", size=18, weight=ft.FontWeight.W_600),
             log_output,
 
-            # Report
-            ft.Text("Report", size=18, weight=ft.FontWeight.W_600),
+            # Report-Pfad-Hinweis (Monospace)
             latest_report_hint,
             pruefbedarf_box,
             ft.Container(
