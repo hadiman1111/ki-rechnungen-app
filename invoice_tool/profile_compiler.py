@@ -465,6 +465,122 @@ def _compile_review_policy(review_policy: dict) -> dict:
 
 
 # -----------------------------------------------------------------------
+# document_profiles compiler
+# -----------------------------------------------------------------------
+
+def _compile_document_profiles(
+    document_profiles: list[dict],
+    folders: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Compile document_profile dicts into runtime rule dicts and warnings.
+
+    Validation rules:
+    - enabled=false: silently skipped.
+    - document_type == "invoice": blocked; warning emitted, entry skipped.
+    - missing id: raises ValueError.
+    - duplicate id: raises ValueError.
+    - missing or unknown target_folder_id: raises ValueError.
+    - unknown fallback_folder_id (when provided): raises ValueError.
+    - missing fallback_folder_id: uses unclear/review fallback from folders list,
+      or "unklar" as last resort; warning emitted.
+
+    Returns:
+        (compiled_profile_dicts, warnings)
+    """
+    folder_lookup: dict[str, str] = {}
+    for f in folders:
+        fid = f.get("id")
+        fname = f.get("folder_name") or f.get("name")
+        if fid and fname:
+            folder_lookup[str(fid)] = str(fname)
+
+    # Detect the unclear/review fallback folder from the folders list.
+    unclear_fallback = "unklar"
+    for f in folders:
+        role = str(f.get("role") or f.get("purpose") or "").lower()
+        if role in ("unclear", "review", "unklar"):
+            fname = f.get("folder_name") or f.get("name")
+            if fname:
+                unclear_fallback = str(fname)
+            break
+
+    compiled: list[dict] = []
+    warnings: list[str] = []
+    seen_ids: set[str] = set()
+
+    for profile in document_profiles:
+        if not profile.get("enabled", True):
+            continue
+
+        if profile.get("document_type") == "invoice":
+            pid = profile.get("id", "?")
+            warnings.append(
+                f"document_profile '{pid}': document_type='invoice' ist nicht erlaubt "
+                f"– wird übersprungen."
+            )
+            continue
+
+        profile_id = profile.get("id")
+        if not profile_id:
+            raise ValueError(
+                "document_profile hat keine 'id' – Pflichtfeld fehlt."
+            )
+        profile_id = str(profile_id)
+
+        if profile_id in seen_ids:
+            raise ValueError(
+                f"document_profile: doppelte id '{profile_id}'."
+            )
+        seen_ids.add(profile_id)
+
+        target_folder_id = profile.get("target_folder_id")
+        if not target_folder_id:
+            raise ValueError(
+                f"document_profile '{profile_id}': 'target_folder_id' fehlt (Pflichtfeld)."
+            )
+        target_folder_id = str(target_folder_id)
+        if target_folder_id not in folder_lookup:
+            raise ValueError(
+                f"document_profile '{profile_id}': target_folder_id '{target_folder_id}' "
+                f"nicht in folders gefunden."
+            )
+        target_folder = folder_lookup[target_folder_id]
+
+        fallback_folder_id = profile.get("fallback_folder_id")
+        if fallback_folder_id:
+            fallback_folder_id = str(fallback_folder_id)
+            if fallback_folder_id not in folder_lookup:
+                raise ValueError(
+                    f"document_profile '{profile_id}': fallback_folder_id '{fallback_folder_id}' "
+                    f"nicht in folders gefunden."
+                )
+            fallback_folder = folder_lookup[fallback_folder_id]
+        else:
+            fallback_folder = unclear_fallback
+            warnings.append(
+                f"document_profile '{profile_id}': kein fallback_folder_id angegeben "
+                f"– verwende Fallback-Ordner '{unclear_fallback}'."
+            )
+
+        compiled.append({
+            "id": profile_id,
+            "label": str(profile.get("label") or profile_id),
+            "document_type": str(profile.get("document_type") or "document"),
+            "classification_hints": list(profile.get("classification_hints") or []),
+            "negative_hints": list(profile.get("negative_hints") or []),
+            "target_folder": target_folder,
+            "fallback_folder": fallback_folder,
+            "confidence_threshold": float(profile.get("confidence_threshold") or 0.5),
+            "duplicate_policy": str(profile.get("duplicate_policy") or "keep"),
+            "naming_template": profile.get("naming_template") or None,
+            "type_literal": profile.get("type_literal") or None,
+            "fallback_values": dict(profile.get("fallback_values") or {}),
+        })
+
+    return compiled, warnings
+
+
+# -----------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------
 
@@ -543,9 +659,26 @@ def compile_profile_to_rules(
     if isinstance(review_policy_raw, dict):
         preset_dict["routing_overrides"] = _compile_review_policy(review_policy_raw)
 
-    return {
+    # document_profiles: top-level key, never placed under presets.
+    document_profiles_raw: list[dict] = list(profile.get("document_profiles") or [])
+    folders_raw: list[dict] = list(profile.get("folders") or [])
+    compiled_doc_profiles, doc_profile_warnings = _compile_document_profiles(
+        document_profiles_raw, folders_raw
+    )
+
+    result: dict = {
         "active_preset": preset_name,
         "presets": {
             preset_name: preset_dict,
         },
     }
+
+    # Always emit document_profiles key so consumers can rely on its presence.
+    result["document_profiles"] = compiled_doc_profiles
+
+    # _meta carries non-routing compiler diagnostics; silently ignored by parsers.
+    result["_meta"] = {
+        "document_profiles_warnings": doc_profile_warnings,
+    }
+
+    return result

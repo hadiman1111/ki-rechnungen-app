@@ -10,6 +10,7 @@ from invoice_tool.models import (
     ArchiveRules,
     BusinessContextRule,
     ClassificationRules,
+    DocumentProfileRule,
     DuplicateHandlingRules,
     DocumentKeywordRule,
     DocumentRules,
@@ -475,6 +476,42 @@ def _parse_final_assignment_rules(raw_rules: list[dict]) -> list[FinalAssignment
             )
         )
     return rules
+
+
+def load_document_profiles_from_runtime_rules(
+    rules_dict: dict,
+) -> list[DocumentProfileRule]:
+    """Load compiled document_profiles from a runtime_rules dict.
+
+    Returns an empty list if the key is absent or not a list.
+    Does not raise; malformed entries are silently skipped.
+    Never modifies rules_dict.
+    """
+    raw_profiles = rules_dict.get("document_profiles")
+    if not isinstance(raw_profiles, list):
+        return []
+
+    result: list[DocumentProfileRule] = []
+    for item in raw_profiles:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            DocumentProfileRule(
+                id=str(item.get("id", "")),
+                label=str(item.get("label", "")),
+                document_type=str(item.get("document_type", "document")),
+                classification_hints=tuple(item.get("classification_hints") or []),
+                negative_hints=tuple(item.get("negative_hints") or []),
+                target_folder=str(item.get("target_folder", "")),
+                fallback_folder=str(item.get("fallback_folder", "unklar")),
+                confidence_threshold=float(item.get("confidence_threshold", 0.5)),
+                duplicate_policy=str(item.get("duplicate_policy", "keep")),
+                naming_template=item.get("naming_template") or None,
+                type_literal=item.get("type_literal") or None,
+                fallback_values=dict(item.get("fallback_values") or {}),
+            )
+        )
+    return result
 
 
 def _parse_output_route_rules(raw_rules: list[dict]) -> list[OutputRouteRule]:

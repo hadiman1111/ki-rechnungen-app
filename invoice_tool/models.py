@@ -293,3 +293,25 @@ class ProcessResult:
     konto: str | None = None
     payment_field: str | None = None
     street: str | None = None
+
+
+@dataclass(frozen=True)
+class DocumentProfileRule:
+    """Runtime rule compiled from a document_profile entry in profile_config.
+
+    Used exclusively for non-invoice documents (classify_document_type == "document").
+    Never applied to invoices.
+    """
+
+    id: str
+    label: str
+    document_type: str
+    classification_hints: tuple[str, ...]
+    negative_hints: tuple[str, ...]
+    target_folder: str
+    fallback_folder: str
+    confidence_threshold: float
+    duplicate_policy: str
+    naming_template: str | None
+    type_literal: str | None
+    fallback_values: dict[str, str]
