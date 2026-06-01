@@ -11,14 +11,31 @@ import flet as ft
 from invoice_tool.config import ConfigError, load_app_config, load_office_rules
 from invoice_tool.run import RunError, run_once
 from invoice_tool.ui_profile_dialog import show_profile_details_dialog
+from invoice_tool.ui_tokens import (
+    ACCENT,
+    ACCENT_SOFT,
+    ERR,
+    ERR_SOFT,
+    INK_2,
+    LINE,
+    MONO_FONT,
+    MUTED,
+    MUTED_2,
+    OK,
+    OK_SOFT,
+    SURFACE_2,
+    WARN,
+    WARN_EDGE,
+    WARN_SOFT,
+)
 
 # Farbpalette für Status-Badges (bg, border, text_color)
 _STATUS_BADGE_PALETTE: dict[str, tuple[str, str, str]] = {
-    "bereit": (ft.Colors.BLUE_50, ft.Colors.BLUE_200, ft.Colors.BLUE_700),
-    "läuft …": (ft.Colors.ORANGE_50, ft.Colors.ORANGE_200, ft.Colors.ORANGE_700),
-    "fertig": (ft.Colors.GREEN_50, ft.Colors.GREEN_200, ft.Colors.GREEN_700),
-    "Prüfung nötig": (ft.Colors.RED_50, ft.Colors.RED_200, ft.Colors.RED_700),
-    "Fehler": (ft.Colors.RED_50, ft.Colors.RED_200, ft.Colors.RED_700),
+    "Bereit":        (ACCENT_SOFT, ACCENT,    ACCENT),
+    "Läuft":         (ACCENT_SOFT, ACCENT,    ACCENT),
+    "Fertig":        (OK_SOFT,     OK,        OK),
+    "Prüfung nötig": (ERR_SOFT,    ERR,       ERR),
+    "Fehler":        (ERR_SOFT,    ERR,       ERR),
 }
 
 # Statuswerte, die manuelle Prüfung erfordern
@@ -58,9 +75,9 @@ def _build_review_item_card(item: dict) -> ft.Container:
     status = item.get("status") or "unklar"
 
     is_error = status in ("error", "failed")
-    badge_text_color = ft.Colors.RED_700 if is_error else ft.Colors.AMBER_700
-    badge_bg = ft.Colors.RED_50 if is_error else ft.Colors.AMBER_50
-    badge_border = ft.Colors.RED_200 if is_error else ft.Colors.AMBER_200
+    badge_text_color = ERR if is_error else WARN
+    badge_bg = ERR_SOFT if is_error else WARN_SOFT
+    badge_border = ERR if is_error else WARN_EDGE
 
     _STATUS_LABELS = {
         "unklar": "unklar",
@@ -80,12 +97,12 @@ def _build_review_item_card(item: dict) -> ft.Container:
     detail_rows: list[ft.Control] = [
         ft.Row(
             [
-                ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=14, color=ft.Colors.BLUE_GREY_400),
-                ft.Text("Original:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=14, color=MUTED_2),
+                ft.Text("Original:", size=12, color=MUTED, width=80),
                 ft.Text(
                     filename,
                     size=12,
-                    font_family="Courier New",
+                    font_family=MONO_FONT,
                     selectable=True,
                     expand=True,
                 ),
@@ -97,12 +114,12 @@ def _build_review_item_card(item: dict) -> ft.Container:
         detail_rows.append(
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=ft.Colors.BLUE_GREY_400),
-                    ft.Text("Prüfgrund:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=MUTED_2),
+                    ft.Text("Prüfgrund:", size=12, color=MUTED, width=80),
                     ft.Text(
                         notes,
                         size=12,
-                        color=ft.Colors.BLUE_GREY_700,
+                        color=INK_2,
                         expand=True,
                         selectable=True,
                     ),
@@ -114,12 +131,12 @@ def _build_review_item_card(item: dict) -> ft.Container:
         detail_rows.append(
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.OUTPUT, size=14, color=ft.Colors.BLUE_GREY_400),
-                    ft.Text("Vorschlag:", size=12, color=ft.Colors.BLUE_GREY_600, width=80),
+                    ft.Icon(ft.Icons.OUTPUT, size=14, color=MUTED_2),
+                    ft.Text("Vorschlag:", size=12, color=MUTED, width=80),
                     ft.Text(
                         Path(output).name,
                         size=12,
-                        font_family="Courier New",
+                        font_family=MONO_FONT,
                         selectable=True,
                         expand=True,
                     ),
@@ -129,8 +146,8 @@ def _build_review_item_card(item: dict) -> ft.Container:
         )
 
     return ft.Container(
-        bgcolor=ft.Colors.AMBER_50,
-        border=ft.border.all(1, ft.Colors.AMBER_200),
+        bgcolor=WARN_SOFT,
+        border=ft.border.all(1, WARN_EDGE),
         border_radius=8,
         padding=10,
         content=ft.Column(
@@ -140,13 +157,13 @@ def _build_review_item_card(item: dict) -> ft.Container:
                         ft.Icon(
                             ft.Icons.WARNING_AMBER_ROUNDED,
                             size=16,
-                            color=ft.Colors.AMBER_700,
+                            color=WARN,
                         ),
                         ft.Text(
                             "Verarbeitungsfehler" if is_error else "Unklares Dokument",
                             size=13,
                             weight=ft.FontWeight.W_600,
-                            color=ft.Colors.AMBER_800,
+                            color=WARN,
                             expand=True,
                         ),
                         status_badge,
@@ -158,7 +175,6 @@ def _build_review_item_card(item: dict) -> ft.Container:
             spacing=4,
         ),
     )
-
 
 
 def _find_report_in_run_dir(run_dir: Path) -> tuple[Path | None, Path | None]:
@@ -203,18 +219,18 @@ def _ui(page: ft.Page) -> None:
         str(profile_path) if profile_path else "nicht gefunden – nur Basis-Regeln",
         selectable=True,
         size=11,
-        color=ft.Colors.BLUE_GREY_500 if profile_path else ft.Colors.ORANGE_700,
-        font_family="Courier New",  # Monospace für Pfadanzeige
+        color=MUTED if profile_path else WARN,
+        font_family=MONO_FONT,
     )
 
-    # --- Source- und Output-Felder ---
+    # --- Quell- und Zielordner-Felder ---
     source_field = ft.TextField(
-        label="Source-Ordner (Original-PDFs, werden nie verändert)",
+        label="Quellordner",
         expand=True,
         hint_text="Pfad zum Ordner mit den Original-PDFs …",
     )
     output_field = ft.TextField(
-        label="Output-Ordner (Basis für Lauf-Unterordner)",
+        label="Zielordner",
         expand=True,
         hint_text="Pfad zum Ausgabe-Basisordner …",
     )
@@ -239,12 +255,12 @@ def _ui(page: ft.Page) -> None:
 
     # --- Status-Badge (farbige Kapsel) ---
     status_value = ft.Text(
-        "bereit", color=ft.Colors.BLUE_700, size=16, weight=ft.FontWeight.W_600
+        "Bereit", color=ACCENT, size=16, weight=ft.FontWeight.W_600
     )
     status_badge = ft.Container(
         content=status_value,
-        bgcolor=ft.Colors.BLUE_50,
-        border=ft.border.all(1, ft.Colors.BLUE_200),
+        bgcolor=ACCENT_SOFT,
+        border=ft.border.all(1, ACCENT),
         border_radius=12,
         padding=ft.padding.symmetric(horizontal=14, vertical=4),
     )
@@ -272,8 +288,8 @@ def _ui(page: ft.Page) -> None:
     prueffaelle_col = ft.Column([], spacing=8)
     pruefbedarf_box = ft.Container(
         visible=False,
-        bgcolor=ft.Colors.AMBER_50,
-        border=ft.border.all(1, ft.Colors.AMBER_200),
+        bgcolor=WARN_SOFT,
+        border=ft.border.all(1, WARN_EDGE),
         border_radius=8,
         padding=12,
         content=prueffaelle_col,
@@ -289,27 +305,27 @@ def _ui(page: ft.Page) -> None:
         hint_text="Noch kein Lauf gestartet. Nach der Verarbeitung erscheinen hier Ergebnis und Bericht.",
     )
     latest_report_hint = ft.Text(
-        "Kein Report geladen.",
+        "Kein Bericht geladen.",
     )
 
     # Laufordner-Pfad-Hinweis (nach erfolgreichem Lauf sichtbar)
     run_dir_hint = ft.Text(
         "",
         selectable=True,
-        font_family="Courier New",
+        font_family=MONO_FONT,
         size=13,
-        color=ft.Colors.BLUE_GREY_700,
+        color=INK_2,
         visible=False,
     )
     run_dir_row = ft.Container(
         visible=False,
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.FOLDER_OUTLINED, size=15, color=ft.Colors.BLUE_GREY_400),
+                ft.Icon(ft.Icons.FOLDER_OUTLINED, size=15, color=MUTED_2),
                 ft.Text(
                     "Ausgabeordner dieses Laufs:",
                     size=13,
-                    color=ft.Colors.BLUE_GREY_600,
+                    color=MUTED,
                 ),
                 run_dir_hint,
             ],
@@ -319,7 +335,7 @@ def _ui(page: ft.Page) -> None:
 
     # --- Start-Button ---
     start_button = ft.ElevatedButton(
-        "Lauf starten",
+        "Verarbeitung starten",
         icon=ft.Icons.PLAY_ARROW,
         style=ft.ButtonStyle(
             text_style=ft.TextStyle(size=18, weight=ft.FontWeight.W_600),
@@ -338,7 +354,7 @@ def _ui(page: ft.Page) -> None:
         status_value.color = color
         palette = _STATUS_BADGE_PALETTE.get(
             text,
-            (ft.Colors.BLUE_GREY_50, ft.Colors.BLUE_GREY_200, color),
+            (SURFACE_2, LINE, color),
         )
         status_badge.bgcolor = palette[0]
         status_badge.border = ft.border.all(1, palette[1])
@@ -351,11 +367,11 @@ def _ui(page: ft.Page) -> None:
         summary_errors.value = "Fehler: –"
         summary_fallbacks.value = "System-Ersatzwerte: –"
         pruefbedarf_box.visible = False
-        pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
-        pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+        pruefbedarf_box.bgcolor = WARN_SOFT
+        pruefbedarf_box.border = ft.border.all(1, WARN_EDGE)
         prueffaelle_col.controls = []
         report_text.value = ""
-        latest_report_hint.value = "Kein Report geladen."
+        latest_report_hint.value = "Kein Bericht geladen."
         run_dir_row.visible = False
         run_dir_hint.value = ""
 
@@ -369,13 +385,13 @@ def _ui(page: ft.Page) -> None:
                     ft.Icon(
                         ft.Icons.WARNING_AMBER_ROUNDED,
                         size=20,
-                        color=ft.Colors.AMBER_700,
+                        color=WARN,
                     ),
                     ft.Text(
                         "Manuelle Prüfung erforderlich",
                         weight=ft.FontWeight.W_700,
                         size=15,
-                        color=ft.Colors.AMBER_800,
+                        color=WARN,
                     ),
                 ],
                 spacing=10,
@@ -385,18 +401,18 @@ def _ui(page: ft.Page) -> None:
                 f"{count} {count_suffix} deine Prüfung.",
                 size=13,
                 weight=ft.FontWeight.W_600,
-                color=ft.Colors.AMBER_800,
+                color=WARN,
             ),
             ft.Text(
                 "Unklare Dokumente",
                 size=12,
-                color=ft.Colors.AMBER_700,
+                color=WARN,
                 weight=ft.FontWeight.W_500,
             ),
             *[_build_review_item_card(item) for item in items],
         ]
-        pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
-        pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+        pruefbedarf_box.bgcolor = WARN_SOFT
+        pruefbedarf_box.border = ft.border.all(1, WARN_EDGE)
         pruefbedarf_box.visible = True
 
     def _show_review_empty() -> None:
@@ -407,19 +423,19 @@ def _ui(page: ft.Page) -> None:
                     ft.Icon(
                         ft.Icons.CHECK_CIRCLE_OUTLINE,
                         size=16,
-                        color=ft.Colors.GREEN_600,
+                        color=OK,
                     ),
                     ft.Text(
                         "Keine Prüffälle im letzten Lauf.",
                         size=13,
-                        color=ft.Colors.GREEN_700,
+                        color=OK,
                     ),
                 ],
                 spacing=6,
             )
         ]
-        pruefbedarf_box.bgcolor = ft.Colors.GREEN_50
-        pruefbedarf_box.border = ft.border.all(1, ft.Colors.GREEN_200)
+        pruefbedarf_box.bgcolor = OK_SOFT
+        pruefbedarf_box.border = ft.border.all(1, OK)
         pruefbedarf_box.visible = True
 
     def _show_review_fallback(txt_content: str) -> None:
@@ -431,17 +447,17 @@ def _ui(page: ft.Page) -> None:
                     "Manuelle Prüfung erforderlich",
                     weight=ft.FontWeight.W_700,
                     size=15,
-                    color=ft.Colors.AMBER_800,
+                    color=WARN,
                 ),
                 ft.Text(
                     "Diese Dokumente brauchen deine Prüfung.",
                     size=13,
-                    color=ft.Colors.AMBER_700,
+                    color=WARN,
                 ),
-                ft.Text(pruefbedarf, selectable=True, size=12, font_family="Courier New"),
+                ft.Text(pruefbedarf, selectable=True, size=12, font_family=MONO_FONT),
             ]
-            pruefbedarf_box.bgcolor = ft.Colors.AMBER_50
-            pruefbedarf_box.border = ft.border.all(1, ft.Colors.AMBER_200)
+            pruefbedarf_box.bgcolor = WARN_SOFT
+            pruefbedarf_box.border = ft.border.all(1, WARN_EDGE)
             pruefbedarf_box.visible = True
         else:
             pruefbedarf_box.visible = False
@@ -454,7 +470,7 @@ def _ui(page: ft.Page) -> None:
             txt_content = report_txt.read_text(encoding="utf-8")
             report_text.value = txt_content
             latest_report_hint.value = str(report_txt)
-            latest_report_hint.font_family = "Courier New"
+            latest_report_hint.font_family = MONO_FONT
 
         json_loaded = False
         review_items: list[dict] = []
@@ -529,7 +545,7 @@ def _ui(page: ft.Page) -> None:
             report_txt, report_json = _find_report_in_run_dir(run_dir)
 
             run_in_progress = False
-            set_status("fertig", ft.Colors.GREEN_700)
+            set_status("Fertig", OK)
             start_button.disabled = False
             append_log(f"[fertig] Run-Ordner: {run_dir}")
 
@@ -542,20 +558,20 @@ def _ui(page: ft.Page) -> None:
                 load_report_views(report_txt, report_json)
             else:
                 latest_report_hint.value = (
-                    f"Kein Report gefunden unter {run_dir / 'output' / '_runs'}"
+                    f"Kein Bericht gefunden unter {run_dir / 'output' / '_runs'}"
                 )
             page.update()
 
         except (RunError, ConfigError) as exc:
             run_in_progress = False
-            set_status("Fehler", ft.Colors.RED_700)
+            set_status("Fehler", ERR)
             start_button.disabled = False
             append_log(f"[fehler] {exc}")
             page.update()
 
         except Exception as exc:  # noqa: BLE001
             run_in_progress = False
-            set_status("Fehler", ft.Colors.RED_700)
+            set_status("Fehler", ERR)
             start_button.disabled = False
             append_log(f"[unerwarteter fehler] {exc}")
             page.update()
@@ -565,17 +581,17 @@ def _ui(page: ft.Page) -> None:
         if run_in_progress:
             return
         if not source_field.value or not source_field.value.strip():
-            append_log("Bitte einen Source-Ordner angeben.")
+            append_log("Bitte einen Quellordner angeben.")
             page.update()
             return
         if not output_field.value or not output_field.value.strip():
-            append_log("Bitte einen Output-Ordner angeben.")
+            append_log("Bitte einen Zielordner angeben.")
             page.update()
             return
         run_in_progress = True
         log_output.value = ""
         reset_report_view()
-        set_status("läuft …", ft.Colors.ORANGE_700)
+        set_status("Läuft", ACCENT)
         start_button.disabled = True
         page.update()
         page.run_thread(run_processing)
@@ -611,25 +627,25 @@ def _ui(page: ft.Page) -> None:
         [
             ft.Text("KI-Rechnungen-App", size=30, weight=ft.FontWeight.BOLD),
 
-            # Info-Box: Preset + Dokumentregeln-Einstieg
+            # Info-Box: Profil + Verarbeitungsregeln-Einstieg
             ft.Container(
-                bgcolor=ft.Colors.BLUE_GREY_50,
-                border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                bgcolor=SURFACE_2,
+                border=ft.border.all(1, LINE),
                 border_radius=8,
                 padding=12,
                 content=ft.Column(
                     [
                         ft.Row(
-                            [ft.Text("Aktives Preset:", weight=ft.FontWeight.W_600), preset_label]
+                            [ft.Text("Profil:", weight=ft.FontWeight.W_600), preset_label]
                         ),
                         ft.Row(
                             [
                                 ft.TextButton(
-                                    "Dokumentregeln",
+                                    "Verarbeitung einrichten",
                                     icon=ft.Icons.RULE_OUTLINED,
                                     on_click=on_show_profile_details,
                                     style=ft.ButtonStyle(
-                                        color=ft.Colors.BLUE_700,
+                                        color=ACCENT,
                                         padding=ft.padding.symmetric(horizontal=0, vertical=0),
                                     ),
                                 ),
@@ -638,16 +654,16 @@ def _ui(page: ft.Page) -> None:
                         ft.Text(
                             "Regeln für Erkennung, Benennung und Ablage.",
                             size=12,
-                            color=ft.Colors.BLUE_GREY_500,
+                            color=MUTED,
                             italic=True,
                         ),
                         ft.Row(
                             [
                                 ft.Text(
-                                    "Profildatei:",
+                                    "Konfiguration:",
                                     size=11,
-                                    color=ft.Colors.BLUE_GREY_400,
-                                    width=72,
+                                    color=MUTED_2,
+                                    width=88,
                                 ),
                                 profile_label,
                             ],
@@ -662,15 +678,15 @@ def _ui(page: ft.Page) -> None:
             ft.Divider(),
             ft.Text("Eingang", size=18, weight=ft.FontWeight.W_600),
 
-            # Source-Ordner-Zeile
+            # Quellordner-Zeile
             ft.Row(
                 [
                     source_field,
                     ft.IconButton(
                         icon=ft.Icons.FOLDER_OPEN,
-                        tooltip="Source-Ordner wählen",
+                        tooltip="Quellordner wählen",
                         on_click=lambda _: source_picker.get_directory_path(
-                            dialog_title="Source-Ordner wählen (Eingangs-PDFs)"
+                            dialog_title="Quellordner wählen (Eingangs-PDFs)"
                         ),
                     ),
                     ft.OutlinedButton(
@@ -682,15 +698,15 @@ def _ui(page: ft.Page) -> None:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
 
-            # Output-Ordner-Zeile
+            # Zielordner-Zeile
             ft.Row(
                 [
                     output_field,
                     ft.IconButton(
                         icon=ft.Icons.FOLDER_OPEN,
-                        tooltip="Output-Ordner wählen",
+                        tooltip="Zielordner wählen",
                         on_click=lambda _: output_picker.get_directory_path(
-                            dialog_title="Output-Ordner wählen (Lauf-Ausgabe)"
+                            dialog_title="Zielordner wählen (Lauf-Ausgabe)"
                         ),
                     ),
                     ft.OutlinedButton(
@@ -705,10 +721,10 @@ def _ui(page: ft.Page) -> None:
             # Originalschutz-Hinweis (dauerhaft sichtbar)
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=ft.Colors.BLUE_GREY_400),
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=MUTED_2),
                     ft.Text(
                         "Originale bleiben unverändert. Das Programm arbeitet mit Kopien.",
-                        color=ft.Colors.BLUE_GREY_600,
+                        color=MUTED,
                         size=13,
                     ),
                 ],
@@ -724,7 +740,7 @@ def _ui(page: ft.Page) -> None:
                 [
                     start_button,
                     ft.OutlinedButton(
-                        "Letzten Report öffnen",
+                        "Letzten Bericht öffnen",
                         icon=ft.Icons.DESCRIPTION,
                         on_click=on_open_latest_report,
                     ),
@@ -736,33 +752,33 @@ def _ui(page: ft.Page) -> None:
             # Status-Badge
             ft.Row([ft.Text("Status:", weight=ft.FontWeight.W_600), status_badge]),
 
-            # Abschnitt: Bericht / Ergebnis
+            # Abschnitt: Ergebnis
             ft.Divider(),
-            ft.Text("Bericht / Ergebnis", size=18, weight=ft.FontWeight.W_600),
+            ft.Text("Ergebnis", size=18, weight=ft.FontWeight.W_600),
 
             # Ausgabeordner-Pfad nach Laufabschluss (selektierbar, Monospace)
             run_dir_row,
 
-            # Technischer Verlauf (Log)
+            # Lauf-Protokoll (Log)
             ft.Text(
-                "Technischer Verlauf",
+                "Lauf-Protokoll",
                 size=14,
                 weight=ft.FontWeight.W_500,
-                color=ft.Colors.BLUE_GREY_700,
+                color=INK_2,
             ),
             log_output,
 
-            # Report-Pfad-Hinweis (Monospace)
+            # Bericht-Pfad-Hinweis (Monospace)
             latest_report_hint,
             pruefbedarf_box,
             ft.Container(
-                bgcolor=ft.Colors.BLUE_GREY_50,
-                border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                bgcolor=SURFACE_2,
+                border=ft.border.all(1, LINE),
                 border_radius=8,
                 padding=12,
                 content=ft.Column(
                     [
-                        ft.Text("Zusammenfassung", weight=ft.FontWeight.W_600),
+                        ft.Text("Ergebnis-Details", weight=ft.FontWeight.W_600),
                         summary_processed,
                         summary_documents,
                         summary_duplicates,
