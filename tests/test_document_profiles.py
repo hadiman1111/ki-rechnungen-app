@@ -146,6 +146,28 @@ class TestCompileDocumentProfiles:
         assert rule["naming_template"] == "{date}_{type_literal}"
         assert rule["confidence_threshold"] == pytest.approx(0.6)
 
+    def test_naming_schema_template_is_compiled(self) -> None:
+        folders = _make_folders(("f1", "contracts"), ("f2", "unklar"))
+        profiles = [
+            {
+                "id": "dp-schema",
+                "document_type": "document",
+                "target_folder_id": "f1",
+                "fallback_folder_id": "f2",
+                "classification_hints": ["vertrag"],
+                "naming_schema": {
+                    "template": "{date}_{type_literal}",
+                    "type_literal": "mietvertrag",
+                    "fallback_values": {"supplier": "unknown"},
+                },
+            }
+        ]
+        compiled, warnings = _compile_document_profiles(profiles, folders)
+        assert warnings == []
+        assert compiled[0]["naming_template"] == "{date}_{type_literal}"
+        assert compiled[0]["type_literal"] == "mietvertrag"
+        assert compiled[0]["fallback_values"] == {"supplier": "unknown"}
+
     def test_disabled_profile_is_silently_skipped(self) -> None:
         folders = _make_folders(("f1", "contracts"))
         profiles = [_make_doc_profile(id="dp-disabled", enabled=False, target_folder_id="f1")]

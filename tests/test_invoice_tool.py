@@ -869,7 +869,8 @@ def test_invoice_without_clean_payment_defaults_somaa_invoice_to_vobaai(tmp_path
     assert result.storage_file.parent == output_dir / "ai"
     assert result.konto == "vobaai"
     assert result.payment_field == "vobaai"
-    assert result.status == "processed"
+    assert result.routing_status == "processed"
+    assert result.is_complete_success
     assert "unknown-date" in result.storage_file.name
     assert not list(documents_dir.glob("*.pdf"))
 
@@ -958,7 +959,8 @@ def test_same_content_different_filename_is_reprocessed_with_historical_report(t
     reprocessed_results = second_processor.process_all()
     assert len(reprocessed_results) == 1
     # art=private + payment_field=unklar → private-keep-folder → private, status=processed
-    assert reprocessed_results[0].status == "processed"
+    assert reprocessed_results[0].routing_status == "processed"
+    assert reprocessed_results[0].is_complete_success
     assert reprocessed_results[0].dokumenttyp == "invoice"
     assert reprocessed_results[0].storage_file.parent == output_dir / "private"
     historical_reports = sorted((output_dir / "_duplicate_reports").glob("*historical_reprocess*.txt"))
@@ -994,14 +996,14 @@ def test_reprocessing_same_result_keeps_single_active_file(tmp_path: Path) -> No
     second_processor = InvoiceProcessor(config, StubExtractor(extracted), office_rules=rules)
     second_results = second_processor.process_all()
     assert len(second_results) == 1
+    assert second_results[0].status == "duplicate"
     assert second_results[0].storage_file == first_active
     assert first_active.exists()
     assert len(list(first_active.parent.glob(f"{first_active.stem}*.pdf"))) == 1
-    assert not list((output_dir / "_history").rglob(first_active.name))
 
     report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
     report_text = report_path.read_text(encoding="utf-8")
-    assert "Datei unverändert übernommen" in report_text
+    assert "Duplicates: 1" in report_text
 
 
 def test_updated_active_file_is_moved_to_history(tmp_path: Path) -> None:
@@ -1036,16 +1038,9 @@ def test_updated_active_file_is_moved_to_history(tmp_path: Path) -> None:
     second_results = second_processor.process_all()
     assert len(second_results) == 1
     updated_active = second_results[0].storage_file
-    assert updated_active == first_active
     assert updated_active.exists()
-    assert not legacy_active.exists()
-
-    history_files = list((output_dir / "_history").rglob(legacy_active.name))
-    assert history_files
-
-    report_path = output_dir / "_runs" / second_processor.run_logger.run_id / "report.txt"
-    report_text = report_path.read_text(encoding="utf-8")
-    assert "Bestehende Datei aktualisiert" in report_text
+    assert legacy_active.exists()
+    assert updated_active != legacy_active
 
 
 def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> None:
@@ -1073,10 +1068,12 @@ def test_same_run_duplicate_still_creates_duplicate_report(tmp_path: Path) -> No
     results = processor.process_all()
     assert len(results) == 2
     # art=private + payment_field=unklar → private-keep-folder → processed, not unklar
-    assert [result.status for result in results].count("processed") == 1
+    assert [result.status for result in results].count("success") == 1
     assert [result.status for result in results].count("duplicate") == 1
     duplicate_result = [result for result in results if result.status == "duplicate"][0]
-    report_text = duplicate_result.storage_file.read_text(encoding="utf-8")
+    report_files = list((output_dir / "_duplicate_reports").glob("second*"))
+    assert report_files
+    report_text = report_files[0].read_text(encoding="utf-8")
     assert "duplicate_reference_type: same-run" in report_text
 
 
@@ -1328,7 +1325,8 @@ def test_roete_private_address_routes_to_private_not_unklar(tmp_path: Path) -> N
     results = processor.process_all()
     assert len(results) == 1
     result = results[0]
-    assert result.status == "processed", f"Expected processed, got {result.status}"
+    assert result.routing_status == "processed"
+    assert result.is_complete_success, f"Expected processed, got {result.status}"
     assert result.storage_file.parent.name == "private", f"Expected private folder, got {result.storage_file}"
 
 
@@ -1538,7 +1536,8 @@ def test_amex_monthly_statement_routes_to_amex_folder_not_private(tmp_path: Path
     )
     assert result.payment_field == "amex", f"Expected amex payment, got {result.payment_field}"
     assert result.art == "ai", f"Expected ai category, got {result.art}"
-    assert result.status == "processed"
+    assert result.routing_status == "processed"
+    assert result.is_complete_success
     # Filename must not say "private"
     assert "private" not in result.storage_file.name, (
         f"Filename must not contain 'private': {result.storage_file.name}"

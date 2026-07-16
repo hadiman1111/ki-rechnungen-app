@@ -20,6 +20,7 @@ from invoice_tool.run import (
     build_run_config,
     create_run_dir,
     create_run_snapshot,
+    discover_source_pdfs,
 )
 
 
@@ -95,12 +96,13 @@ def test_create_run_snapshot_copies_pdfs_without_modifying_source(tmp_path: Path
     original_names = {p.name for p in source.iterdir() if p.is_file()}
     original_sizes = {p.name: p.stat().st_size for p in source.iterdir() if p.is_file()}
 
-    snapshot_dir = create_run_snapshot(source, run_dir)
+    snapshot_dir, mapping = create_run_snapshot(source, run_dir)
 
     # Snapshot exists and contains the PDFs
     assert snapshot_dir.exists()
     snapshot_names = {p.name for p in snapshot_dir.iterdir() if p.is_file()}
     assert snapshot_names == original_names
+    assert len(mapping) == len(original_names)
 
     # Originals in source are still present and unchanged
     source_names_after = {p.name for p in source.iterdir() if p.is_file()}
@@ -116,7 +118,7 @@ def test_create_run_snapshot_returns_snapshot_dir_path(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
 
-    snapshot_dir = create_run_snapshot(source, run_dir)
+    snapshot_dir, _mapping = create_run_snapshot(source, run_dir)
 
     assert snapshot_dir == run_dir / "input_snapshot"
     assert snapshot_dir.is_dir()
@@ -138,7 +140,7 @@ def test_create_run_snapshot_excludes_non_pdfs(tmp_path: Path) -> None:
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    snapshot_dir = create_run_snapshot(source, run_dir)
+    snapshot_dir, _mapping = create_run_snapshot(source, run_dir)
 
     snapshot_files = {p.name for p in snapshot_dir.iterdir() if p.is_file()}
     assert "invoice.pdf" in snapshot_files
@@ -215,11 +217,12 @@ def test_build_run_config_isolates_paths(tmp_path: Path) -> None:
     run_dir.mkdir()
     snapshot_dir = run_dir / "input_snapshot"
     snapshot_dir.mkdir()
+    user_output = tmp_path / "user-output"
 
-    run_config = build_run_config(base_config, run_dir, snapshot_dir)
+    run_config = build_run_config(base_config, run_dir, snapshot_dir, user_output)
 
     assert run_config.eingangsordner == snapshot_dir
-    assert run_config.ausgangsordner == run_dir / "output"
+    assert run_config.ausgangsordner == user_output.resolve()
     assert run_config.runtime_ordner == run_dir / "runtime"
     assert run_config.log_ordner == run_dir / "logs"
 
@@ -311,20 +314,34 @@ def test_validate_source_contains_no_pdfs_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_run_once_creates_expected_structure(tmp_path: Path) -> None:
-    """run_once must create run_dir/input_snapshot, /output, /runtime, /logs
-    when InvoiceProcessor is mocked to avoid real API calls."""
+def test_discover_source_pdfs_ignores_archiv_folder(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _make_pdf(source / "active.pdf")
+    archiv = source / "archiv"
+    archiv.mkdir()
+    _make_pdf(archiv / "old.pdf")
+
+    discovered = discover_source_pdfs(source)
+    assert [p.name for p in discovered] == ["active.pdf"]
+
+
+def test_run_once_creates_expected_structure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_once must create technical run dir with snapshot/runtime/logs under Application Support."""
     from invoice_tool.run import run_once
+
+    support = tmp_path / "Application Support" / "KI-Rechnungen"
+    support.mkdir(parents=True)
+    monkeypatch.setattr("invoice_tool.app_paths.user_support_dir", lambda: support)
 
     config_path = _make_run_config_path(tmp_path)
 
-    # Source: a separate folder with PDFs
     source = tmp_path / "source"
     source.mkdir()
     _make_pdf(source / "test1.pdf")
     _make_pdf(source / "test2.pdf")
 
-    output_base = tmp_path / "runs"
+    user_output = tmp_path / "user-output"
 
     with patch("invoice_tool.run.InvoiceProcessor") as mock_processor_cls:
         mock_processor_cls.return_value.process_all.return_value = []
@@ -333,23 +350,30 @@ def test_run_once_creates_expected_structure(tmp_path: Path) -> None:
                 with patch("invoice_tool.run.ExtractionCoordinator"):
                     run_dir = run_once(
                         source=source,
-                        output=output_base,
+                        output=user_output,
                         config_path=config_path,
                     )
 
-    assert run_dir.exists(), "Run directory must be created"
-    assert (run_dir / "input_snapshot").is_dir(), "input_snapshot must exist"
-    assert (run_dir / "input_snapshot" / "test1.pdf").exists(), "PDF must be in snapshot"
-    assert (run_dir / "input_snapshot" / "test2.pdf").exists(), "PDF must be in snapshot"
+    assert run_dir.exists()
+    assert run_dir.parent == support / "runs"
+    assert (run_dir / "input_snapshot").is_dir()
+    assert (run_dir / "input_snapshot" / "test1.pdf").exists()
+    assert (run_dir / "input_snapshot" / "test2.pdf").exists()
+    assert (run_dir / "runtime").is_dir()
+    assert (run_dir / "logs").is_dir()
+    assert (run_dir / "output_mapping.json").is_file()
 
-    # Originals unchanged
-    assert (source / "test1.pdf").exists(), "Original must not be moved"
-    assert (source / "test2.pdf").exists(), "Original must not be moved"
+    assert (source / "test1.pdf").exists()
+    assert (source / "test2.pdf").exists()
 
 
-def test_run_once_copies_profile_snapshot(tmp_path: Path) -> None:
+def test_run_once_copies_profile_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When --profile is given, profile must be copied to run_dir/profile_snapshot.json."""
     from invoice_tool.run import run_once
+
+    support = tmp_path / "Application Support" / "KI-Rechnungen"
+    support.mkdir(parents=True)
+    monkeypatch.setattr("invoice_tool.app_paths.user_support_dir", lambda: support)
 
     config_path = _make_run_config_path(tmp_path)
 
@@ -360,7 +384,7 @@ def test_run_once_copies_profile_snapshot(tmp_path: Path) -> None:
     profile = tmp_path / "my_profile.json"
     profile.write_text(json.dumps({"schema_version": "1.0", "profile_name": "Test"}))
 
-    output_base = tmp_path / "runs"
+    user_output = tmp_path / "user-output"
 
     with patch("invoice_tool.run.InvoiceProcessor") as mock_cls:
         mock_cls.return_value.process_all.return_value = []
@@ -369,7 +393,7 @@ def test_run_once_copies_profile_snapshot(tmp_path: Path) -> None:
                 with patch("invoice_tool.run.ExtractionCoordinator"):
                     run_dir = run_once(
                         source=source,
-                        output=output_base,
+                        output=user_output,
                         config_path=config_path,
                         profile_path=profile,
                     )

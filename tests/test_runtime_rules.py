@@ -21,6 +21,13 @@ from invoice_tool.config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_application_support(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    support = tmp_path / "Application Support" / "KI-Rechnungen"
+    support.mkdir(parents=True)
+    monkeypatch.setattr("invoice_tool.app_paths.user_support_dir", lambda: support)
+
+
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers
 # ---------------------------------------------------------------------------

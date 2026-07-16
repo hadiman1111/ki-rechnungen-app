@@ -207,13 +207,18 @@ def test_privat_folder_name_rejected() -> None:
 
 
 @skip_if_no_jsonschema
-def test_unknown_folder_id_rejected() -> None:
-    """Ein unbekannter folder id-Wert muss abgelehnt werden."""
+def test_custom_folder_id_is_allowed() -> None:
+    """Nutzerdefinierte folder-IDs sind erlaubt (CFG-001)."""
     schema = _load_schema()
-    bad = _minimal_valid()
-    bad["folders"] = [{"id": "kasse", "label": "Kasse", "folder_name": "kasse"}]
-    with pytest.raises(ValidationError):
-        validate(instance=bad, schema=schema)
+    doc = _minimal_valid()
+    doc["folders"] = [
+        {
+            "id": "kasse",
+            "label": "Kasse",
+            "destination": {"mode": "relative_to_output_root", "path": "kasse"},
+        }
+    ]
+    validate(instance=doc, schema=schema)
 
 
 # ---------------------------------------------------------------------------

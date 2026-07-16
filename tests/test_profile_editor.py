@@ -474,3 +474,30 @@ class TestSaveProfileAtomic:
             save_profile_atomic(p, bad_profile)
 
         assert p.read_text(encoding="utf-8") == original_text
+
+
+# ---------------------------------------------------------------------------
+# Smoke-Tests: Modulimport
+# ---------------------------------------------------------------------------
+
+
+class TestUiProfileDialogImport:
+    def test_ui_profile_dialog_importable(self) -> None:
+        """Stellt sicher, dass ui_profile_dialog ohne Fehler importiert werden kann.
+
+        Prüft, dass Flet, profile_editor und alle Typen korrekt eingebunden sind.
+        """
+        import invoice_tool.ui_profile_dialog as mod  # noqa: F401
+
+        assert hasattr(mod, "show_profile_details_dialog")
+        assert hasattr(mod, "show_edit_document_profile_dialog")
+
+    def test_show_profile_details_dialog_is_callable(self) -> None:
+        from invoice_tool.ui_profile_dialog import show_profile_details_dialog
+
+        assert callable(show_profile_details_dialog)
+
+    def test_show_edit_document_profile_dialog_is_callable(self) -> None:
+        from invoice_tool.ui_profile_dialog import show_edit_document_profile_dialog
+
+        assert callable(show_edit_document_profile_dialog)
