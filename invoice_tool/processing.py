@@ -7,6 +7,32 @@ from pathlib import Path
 from invoice_tool.classification import classify_document_type
 from invoice_tool.config import load_office_rules
 from invoice_tool.extraction import ExtractionCoordinator
+from invoice_tool.folder_destination import (
+    resolve_configured_target_directory,
+    resolve_routing_folder_key,
+)
+from invoice_tool.file_lifecycle import (
+    LifecycleError,
+    LifecycleRecord,
+    OutputMappingStore,
+    RecoveryRecordStore,
+    STATUS_ARCHIVE_FAILED,
+    STATUS_COLLISION_RENAMED,
+    STATUS_DUPLICATE,
+    STATUS_OUTPUT_FAILED,
+    STATUS_RECOVERY_REQUIRED,
+    STATUS_SUCCESS,
+    archive_original_safely,
+    archive_same_run_duplicate,
+    find_recoverable_verified_output,
+    make_item_id,
+    publish_output_atomically,
+    resolve_safe_target_directory,
+    sanitize_final_filename,
+    validate_input_file_safety,
+    validate_output_directory_safety,
+    verify_output_file,
+)
 from invoice_tool.filename_schema import build_filename
 from invoice_tool.logging_utils import RunLogger
 from invoice_tool.models import (
@@ -23,6 +49,10 @@ from invoice_tool.normalization import (
     normalize_invoice_with_fallbacks,
     sanitize_document_name,
 )
+from invoice_tool.recipient_guard import (
+    apply_recipient_guard_to_routing,
+    evaluate_recipient_guard,
+)
 from invoice_tool.routing import (
     apply_final_assignment,
     determine_business_context,
@@ -31,6 +61,7 @@ from invoice_tool.routing import (
     resolve_account,
     resolve_priority_routing,
 )
+from invoice_tool.supplier_routing import resolve_supplier_profile_routing
 from invoice_tool.state import (
     DirectoryLock,
     ensure_runtime_dirs,
@@ -38,6 +69,15 @@ from invoice_tool.state import (
     load_processed_state,
     path_token,
     save_processed_state,
+)
+from invoice_tool.target_routing import (
+    TargetRoutingError,
+    build_routing_metadata,
+    build_runtime_filename,
+    extract_routing_field_value,
+    load_target_routing_config,
+    profile_uses_cfg001_runtime_routing,
+    resolve_runtime_target_directory,
 )
 from invoice_tool.trace import DecisionTrace, TraceWriter, mask_sensitive
 
@@ -68,6 +108,14 @@ class InvoiceProcessor:
         office_rules: OfficeRules | None = None,
         logger: RunLogger | None = None,
         document_profiles: list[DocumentProfileRule] | None = None,
+        folder_destinations: dict[str, dict[str, str]] | None = None,
+        original_source_dir: Path | None = None,
+        snapshot_to_original: dict[Path, Path] | None = None,
+        technical_run_dir: Path | None = None,
+        mapping_store: OutputMappingStore | None = None,
+        active_profile_id: str | None = None,
+        target_routing_config: dict | None = None,
+        profile_data: dict | None = None,
     ) -> None:
         self.config = config
         self.office_rules = office_rules or load_office_rules(
@@ -77,8 +125,31 @@ class InvoiceProcessor:
         self.preset = self.office_rules.preset
         self.extractor = extractor
         self.run_logger = logger or RunLogger(self.config.log_ordner)
-        # None and [] both mean "no profiles loaded" → use existing _process_document().
         self.document_profiles: list[DocumentProfileRule] = document_profiles or []
+        self.folder_destinations: dict[str, dict[str, str]] = dict(
+            folder_destinations or {}
+        )
+        self.original_source_dir = (original_source_dir or config.eingangsordner).resolve()
+        self.snapshot_to_original = {
+            snapshot.resolve(): original.resolve()
+            for snapshot, original in (snapshot_to_original or {}).items()
+        }
+        self.technical_run_dir = technical_run_dir.resolve() if technical_run_dir else None
+        self.mapping_store = mapping_store
+        self.active_profile_id = active_profile_id
+        self.profile_data = profile_data
+        if target_routing_config is not None:
+            self.target_routing_config = target_routing_config
+        elif profile_data is not None and profile_uses_cfg001_runtime_routing(profile_data):
+            self.target_routing_config = load_target_routing_config(profile_data)
+        else:
+            self.target_routing_config = None
+        self.recovery_store = (
+            RecoveryRecordStore(self.technical_run_dir)
+            if self.technical_run_dir is not None
+            else None
+        )
+        self._item_counter = 0
 
         self.config.ausgangsordner.mkdir(parents=True, exist_ok=True)
         self.preset.dokumente.basis_pfad.mkdir(parents=True, exist_ok=True)
@@ -90,6 +161,360 @@ class InvoiceProcessor:
         self.run_archive_dir: Path | None = None
         self.run_seen_fingerprints: dict[str, Path] = {}
         self._trace_writer = TraceWriter()
+
+    def _next_item_id(self) -> str:
+        self._item_counter += 1
+        return make_item_id(self._item_counter)
+
+    def _begin_lifecycle_record(
+        self,
+        *,
+        pdf_path: Path,
+        item_id: str,
+        target_folder: Path,
+        routing_metadata: dict | None = None,
+    ) -> LifecycleRecord:
+        routing_meta = routing_metadata or {}
+        original_path = self._resolve_original_path(pdf_path)
+        original_hash, original_size = fingerprint_file(pdf_path), pdf_path.stat().st_size
+        record = LifecycleRecord(
+            run_id=self.run_logger.run_id,
+            item_id=item_id,
+            original_path=str(original_path),
+            original_filename=original_path.name,
+            original_sha256=original_hash,
+            original_size=original_size,
+            configured_output_root=str(self.config.ausgangsordner.resolve()),
+            resolved_target_directory=str(target_folder.resolve()),
+            profile_id=self.active_profile_id,
+            rule_id=routing_meta.get("rule_id"),
+            routing_field=routing_meta.get("routing_field"),
+            raw_routing_value=routing_meta.get("raw_routing_value"),
+            normalized_routing_value=routing_meta.get("normalized_routing_value"),
+            target_id=routing_meta.get("target_id"),
+            target_display_name=routing_meta.get("target_display_name"),
+            matched_routing_value=routing_meta.get("matched_routing_value"),
+            destination_type=routing_meta.get("destination_type"),
+            destination_mode=routing_meta.get("destination_mode"),
+            configured_destination_path=routing_meta.get("configured_destination_path"),
+            overrides_used=bool(routing_meta.get("overrides_used", False)),
+            fallback_used=bool(routing_meta.get("fallback_used", False)),
+        )
+        record.mark_processing()
+        if self.mapping_store is not None:
+            self.mapping_store.add_or_replace(record)
+            self.mapping_store.flush()
+        return record
+
+    def _persist_lifecycle_record(self, record: LifecycleRecord) -> None:
+        if self.mapping_store is not None:
+            self.mapping_store.add_or_replace(record)
+            self.mapping_store.flush()
+
+    def _forbidden_output_roots(self) -> tuple[Path, ...]:
+        return (
+            self.config.eingangsordner.resolve(),
+            (self.original_source_dir / self.preset.archivierung.basis_ordnername).resolve(),
+        )
+
+    def _publish_and_archive(
+        self,
+        *,
+        pdf_path: Path,
+        fingerprint: str,
+        target_folder: Path,
+        filename: str,
+        routing_status: str,
+        dokumenttyp: str,
+        extracted,
+        normalized: NormalizedInvoice | None = None,
+        routing=None,
+        street_key: str | None = None,
+        normalization_warnings: list[str] | None = None,
+        historical_match: dict | None = None,
+        trace_kwargs: dict | None = None,
+        routing_metadata: dict | None = None,
+    ) -> ProcessResult:
+        item_id = self._next_item_id()
+        safe_folder = target_folder.resolve()
+        routing_meta = routing_metadata or {}
+        if self._path_is_within(safe_folder, self.config.ausgangsordner):
+            validate_output_directory_safety(safe_folder, self.config.ausgangsordner.resolve())
+
+        try:
+            original_path = self._resolve_original_path(pdf_path)
+            validate_input_file_safety(original_path, self.original_source_dir)
+            if pdf_path.resolve() != original_path.resolve():
+                validate_input_file_safety(pdf_path, self.config.eingangsordner)
+        except LifecycleError as exc:
+            record = self._begin_lifecycle_record(
+                pdf_path=pdf_path,
+                item_id=item_id,
+                target_folder=safe_folder,
+                routing_metadata=routing_meta,
+            )
+            record.mark_failure(code=exc.code, message=str(exc), status=exc.status)
+            self._persist_lifecycle_record(record)
+            raise ProcessorError(str(exc)) from exc
+
+        record = self._begin_lifecycle_record(
+            pdf_path=pdf_path,
+            item_id=item_id,
+            target_folder=safe_folder,
+            routing_metadata=routing_meta,
+        )
+        content_hash = record.original_sha256
+        safe_filename = sanitize_final_filename(filename)
+
+        recovered = find_recoverable_verified_output(
+            original_hash=content_hash,
+            target_dir=safe_folder,
+            desired_filename=safe_filename,
+            mapping_store=self.mapping_store,
+        )
+
+        archive_target: Path | None = None
+        output_target: Path
+        output_action: str
+        lifecycle_status: str
+        verified_output = False
+        error_code: str | None = None
+        error_message: str | None = None
+
+        try:
+            if recovered is not None:
+                publish = type(
+                    "RecoveredPublish",
+                    (),
+                    {
+                        "final_path": recovered,
+                        "lifecycle_status": STATUS_SUCCESS,
+                        "output_action": "recovered_existing",
+                        "verified": True,
+                        "final_sha256": content_hash,
+                        "final_size": recovered.stat().st_size,
+                        "duplicate_of": None,
+                    },
+                )()
+            else:
+                publish = publish_output_atomically(
+                    source_pdf=pdf_path,
+                    target_dir=safe_folder,
+                    desired_filename=safe_filename,
+                    content_hash=content_hash,
+                    run_id=self.run_logger.run_id,
+                    item_id=item_id,
+                    output_root=self.config.ausgangsordner.resolve(),
+                    forbid_under=self._forbidden_output_roots(),
+                    enforce_output_containment=self._path_is_within(
+                        safe_folder,
+                        self.config.ausgangsordner,
+                    ),
+                )
+
+            record.apply_publish(publish)
+            self._persist_lifecycle_record(record)
+
+            output_target = publish.final_path
+            output_action = publish.output_action
+            lifecycle_status = publish.lifecycle_status
+            verified_output = publish.verified
+
+            if lifecycle_status == STATUS_DUPLICATE:
+                self._log_file_event(
+                    filename=pdf_path.name,
+                    dokumenttyp=dokumenttyp,
+                    supplier=getattr(normalized, "supplier", None) if normalized else None,
+                    date=getattr(normalized, "invoice_date", None) if normalized else None,
+                    amount=getattr(normalized, "amount", None) if normalized else None,
+                    account=getattr(routing, "konto", None) if routing else None,
+                    payment_field=getattr(routing, "payment_field", None) if routing else None,
+                    street=street_key,
+                    routing_decision=f"duplicate: existing output {output_target}",
+                    storage_path=output_target,
+                    archive_path=None,
+                    fallback_used=bool(extracted.fallback_used),
+                    preset_used=self.office_rules.active_preset,
+                    status=STATUS_DUPLICATE,
+                    output_action=output_action,
+                    error=None,
+                )
+                return ProcessResult(
+                    input_file=pdf_path,
+                    dokumenttyp=dokumenttyp,
+                    status=STATUS_DUPLICATE,
+                    storage_file=output_target,
+                    archive_file=None,
+                    used_extractor=extracted.source_method,
+                    fallback_used=bool(extracted.fallback_used),
+                    fingerprint=fingerprint,
+                    supplier=getattr(normalized, "supplier", None) if normalized else None,
+                    date=getattr(normalized, "invoice_date", None) if normalized else None,
+                    amount=getattr(normalized, "amount", None) if normalized else None,
+                    art=getattr(routing, "art", None) if routing else None,
+                    konto=getattr(routing, "konto", None) if routing else None,
+                    payment_field=getattr(routing, "payment_field", None) if routing else None,
+                    street=street_key,
+                    original_file=self._resolve_original_path(pdf_path),
+                    verified_output=False,
+                    item_id=item_id,
+                    lifecycle_status=STATUS_DUPLICATE,
+                    output_action=output_action,
+                    routing_status=routing_status,
+                    lifecycle_record=record.to_mapping_dict(),
+                )
+
+            if not verified_output:
+                raise LifecycleError(
+                    "Output wurde nicht verifiziert",
+                    code="output_unverified",
+                    status=STATUS_OUTPUT_FAILED,
+                )
+
+            try:
+                archive_dir = self._ensure_run_archive_dir()
+                original_path = self._resolve_original_path(pdf_path)
+                archive_target = archive_original_safely(
+                    original_path=original_path,
+                    archive_dir=archive_dir,
+                    expected_hash=content_hash,
+                )
+                archived_hash, archived_size = verify_output_file(archive_target)
+                record.mark_success(archive_target, archived_hash, archived_size)
+                lifecycle_status = (
+                    STATUS_COLLISION_RENAMED
+                    if record.status == STATUS_COLLISION_RENAMED
+                    else STATUS_SUCCESS
+                )
+                record.status = lifecycle_status
+                self._persist_lifecycle_record(record)
+            except LifecycleError as exc:
+                record.mark_failure(code=exc.code, message=str(exc), status=STATUS_ARCHIVE_FAILED)
+                self._persist_lifecycle_record(record)
+                if self.recovery_store is not None:
+                    self.recovery_store.add(
+                        {
+                            "item_id": item_id,
+                            "original_path": record.original_path,
+                            "original_sha256": record.original_sha256,
+                            "final_output_path": record.final_output_path,
+                            "final_sha256": record.final_sha256,
+                            "status": STATUS_RECOVERY_REQUIRED,
+                            "error_code": exc.code,
+                            "error_message": str(exc),
+                        }
+                    )
+                error_code = exc.code
+                error_message = str(exc)
+                lifecycle_status = STATUS_ARCHIVE_FAILED
+                verified_output = True
+
+            if lifecycle_status in {STATUS_SUCCESS, STATUS_COLLISION_RENAMED}:
+                self._remember_processed(
+                    fingerprint=fingerprint,
+                    dokumenttyp=dokumenttyp,
+                    status=routing_status,
+                    normalized=normalized,
+                    output_target=output_target,
+                    archive_target=archive_target,
+                    used_extractor=extracted.source_method,
+                    fallback_used=bool(extracted.fallback_used),
+                    konto=getattr(routing, "konto", None) if routing else None,
+                    payment_field=getattr(routing, "payment_field", None) if routing else None,
+                    street=street_key,
+                )
+                self.run_seen_fingerprints[fingerprint] = output_target
+
+            self._log_output_size(output_target)
+            historical_report = None
+            if historical_match is not None:
+                historical_report = self._create_historical_reprocessing_report(
+                    input_file=pdf_path,
+                    fingerprint=fingerprint,
+                    current_storage=output_target,
+                    current_archive=archive_target,
+                    historical=historical_match,
+                )
+
+            routing_decision = trace_kwargs.get("routing_decision") if trace_kwargs else None
+            if historical_report is not None and routing_decision:
+                routing_decision += f"; Historischer Treffer erneut verarbeitet, Report={historical_report}"
+
+            self._log_file_event(
+                filename=pdf_path.name,
+                dokumenttyp=dokumenttyp,
+                supplier=getattr(normalized, "supplier", None) if normalized else None,
+                date=getattr(normalized, "invoice_date", None) if normalized else None,
+                amount=getattr(normalized, "amount", None) if normalized else None,
+                account=getattr(routing, "konto", None) if routing else None,
+                payment_field=getattr(routing, "payment_field", None) if routing else None,
+                street=street_key,
+                routing_decision=routing_decision,
+                storage_path=output_target,
+                archive_path=archive_target,
+                fallback_used=bool(extracted.fallback_used),
+                preset_used=self.office_rules.active_preset,
+                status=lifecycle_status,
+                output_action=output_action,
+                error=error_message,
+            )
+
+            if trace_kwargs:
+                trace_payload = dict(trace_kwargs)
+                trace_payload.pop("routing_decision", None)
+                trace_payload["final_filename"] = output_target.name
+                trace_payload["target_path"] = str(output_target)
+                trace_payload["archive_path"] = str(archive_target) if archive_target else None
+                self._trace_writer.record(DecisionTrace(**trace_payload))
+
+            return ProcessResult(
+                input_file=pdf_path,
+                dokumenttyp=dokumenttyp,
+                status=lifecycle_status,
+                storage_file=output_target,
+                archive_file=archive_target,
+                used_extractor=extracted.source_method,
+                fallback_used=bool(extracted.fallback_used),
+                fingerprint=fingerprint,
+                supplier=getattr(normalized, "supplier", None) if normalized else None,
+                date=getattr(normalized, "invoice_date", None) if normalized else None,
+                amount=getattr(normalized, "amount", None) if normalized else None,
+                art=getattr(routing, "art", None) if routing else None,
+                konto=getattr(routing, "konto", None) if routing else None,
+                payment_field=getattr(routing, "payment_field", None) if routing else None,
+                street=street_key,
+                original_file=self._resolve_original_path(pdf_path),
+                verified_output=verified_output,
+                item_id=item_id,
+                lifecycle_status=lifecycle_status,
+                output_action=output_action,
+                routing_status=routing_status,
+                error_code=error_code,
+                error_message=error_message,
+                lifecycle_record=record.to_mapping_dict(),
+            )
+        except LifecycleError as exc:
+            record.mark_failure(code=exc.code, message=str(exc), status=exc.status)
+            self._persist_lifecycle_record(record)
+            self._log_file_event(
+                filename=pdf_path.name,
+                dokumenttyp=dokumenttyp,
+                supplier=None,
+                date=None,
+                amount=None,
+                account=None,
+                payment_field=None,
+                street=None,
+                routing_decision=str(exc),
+                storage_path=None,
+                archive_path=None,
+                fallback_used=bool(extracted.fallback_used),
+                preset_used=self.office_rules.active_preset,
+                status=exc.status,
+                output_action=None,
+                error=str(exc),
+            )
+            raise ProcessorError(f"Fehler bei der Verarbeitung von {pdf_path.name}: {exc}") from exc
 
     def process_all(self) -> list[ProcessResult]:
         self.run_archive_dir = None
@@ -115,12 +540,12 @@ class InvoiceProcessor:
             except ProcessorError as exc:
                 self.log(str(exc))
         report_path = self.run_logger.write_run_report(
-            self.config.ausgangsordner,
+            self._report_root(),
             preset=self.office_rules.active_preset,
             input_count=len(pdf_files),
         )
         self.log(f"Run-Report geschrieben: {report_path}")
-        trace_dir = self.config.ausgangsordner / "_runs" / self.run_logger.run_id
+        trace_dir = self._report_root() / "_runs" / self.run_logger.run_id
         jsonl_path, csv_path = self._trace_writer.flush(trace_dir)
         self.log(f"Decision-Trace geschrieben: {jsonl_path}")
         self.log(f"Routing-Summary geschrieben: {csv_path}")
@@ -149,7 +574,15 @@ class InvoiceProcessor:
 
                 extracted = self.extractor.extract(pdf_path, log=self.log)
                 classification = classify_document_type(extracted, self.preset)
-                if classification.dokumenttyp == "invoice":
+                if self.target_routing_config is not None:
+                    result = self._process_with_target_routing(
+                        pdf_path=pdf_path,
+                        fingerprint=fingerprint,
+                        extracted=extracted,
+                        classification=classification,
+                        historical_match=historical_match,
+                    )
+                elif classification.dokumenttyp == "invoice":
                     result = self._process_invoice(
                         pdf_path=pdf_path,
                         fingerprint=fingerprint,
@@ -264,18 +697,60 @@ class InvoiceProcessor:
         art, art_reason = determine_business_context(extracted, account_decision, self.preset, street_key)
         payment_decision = detect_payment_method(extracted, self.preset)
 
-        priority_routing = resolve_priority_routing(extracted, account_decision, street_key, self.preset)
-        if priority_routing is not None:
-            routing = priority_routing
-            art_reason = f"{art_reason}; Prioritaetsregel: {priority_routing.begruendung}"
+        supplier_match = resolve_supplier_profile_routing(extracted, self.preset, self.profile_data)
+        supplier_trace: dict | None = None
+        priority_routing = None
+
+        if supplier_match is not None and supplier_match.exclusive:
+            routing = supplier_match.routing
+            supplier_trace = {
+                "source": supplier_match.source,
+                "rule": supplier_match.trace_rule or supplier_match.rule_id,
+                "economic_assignment": supplier_match.economic_assignment,
+                "payment_method": routing.payment_field,
+                "payment_reference": supplier_match.payment_reference,
+                "target_folder": routing.zielordner,
+                "value_not_extracted_from_document": supplier_match.value_not_extracted_from_document,
+            }
+            art = routing.art
+            art_reason = routing.begruendung
         else:
-            routing = apply_final_assignment(
-                art=art,
-                payment_decision=payment_decision,
-                account_decision=account_decision,
+            priority_routing = resolve_priority_routing(extracted, account_decision, street_key, self.preset)
+            if priority_routing is not None:
+                routing = priority_routing
+                art_reason = f"{art_reason}; Prioritaetsregel: {priority_routing.begruendung}"
+            else:
+                routing = apply_final_assignment(
+                    art=art,
+                    payment_decision=payment_decision,
+                    account_decision=account_decision,
+                    street_key=street_key,
+                    preset=self.preset,
+                )
+
+            guard = evaluate_recipient_guard(
+                extracted,
+                self.preset,
+                profile_data=self.profile_data,
+                proposed_art=routing.art,
                 street_key=street_key,
-                preset=self.preset,
+                priority_routing=priority_routing,
+                art_reason=art_reason,
             )
+            routing = apply_recipient_guard_to_routing(
+                routing,
+                guard,
+                self.preset,
+                street_key=street_key,
+            )
+            if guard.outcome == "force_unklar":
+                art = routing.art
+                art_reason = f"{art_reason}; Recipient-Guard: {guard.reason}"
+
+            if supplier_match is not None and not supplier_match.exclusive:
+                routing = supplier_match.routing
+                art = routing.art
+                art_reason = routing.begruendung
 
         filename = build_filename(
             self.preset.filename_schema,
@@ -289,71 +764,9 @@ class InvoiceProcessor:
             },
         )
 
-        # Defensive guard: routing.zielordner must never be empty.
-        # If it is (due to a misconfigured rule), fall back to the art folder,
-        # then to "unklar", to prevent creating an unnamed or root-level folder.
         folder_name = routing.zielordner or routing.art or "unklar"
-        target_folder = self.config.ausgangsordner / folder_name
-        target_folder.mkdir(parents=True, exist_ok=True)
-        output_target, output_action = self._write_active_output(
-            pdf_path,
-            target_folder / filename,
-            historical_match=historical_match,
-        )
+        target_folder = self._resolve_routing_target_folder(folder_name)
 
-        archive_target = self._archive_original(pdf_path)
-        self._remember_processed(
-            fingerprint=fingerprint,
-            dokumenttyp="invoice",
-            status=routing.status,
-            normalized=normalized,
-            output_target=output_target,
-            archive_target=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
-            konto=routing.konto,
-            payment_field=routing.payment_field,
-            street=street_key,
-        )
-        self.run_seen_fingerprints[fingerprint] = output_target
-        self._log_output_size(output_target)
-        historical_report = None
-        if historical_match is not None:
-            historical_report = self._create_historical_reprocessing_report(
-                input_file=pdf_path,
-                fingerprint=fingerprint,
-                current_storage=output_target,
-                current_archive=archive_target,
-                historical=historical_match,
-            )
-        self._log_file_event(
-            filename=pdf_path.name,
-            dokumenttyp="invoice",
-            supplier=normalized.supplier,
-            date=normalized.invoice_date,
-            amount=normalized.amount,
-            account=routing.konto,
-            payment_field=routing.payment_field,
-            street=street_key,
-            routing_decision=(
-                f"{routing.zielordner} ({routing.begruendung}); Klassifikation={classification.begruendung}; "
-                f"Art={routing.art} ({art_reason}); Payment={routing.payment_field} ({payment_decision.begruendung}); "
-                f"Normalisierung={'; '.join(normalization_warnings) if normalization_warnings else 'ok'}"
-                + (
-                    f"; Historischer Treffer erneut verarbeitet, Report={historical_report}"
-                    if historical_report is not None
-                    else ""
-                )
-            ),
-            storage_path=output_target,
-            archive_path=archive_target,
-            fallback_used=bool(extracted.fallback_used),
-            preset_used=self.office_rules.active_preset,
-            status=routing.status,
-            output_action=output_action,
-            error=None,
-        )
-        # Determine which output_route_rule was used (best-effort: match by folder+status)
         output_route_rule_name: str | None = None
         for orr in self.preset.routing.output_route_rules:
             folder_match = not orr.art_any or routing.art in set(orr.art_any)
@@ -362,74 +775,222 @@ class InvoiceProcessor:
                 output_route_rule_name = orr.name
                 break
 
-        self._trace_writer.record(
-            DecisionTrace(
-                run_id=self.run_logger.run_id,
-                original_filename=pdf_path.name,
-                final_filename=output_target.name,
-                source_path=str(pdf_path),
-                target_path=str(output_target),
-                archive_path=str(archive_target),
-                document_type="invoice",
-                classification_reason=mask_sensitive(classification.begruendung),
-                extracted_invoice_date=normalized.invoice_date,
-                extracted_supplier=mask_sensitive(normalized.supplier),
-                extracted_amount=normalized.amount,
-                extraction_method=extracted.source_method,
-                fallback_used=bool(extracted.fallback_used),
-                detected_street_key=street_key,
-                business_context_art=art,
-                business_context_reason=mask_sensitive(art_reason),
-                account_konto=account_decision.konto,
-                account_payment_field=account_decision.payment_field,
-                account_match_source=account_decision.begruendung.split(":")[0].strip()
+        routing_decision = (
+            f"{routing.zielordner} ({routing.begruendung}); Klassifikation={classification.begruendung}; "
+            f"Art={routing.art} ({art_reason}); Payment={routing.payment_field} ({payment_decision.begruendung}); "
+            f"Normalisierung={'; '.join(normalization_warnings) if normalization_warnings else 'ok'}"
+        )
+        if supplier_trace is not None:
+            routing_decision += f"; SupplierProfileRule={supplier_trace}"
+
+        return self._publish_and_archive(
+            pdf_path=pdf_path,
+            fingerprint=fingerprint,
+            target_folder=target_folder,
+            filename=filename,
+            routing_status=routing.status,
+            dokumenttyp="invoice",
+            extracted=extracted,
+            normalized=normalized,
+            routing=routing,
+            street_key=street_key,
+            normalization_warnings=normalization_warnings,
+            historical_match=historical_match,
+            routing_metadata=self._routing_metadata_for_folder_key(
+                folder_name,
+                rule_id=(
+                    _extract_rule_name(priority_routing.begruendung)
+                    if priority_routing is not None
+                    else _extract_rule_name(routing.begruendung)
+                ),
+            ),
+            trace_kwargs={
+                "run_id": self.run_logger.run_id,
+                "original_filename": pdf_path.name,
+                "final_filename": sanitize_final_filename(filename),
+                "source_path": str(pdf_path),
+                "target_path": str(target_folder / sanitize_final_filename(filename)),
+                "archive_path": "",
+                "document_type": "invoice",
+                "classification_reason": mask_sensitive(classification.begruendung),
+                "extracted_invoice_date": normalized.invoice_date,
+                "extracted_supplier": mask_sensitive(normalized.supplier),
+                "extracted_amount": normalized.amount,
+                "extraction_method": extracted.source_method,
+                "fallback_used": bool(extracted.fallback_used),
+                "detected_street_key": street_key,
+                "business_context_art": art,
+                "business_context_reason": mask_sensitive(art_reason),
+                "account_konto": account_decision.konto,
+                "account_payment_field": account_decision.payment_field,
+                "account_match_source": account_decision.begruendung.split(":")[0].strip()
                 if ":" in account_decision.begruendung
                 else None,
-                account_match_reason=mask_sensitive(account_decision.begruendung),
-                account_matched_rule=account_decision.matched_rule,
-                detected_payment_method=payment_decision.payment_method,
-                payment_rule_name=_extract_rule_name(payment_decision.begruendung),
-                payment_explicit=payment_decision.explicit,
-                payment_signals=_extract_signals(payment_decision.begruendung),
-                priority_rule_name=_extract_rule_name(priority_routing.begruendung)
+                "account_match_reason": mask_sensitive(account_decision.begruendung),
+                "account_matched_rule": account_decision.matched_rule,
+                "detected_payment_method": payment_decision.payment_method,
+                "payment_rule_name": _extract_rule_name(payment_decision.begruendung),
+                "payment_explicit": payment_decision.explicit,
+                "payment_signals": _extract_signals(payment_decision.begruendung),
+                "priority_rule_name": _extract_rule_name(priority_routing.begruendung)
                 if priority_routing is not None
                 else None,
-                final_assignment_rule_name=_extract_rule_name(routing.begruendung)
+                "final_assignment_rule_name": _extract_rule_name(routing.begruendung)
                 if priority_routing is None
                 else None,
-                final_art=routing.art,
-                final_konto=routing.konto,
-                final_payment_field=routing.payment_field,
-                final_status=routing.status,
-                output_route_rule_name=output_route_rule_name,
-                final_output_folder=routing.zielordner,
-                filename_fields_used=[
+                "final_art": routing.art,
+                "final_konto": routing.konto,
+                "final_payment_field": routing.payment_field,
+                "final_status": routing.status,
+                "output_route_rule_name": output_route_rule_name,
+                "final_output_folder": routing.zielordner,
+                "filename_fields_used": [
                     f.quelle or f.wert or ""
                     for f in self.preset.filename_schema.felder
                     if f.aktiv
                 ],
-                normalization_warnings=normalization_warnings,
-                conflicts=[account_decision.begruendung]
+                "normalization_warnings": normalization_warnings,
+                "conflicts": [account_decision.begruendung]
                 if account_decision.ist_widerspruechlich
                 else [],
-            )
+                "routing_decision": routing_decision,
+            },
         )
-        return ProcessResult(
-            input_file=pdf_path,
-            dokumenttyp="invoice",
-            status=routing.status,
-            storage_file=output_target,
-            archive_file=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
+
+    def _process_with_target_routing(
+        self,
+        *,
+        pdf_path: Path,
+        fingerprint: str,
+        extracted,
+        classification: ClassificationDecision,
+        historical_match: dict | None,
+    ) -> ProcessResult:
+        """Route a document using the CFG-001 target_routing resolver."""
+        config = self.target_routing_config
+        if not isinstance(config, dict):
+            raise ProcessorError("Zielordner-Konfiguration fehlt.")
+
+        global_rules = config.get("global_document_rules") if isinstance(config.get("global_document_rules"), dict) else {}
+        routing_field = str(global_rules.get("routing_field") or "payment_field")
+        document_date = self._document_date(extracted.invoice_date_raw)
+
+        normalized: NormalizedInvoice | None = None
+        normalization_warnings: list[str] = []
+        account_decision = None
+        payment_decision = None
+        art: str | None = None
+
+        if classification.dokumenttyp == "invoice":
+            normalized, normalization_warnings = normalize_invoice_with_fallbacks(
+                extracted,
+                self.preset.invoice_fallbacks,
+                self.preset.supplier_cleaning,
+            )
+            account_decision = resolve_account(extracted, self.preset)
+            street_key = detect_street(extracted, self.preset)
+            art, _art_reason = determine_business_context(
+                extracted, account_decision, self.preset, street_key
+            )
+            payment_decision = detect_payment_method(extracted, self.preset)
+        else:
+            try:
+                normalized, normalization_warnings = normalize_invoice_with_fallbacks(
+                    extracted,
+                    self.preset.invoice_fallbacks,
+                    self.preset.supplier_cleaning,
+                )
+            except Exception:  # noqa: BLE001
+                normalized = None
+
+        raw_routing_value = extract_routing_field_value(
+            routing_field,
+            extracted=extracted,
+            normalized=normalized,
+            classification=classification,
+            account_decision=account_decision,
+            art=art,
+            payment_decision=payment_decision,
+            document_date=document_date,
+        )
+
+        target_folder, assignment = resolve_runtime_target_directory(
+            config,
+            raw_routing_value,
+            output_root=self.config.ausgangsordner.resolve(),
+        )
+        routing_metadata = build_routing_metadata(assignment)
+
+        field_values = {
+            "invoice_date": document_date,
+            "supplier": (normalized.supplier if normalized else (extracted.supplier_raw or "unbekannt")).lower(),
+            "amount": normalized.amount if normalized else (extracted.amount_raw or "unbekannt"),
+            "payment_field": raw_routing_value or "unbekannt",
+            "art": art or "d",
+            "document_type": classification.dokumenttyp,
+        }
+        filename = build_runtime_filename(config, assignment, field_values=field_values)
+
+        routing_decision = (
+            f"target_routing:{assignment.matched_display_name or 'Fallback'} "
+            f"({assignment.message}); Feld={routing_field}; Wert={raw_routing_value or '–'}"
+        )
+        if assignment.overrides_used:
+            routing_decision += "; overrides=filename_template"
+
+        return self._publish_and_archive(
+            pdf_path=pdf_path,
             fingerprint=fingerprint,
-            supplier=normalized.supplier,
-            date=normalized.invoice_date,
-            amount=normalized.amount,
-            art=routing.art,
-            konto=routing.konto,
-            payment_field=routing.payment_field,
-            street=street_key,
+            target_folder=target_folder,
+            filename=filename,
+            routing_status="target_routing",
+            dokumenttyp=classification.dokumenttyp,
+            extracted=extracted,
+            normalized=normalized,
+            historical_match=historical_match,
+            normalization_warnings=normalization_warnings,
+            routing_metadata=routing_metadata,
+            trace_kwargs={
+                "run_id": self.run_logger.run_id,
+                "original_filename": pdf_path.name,
+                "final_filename": sanitize_final_filename(filename),
+                "source_path": str(pdf_path),
+                "target_path": str(target_folder / sanitize_final_filename(filename)),
+                "archive_path": None,
+                "document_type": classification.dokumenttyp,
+                "classification_reason": mask_sensitive(classification.begruendung),
+                "extracted_invoice_date": document_date,
+                "extracted_supplier": mask_sensitive(extracted.supplier_raw),
+                "extracted_amount": mask_sensitive(extracted.amount_raw),
+                "extraction_method": extracted.source_method,
+                "fallback_used": assignment.is_fallback,
+                "detected_street_key": None,
+                "business_context_art": art,
+                "business_context_reason": None,
+                "account_konto": getattr(account_decision, "konto", None) if account_decision else None,
+                "account_payment_field": raw_routing_value,
+                "account_match_source": None,
+                "account_match_reason": None,
+                "account_matched_rule": None,
+                "detected_payment_method": getattr(payment_decision, "payment_method", None)
+                if payment_decision
+                else None,
+                "payment_rule_name": None,
+                "payment_explicit": None,
+                "payment_signals": None,
+                "priority_rule_name": None,
+                "final_assignment_rule_name": assignment.matched_target_id,
+                "final_art": art,
+                "final_konto": getattr(account_decision, "konto", None) if account_decision else None,
+                "final_payment_field": raw_routing_value,
+                "final_status": "target_routing",
+                "output_route_rule_name": None,
+                "final_output_folder": str(target_folder),
+                "filename_fields_used": list(field_values.keys()),
+                "normalization_warnings": normalization_warnings,
+                "conflicts": [],
+                "routing_decision": routing_decision,
+            },
         )
 
     def _process_document(
@@ -447,113 +1008,55 @@ class InvoiceProcessor:
             f"{document_date}_{self.preset.dokumente.prefix}_{descriptive_name}_"
             f"{self.preset.dokumente.suffix_placeholder}.pdf"
         )
-        output_target, output_action = self._write_active_output(
-            pdf_path,
-            self.preset.dokumente.basis_pfad / filename,
+        target_folder = self.preset.dokumente.basis_pfad
+        return self._publish_and_archive(
+            pdf_path=pdf_path,
+            fingerprint=fingerprint,
+            target_folder=target_folder,
+            filename=filename,
+            routing_status="document",
+            dokumenttyp="document",
+            extracted=extracted,
             historical_match=historical_match,
-        )
-
-        archive_target = self._archive_original(pdf_path)
-        self._remember_processed(
-            fingerprint=fingerprint,
-            dokumenttyp="document",
-            status="document",
-            normalized=None,
-            output_target=output_target,
-            archive_target=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
-            konto=None,
-            payment_field=None,
-            street=None,
-        )
-        self.run_seen_fingerprints[fingerprint] = output_target
-        self._log_output_size(output_target)
-        historical_report = None
-        if historical_match is not None:
-            historical_report = self._create_historical_reprocessing_report(
-                input_file=pdf_path,
-                fingerprint=fingerprint,
-                current_storage=output_target,
-                current_archive=archive_target,
-                historical=historical_match,
-            )
-        self._log_file_event(
-            filename=pdf_path.name,
-            dokumenttyp="document",
-            supplier=extracted.supplier_raw,
-            date=document_date,
-            amount=extracted.amount_raw,
-            account=None,
-            payment_field=None,
-            street=None,
-            routing_decision=classification.begruendung
-            + (
-                f"; Historischer Treffer erneut verarbeitet, Report={historical_report}"
-                if historical_report is not None
-                else ""
-            ),
-            storage_path=output_target,
-            archive_path=archive_target,
-            fallback_used=bool(extracted.fallback_used),
-            preset_used=self.office_rules.active_preset,
-            status="document",
-            output_action=output_action,
-            error=None,
-        )
-        self._trace_writer.record(
-            DecisionTrace(
-                run_id=self.run_logger.run_id,
-                original_filename=pdf_path.name,
-                final_filename=output_target.name,
-                source_path=str(pdf_path),
-                target_path=str(output_target),
-                archive_path=str(archive_target),
-                document_type="document",
-                classification_reason=mask_sensitive(classification.begruendung),
-                extracted_invoice_date=document_date,
-                extracted_supplier=mask_sensitive(extracted.supplier_raw),
-                extracted_amount=mask_sensitive(extracted.amount_raw),
-                extraction_method=extracted.source_method,
-                fallback_used=bool(extracted.fallback_used),
-                detected_street_key=None,
-                business_context_art=None,
-                business_context_reason=None,
-                account_konto=None,
-                account_payment_field=None,
-                account_match_source=None,
-                account_match_reason=None,
-                account_matched_rule=None,
-                detected_payment_method=None,
-                payment_rule_name=None,
-                payment_explicit=None,
-                payment_signals=None,
-                priority_rule_name=None,
-                final_assignment_rule_name=None,
-                final_art=None,
-                final_konto=None,
-                final_payment_field=None,
-                final_status="document",
-                output_route_rule_name=None,
-                final_output_folder=str(self.preset.dokumente.basis_pfad.name),
-                filename_fields_used=[],
-                normalization_warnings=[],
-                conflicts=[],
-            )
-        )
-        return ProcessResult(
-            input_file=pdf_path,
-            dokumenttyp="document",
-            status="document",
-            storage_file=output_target,
-            archive_file=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
-            fingerprint=fingerprint,
-            supplier=extracted.supplier_raw,
-            date=document_date,
-            amount=extracted.amount_raw,
-            art=None,
+            trace_kwargs={
+                "run_id": self.run_logger.run_id,
+                "original_filename": pdf_path.name,
+                "final_filename": sanitize_final_filename(filename),
+                "source_path": str(pdf_path),
+                "target_path": str(target_folder / sanitize_final_filename(filename)),
+                "archive_path": None,
+                "document_type": "document",
+                "classification_reason": mask_sensitive(classification.begruendung),
+                "extracted_invoice_date": document_date,
+                "extracted_supplier": mask_sensitive(extracted.supplier_raw),
+                "extracted_amount": mask_sensitive(extracted.amount_raw),
+                "extraction_method": extracted.source_method,
+                "fallback_used": bool(extracted.fallback_used),
+                "detected_street_key": None,
+                "business_context_art": None,
+                "business_context_reason": None,
+                "account_konto": None,
+                "account_payment_field": None,
+                "account_match_source": None,
+                "account_match_reason": None,
+                "account_matched_rule": None,
+                "detected_payment_method": None,
+                "payment_rule_name": None,
+                "payment_explicit": None,
+                "payment_signals": None,
+                "priority_rule_name": None,
+                "final_assignment_rule_name": None,
+                "final_art": None,
+                "final_konto": None,
+                "final_payment_field": None,
+                "final_status": "document",
+                "output_route_rule_name": None,
+                "final_output_folder": str(self.preset.dokumente.basis_pfad.name),
+                "filename_fields_used": [],
+                "normalization_warnings": [],
+                "conflicts": [],
+                "routing_decision": classification.begruendung,
+            },
         )
 
     def _match_document_profile(
@@ -688,35 +1191,22 @@ class InvoiceProcessor:
         else:
             filename = filename_stem
 
-        folder_name = (
-            matched_profile.fallback_folder if use_fallback_folder
-            else matched_profile.target_folder
+        destination = (
+            matched_profile.fallback_destination if use_fallback_folder
+            else matched_profile.target_destination
         )
-        folder_path = self.config.ausgangsordner / folder_name
-        folder_path.mkdir(parents=True, exist_ok=True)
-
-        output_target, output_action = self._write_active_output(
-            pdf_path,
-            folder_path / filename,
-            historical_match=historical_match,
-        )
-
-        archive_target = self._archive_original(pdf_path)
-        self._remember_processed(
-            fingerprint=fingerprint,
-            dokumenttyp="document",
-            status="document",
-            normalized=None,
-            output_target=output_target,
-            archive_target=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
-            konto=None,
-            payment_field=None,
-            street=None,
-        )
-        self.run_seen_fingerprints[fingerprint] = output_target
-        self._log_output_size(output_target)
+        if destination is not None:
+            folder_path = resolve_configured_target_directory(
+                self.config.ausgangsordner.resolve(),
+                destination,
+            )
+            folder_name = destination.get("path", "")
+        else:
+            folder_name = (
+                matched_profile.fallback_folder if use_fallback_folder
+                else matched_profile.target_folder
+            )
+            folder_path = self._resolve_routing_target_folder(folder_name)
 
         score_str = f"{match_score:.2f}" if match_score is not None else "n/a"
         routing_decision = (
@@ -727,98 +1217,65 @@ class InvoiceProcessor:
             routing_decision += f"; missing_placeholders={profile_missing_placeholders}"
         routing_decision += f"; {classification.begruendung}"
 
-        historical_report = None
-        if historical_match is not None:
-            historical_report = self._create_historical_reprocessing_report(
-                input_file=pdf_path,
-                fingerprint=fingerprint,
-                current_storage=output_target,
-                current_archive=archive_target,
-                historical=historical_match,
-            )
-        if historical_report is not None:
-            routing_decision += (
-                f"; Historischer Treffer erneut verarbeitet, Report={historical_report}"
-            )
-
-        self._log_file_event(
-            filename=pdf_path.name,
-            dokumenttyp="document",
-            supplier=extracted.supplier_raw,
-            date=document_date,
-            amount=extracted.amount_raw,
-            account=None,
-            payment_field=None,
-            street=None,
-            routing_decision=routing_decision,
-            storage_path=output_target,
-            archive_path=archive_target,
-            fallback_used=bool(extracted.fallback_used),
-            preset_used=self.office_rules.active_preset,
-            status="document",
-            output_action=output_action,
-            error=None,
-        )
-
-        self._trace_writer.record(
-            DecisionTrace(
-                run_id=self.run_logger.run_id,
-                original_filename=pdf_path.name,
-                final_filename=output_target.name,
-                source_path=str(pdf_path),
-                target_path=str(output_target),
-                archive_path=str(archive_target),
-                document_type="document",
-                classification_reason=mask_sensitive(classification.begruendung),
-                extracted_invoice_date=document_date,
-                extracted_supplier=mask_sensitive(extracted.supplier_raw),
-                extracted_amount=mask_sensitive(extracted.amount_raw),
-                extraction_method=extracted.source_method,
-                fallback_used=bool(extracted.fallback_used),
-                detected_street_key=None,
-                business_context_art=None,
-                business_context_reason=None,
-                account_konto=None,
-                account_payment_field=None,
-                account_match_source=None,
-                account_match_reason=None,
-                account_matched_rule=None,
-                detected_payment_method=None,
-                payment_rule_name=None,
-                payment_explicit=None,
-                payment_signals=None,
-                priority_rule_name=None,
-                final_assignment_rule_name=None,
-                final_art=None,
-                final_konto=None,
-                final_payment_field=None,
-                final_status="document",
-                output_route_rule_name=None,
-                final_output_folder=folder_name,
-                filename_fields_used=[],
-                normalization_warnings=[],
-                conflicts=[],
-                matched_document_profile_id=matched_profile.id,
-                matched_document_profile_score=match_score,
-                document_profile_used_fallback=use_fallback_folder,
-                document_profile_missing_placeholders=profile_missing_placeholders,
-                document_profile_missing_required_fields=profile_missing_required_fields,
-            )
-        )
-
-        return ProcessResult(
-            input_file=pdf_path,
-            dokumenttyp="document",
-            status="document",
-            storage_file=output_target,
-            archive_file=archive_target,
-            used_extractor=extracted.source_method,
-            fallback_used=bool(extracted.fallback_used),
+        return self._publish_and_archive(
+            pdf_path=pdf_path,
             fingerprint=fingerprint,
-            supplier=extracted.supplier_raw,
-            date=document_date,
-            amount=extracted.amount_raw,
-            art=None,
+            target_folder=folder_path,
+            filename=filename,
+            routing_status="document",
+            dokumenttyp="document",
+            extracted=extracted,
+            historical_match=historical_match,
+            routing_metadata=self._routing_metadata_for_destination(
+                destination,
+                rule_id=matched_profile.id,
+                fallback_used=use_fallback_folder,
+                folder_key=folder_name,
+            ),
+            trace_kwargs={
+                "run_id": self.run_logger.run_id,
+                "original_filename": pdf_path.name,
+                "final_filename": sanitize_final_filename(filename),
+                "source_path": str(pdf_path),
+                "target_path": str(folder_path / sanitize_final_filename(filename)),
+                "archive_path": None,
+                "document_type": "document",
+                "classification_reason": mask_sensitive(classification.begruendung),
+                "extracted_invoice_date": document_date,
+                "extracted_supplier": mask_sensitive(extracted.supplier_raw),
+                "extracted_amount": mask_sensitive(extracted.amount_raw),
+                "extraction_method": extracted.source_method,
+                "fallback_used": bool(extracted.fallback_used),
+                "detected_street_key": None,
+                "business_context_art": None,
+                "business_context_reason": None,
+                "account_konto": None,
+                "account_payment_field": None,
+                "account_match_source": None,
+                "account_match_reason": None,
+                "account_matched_rule": None,
+                "detected_payment_method": None,
+                "payment_rule_name": None,
+                "payment_explicit": None,
+                "payment_signals": None,
+                "priority_rule_name": None,
+                "final_assignment_rule_name": None,
+                "final_art": None,
+                "final_konto": None,
+                "final_payment_field": None,
+                "final_status": "document",
+                "output_route_rule_name": None,
+                "final_output_folder": folder_name,
+                "filename_fields_used": [],
+                "normalization_warnings": [],
+                "conflicts": [],
+                "matched_document_profile_id": matched_profile.id,
+                "matched_document_profile_score": match_score,
+                "document_profile_used_fallback": use_fallback_folder,
+                "document_profile_missing_placeholders": profile_missing_placeholders,
+                "document_profile_missing_required_fields": profile_missing_required_fields,
+                "routing_decision": routing_decision,
+            },
         )
 
     def _handle_duplicate_if_needed(self, pdf_path: Path, fingerprint: str) -> ProcessResult | None:
@@ -839,37 +1296,54 @@ class InvoiceProcessor:
         reason: str,
         original_reference: Path,
     ) -> ProcessResult:
+        item_id = self._next_item_id()
+        original_path = self._resolve_original_path(pdf_path)
+        original_hash, original_size = fingerprint_file(pdf_path), pdf_path.stat().st_size
+        record = LifecycleRecord(
+            run_id=self.run_logger.run_id,
+            item_id=item_id,
+            original_path=str(original_path),
+            original_filename=original_path.name,
+            original_sha256=original_hash,
+            original_size=original_size,
+            configured_output_root=str(self.config.ausgangsordner.resolve()),
+            resolved_target_directory=str(original_reference.parent.resolve()),
+            status=STATUS_DUPLICATE,
+            output_action="duplicate_same_run",
+            verified=False,
+            duplicate_of=str(original_reference),
+            final_output_path=str(original_reference),
+            final_filename=original_reference.name,
+            error_code="duplicate_same_run",
+            error_message=reason,
+        )
+        self._persist_lifecycle_record(record)
+
+        archive_result = archive_same_run_duplicate(
+            source_path=original_path,
+            source_root=self.original_source_dir,
+            run_id=self.run_logger.run_id,
+            expected_hash=original_hash,
+        )
+
         report_dir = self.config.ausgangsordner / self.preset.duplicate_handling.report_folder
         report_dir.mkdir(parents=True, exist_ok=True)
         report_name = f"{pdf_path.stem}{self.preset.duplicate_handling.report_extension}"
         report_path = unique_target_path(report_dir / report_name)
         historical = self._lookup_processed_fingerprint(fingerprint)
-        original_filename = None
-        historical_storage = None
-        historical_archive = None
-        if historical:
-            original_filename = historical.get("source_filename")
-            historical_storage = historical.get("storage_file")
-            historical_archive = historical.get("archive_file")
-        report_path.write_text(
-            "\n".join(
-                [
-                    f"duplicate_reason: {reason}",
-                    f"input_file: {pdf_path}",
-                    f"fingerprint: {fingerprint}",
-                    f"duplicate_reference_type: {'historical' if 'historisch' in reason.lower() else 'same-run'}",
-                    "warning: referenced result may originate from an earlier rule version and is not auto-validated by this run.",
-                    f"historical_source_filename: {original_filename}",
-                    f"original_reference: {original_reference}",
-                    f"historical_storage_path: {historical_storage}",
-                    f"historical_archive_path: {historical_archive}",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        archive_target = self._archive_original(pdf_path)
-        self.run_seen_fingerprints[fingerprint] = original_reference
+        report_lines = [
+            f"duplicate_reason: {reason}",
+            f"input_file: {pdf_path}",
+            f"fingerprint: {fingerprint}",
+            "duplicate_reference_type: same-run",
+            f"original_reference: {original_reference}",
+            f"historical_storage_path: {historical.get('storage_file') if historical else None}",
+            f"source_lifecycle_status: {archive_result.lifecycle_status}",
+            f"source_archive_path: {archive_result.archive_path or ''}",
+            f"source_archive_result: {'success' if archive_result.success else 'failed'}",
+            f"source_archive_error: {archive_result.error or ''}",
+        ]
+        report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
         self._log_file_event(
             filename=pdf_path.name,
             dokumenttyp="duplicate",
@@ -880,24 +1354,32 @@ class InvoiceProcessor:
             payment_field=None,
             street=None,
             routing_decision=reason,
-            storage_path=report_path,
-            archive_path=archive_target,
+            storage_path=original_reference,
+            archive_path=archive_result.archive_path,
             fallback_used=False,
             preset_used=self.office_rules.active_preset,
-            status="duplicate",
-            output_action="new",
-            error=None,
+            status=STATUS_DUPLICATE,
+            output_action="duplicate_same_run",
+            error=reason if archive_result.success else archive_result.error or reason,
         )
         return ProcessResult(
             input_file=pdf_path,
             dokumenttyp="duplicate",
-            status="duplicate",
-            storage_file=report_path,
-            archive_file=archive_target,
+            status=STATUS_DUPLICATE,
+            storage_file=original_reference,
+            archive_file=archive_result.archive_path,
             used_extractor="duplicate-check",
             fallback_used=False,
             fingerprint=fingerprint,
             art=None,
+            original_file=original_path,
+            verified_output=False,
+            item_id=item_id,
+            lifecycle_status=STATUS_DUPLICATE,
+            output_action="duplicate_same_run",
+            error_code="duplicate_same_run",
+            error_message=reason,
+            lifecycle_record=record.to_mapping_dict(),
         )
 
     def _create_historical_reprocessing_report(
@@ -936,11 +1418,49 @@ class InvoiceProcessor:
         return report_path
 
     def _archive_original(self, pdf_path: Path) -> Path:
+        original_path = self._resolve_original_path(pdf_path)
+        if not original_path.exists():
+            raise ProcessorError(
+                f"Originaldatei fuer Archivierung nicht gefunden: {original_path}"
+            )
         archive_dir = self._ensure_run_archive_dir()
-        archive_target = unique_target_path(archive_dir / pdf_path.name)
+        archive_target = unique_target_path(archive_dir / original_path.name)
         archive_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(pdf_path), str(archive_target))
+        shutil.move(str(original_path), str(archive_target))
         return archive_target
+
+    def _resolve_original_path(self, pdf_path: Path) -> Path:
+        resolved = pdf_path.resolve()
+        return self.snapshot_to_original.get(resolved, resolved)
+
+    def _report_root(self) -> Path:
+        return self.technical_run_dir or self.config.ausgangsordner
+
+    def _verify_output_readable(self, output_path: Path) -> None:
+        if not output_path.exists():
+            raise ProcessorError(
+                f"Output-Verifikation fehlgeschlagen: Datei existiert nicht: {output_path}"
+            )
+        if not output_path.is_file():
+            raise ProcessorError(
+                f"Output-Verifikation fehlgeschlagen: kein reguläres File: {output_path}"
+            )
+        try:
+            with output_path.open("rb") as handle:
+                handle.read(1)
+        except OSError as exc:
+            raise ProcessorError(
+                f"Output-Verifikation fehlgeschlagen: Datei nicht lesbar: {output_path}"
+            ) from exc
+        if self._path_is_within(output_path, self.config.eingangsordner):
+            raise ProcessorError(
+                f"Output-Verifikation fehlgeschlagen: finales Ergebnis liegt im Snapshot: {output_path}"
+            )
+        archive_root = self.original_source_dir / self.preset.archivierung.basis_ordnername
+        if self._path_is_within(output_path, archive_root):
+            raise ProcessorError(
+                f"Output-Verifikation fehlgeschlagen: finales Ergebnis liegt im Archiv: {output_path}"
+            )
 
     def _write_active_output(
         self,
@@ -980,9 +1500,86 @@ class InvoiceProcessor:
         return None
 
     def _is_active_output(self, path: Path) -> bool:
-        return self._path_is_within(path, self.config.ausgangsordner) or self._path_is_within(
-            path, self.preset.dokumente.basis_pfad
+        resolved = path.resolve()
+        if self._path_is_within(resolved, self.config.ausgangsordner):
+            return True
+        if self._path_is_within(resolved, self.preset.dokumente.basis_pfad):
+            return True
+        for configured in self._configured_destination_paths():
+            if self._path_is_within(resolved, configured):
+                return True
+        return False
+
+    def _routing_metadata_for_folder_key(
+        self,
+        folder_key: str,
+        *,
+        rule_id: str | None = None,
+        fallback_used: bool = False,
+    ) -> dict[str, str | bool | None]:
+        destination = self.folder_destinations.get(folder_key)
+        if destination is None:
+            mapped = self.preset.routing.zielordner.get(folder_key, folder_key)
+            return {
+                "rule_id": rule_id or folder_key,
+                "destination_mode": "relative_to_output_root",
+                "configured_destination_path": str(mapped),
+                "fallback_used": fallback_used,
+            }
+        return {
+            "rule_id": rule_id or folder_key,
+            "destination_mode": destination.get("mode"),
+            "configured_destination_path": destination.get("path"),
+            "fallback_used": fallback_used,
+        }
+
+    def _routing_metadata_for_destination(
+        self,
+        destination: dict[str, str] | None,
+        *,
+        rule_id: str | None = None,
+        fallback_used: bool = False,
+        folder_key: str | None = None,
+    ) -> dict[str, str | bool | None]:
+        if destination is not None:
+            return {
+                "rule_id": rule_id,
+                "destination_mode": destination.get("mode"),
+                "configured_destination_path": destination.get("path"),
+                "fallback_used": fallback_used,
+            }
+        if folder_key is not None:
+            return self._routing_metadata_for_folder_key(
+                folder_key,
+                rule_id=rule_id,
+                fallback_used=fallback_used,
+            )
+        return {
+            "rule_id": rule_id,
+            "destination_mode": None,
+            "configured_destination_path": None,
+            "fallback_used": fallback_used,
+        }
+
+    def _resolve_routing_target_folder(self, folder_key: str) -> Path:
+        return resolve_routing_folder_key(
+            folder_key,
+            output_root=self.config.ausgangsordner.resolve(),
+            folder_destinations=self.folder_destinations,
+            zielordner_map=self.preset.routing.zielordner,
         )
+
+    def _configured_destination_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        output_root = self.config.ausgangsordner.resolve()
+        for destination in self.folder_destinations.values():
+            try:
+                paths.append(
+                    resolve_configured_target_directory(output_root, destination)
+                )
+            except Exception:  # noqa: BLE001
+                continue
+        return paths
 
     def _path_is_within(self, path: Path, base: Path) -> bool:
         try:
@@ -1030,10 +1627,9 @@ class InvoiceProcessor:
     def _ensure_run_archive_dir(self) -> Path:
         if self.run_archive_dir is not None:
             return self.run_archive_dir
-        archive_root = self.config.eingangsordner / self.preset.archivierung.basis_ordnername
+        archive_root = self.original_source_dir / self.preset.archivierung.basis_ordnername
         archive_root.mkdir(parents=True, exist_ok=True)
-        run_base = f"{datetime.now().strftime('%y%m%d')}_{self.preset.archivierung.lauf_ordner_suffix}"
-        candidate = archive_root / run_base
+        candidate = archive_root / self.run_logger.run_id
         if not candidate.exists():
             candidate.mkdir()
             self.run_archive_dir = candidate
@@ -1042,7 +1638,7 @@ class InvoiceProcessor:
 
         index = 2
         while True:
-            suffixed = archive_root / f"{run_base}{index}"
+            suffixed = archive_root / f"{self.run_logger.run_id}_{index}"
             if not suffixed.exists():
                 suffixed.mkdir()
                 self.run_archive_dir = suffixed

@@ -10,6 +10,7 @@ import fitz
 import pytesseract
 from openai import OpenAI
 
+from invoice_tool.app_paths import configure_tesseract_runtime
 from invoice_tool.models import ExtractedData
 from invoice_tool.normalization import (
     NormalizationError,
@@ -194,7 +195,8 @@ class OpenAIVisionExtractor:
 
 class TesseractExtractor:
     def __init__(self) -> None:
-        if shutil.which("tesseract") is None:
+        bundled_binary = configure_tesseract_runtime()
+        if bundled_binary is None and shutil.which("tesseract") is None:
             raise ExtractionError("Tesseract ist nicht installiert oder nicht im PATH verfuegbar.")
 
     def extract(self, pdf_path: Path) -> ExtractedData:

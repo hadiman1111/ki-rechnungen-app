@@ -293,6 +293,22 @@ class ProcessResult:
     konto: str | None = None
     payment_field: str | None = None
     street: str | None = None
+    original_file: Path | None = None
+    verified_output: bool = False
+    item_id: str | None = None
+    lifecycle_status: str | None = None
+    output_action: str | None = None
+    routing_status: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    lifecycle_record: dict | None = None
+
+    @property
+    def is_complete_success(self) -> bool:
+        from invoice_tool.file_lifecycle import SUCCESS_STATUSES
+
+        lifecycle = self.lifecycle_status or self.status
+        return lifecycle in SUCCESS_STATUSES and self.verified_output
 
 
 @dataclass(frozen=True)
@@ -315,3 +331,5 @@ class DocumentProfileRule:
     naming_template: str | None
     type_literal: str | None
     fallback_values: dict[str, str]
+    target_destination: dict[str, str] | None = None
+    fallback_destination: dict[str, str] | None = None

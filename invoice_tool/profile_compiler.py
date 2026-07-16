@@ -27,6 +27,12 @@ Design principles:
 """
 from __future__ import annotations
 
+from invoice_tool.folder_destination import (
+    MODE_RELATIVE,
+    build_folder_destinations,
+    destination_display_name,
+    normalize_folder_destination,
+)
 from invoice_tool.matching import normalize_for_matching
 from invoice_tool.street_variants import _split_street_suffix, generate_street_variants
 
@@ -278,6 +284,10 @@ def _compile_vendor_profiles(vendor_profiles: list[dict]) -> list[dict]:
         if not profile_id:
             continue
 
+        match_scope = str(vp.get("match_scope") or "text").strip().lower()
+        if match_scope in {"supplier", "supplier_only", "supplier_text"}:
+            continue
+
         recognition_hints = list(vp.get("recognition_hints") or [])
         if not recognition_hints:
             continue  # no match criteria → skip (also caught by validation)
@@ -438,7 +448,77 @@ def _compile_payment_profiles(payment_profiles: list[dict]) -> list[dict]:
 # review_policy compiler
 # -----------------------------------------------------------------------
 
-def _compile_review_policy(review_policy: dict) -> dict:
+def _compile_folders_to_zielordner(folders: list[dict]) -> dict[str, str]:
+    """Map folder ids and routing values to routing keys for legacy zielordner lookup."""
+    result: dict[str, str] = {}
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        folder_id = folder.get("id")
+        if not folder_id:
+            continue
+        folder_id = str(folder_id)
+        try:
+            dest = normalize_folder_destination(folder)
+        except ValueError:
+            continue
+        if dest["mode"] == MODE_RELATIVE:
+            route_key = dest["path"]
+        else:
+            route_key = folder_id
+        result[folder_id] = route_key
+        for raw in folder.get("routing_values") or []:
+            key = str(raw or "").strip()
+            if key:
+                result[key] = route_key
+    return result
+
+
+def _resolve_unclear_fallback_folder(
+    folders: list[dict],
+    review_policy: dict,
+) -> tuple[str, str | None]:
+    """Return (folder_name_for_legacy, folder_id_or_none) for unclear routing."""
+    folder_lookup: dict[str, dict[str, str]] = {}
+    unclear_by_role: str | None = None
+    for folder in folders:
+        if not isinstance(folder, dict) or not folder.get("id"):
+            continue
+        folder_id = str(folder["id"])
+        try:
+            folder_lookup[folder_id] = normalize_folder_destination(folder)
+        except ValueError:
+            continue
+        role = str(folder.get("role") or folder.get("purpose") or "").lower()
+        if role in ("unclear", "review", "unklar"):
+            unclear_by_role = folder_id
+
+    unclear_folder_id = review_policy.get("unclear_folder_id")
+    if unclear_folder_id:
+        unclear_folder_id = str(unclear_folder_id)
+        if unclear_folder_id in folder_lookup:
+            dest = folder_lookup[unclear_folder_id]
+            return destination_display_name(dest), unclear_folder_id
+
+    legacy = str(review_policy.get("unclear_folder", "")).strip()
+    if legacy:
+        for folder_id, dest in folder_lookup.items():
+            if folder_id == legacy or destination_display_name(dest) == legacy:
+                return destination_display_name(dest), folder_id
+        return legacy, None
+
+    if unclear_by_role and unclear_by_role in folder_lookup:
+        dest = folder_lookup[unclear_by_role]
+        return destination_display_name(dest), unclear_by_role
+
+    return "unklar", None
+
+
+def _compile_review_policy(
+    review_policy: dict,
+    *,
+    folders: list[dict] | None = None,
+) -> dict:
     """Translate a review_policy dict into a routing_overrides dict.
 
     Only ``unclear_folder`` has a direct mapping to routing keys.
@@ -455,13 +535,23 @@ def _compile_review_policy(review_policy: dict) -> dict:
     as targeted key-level overrides to the existing routing section.
     An empty / falsy string falls back to the default value "unklar".
     """
-    unclear_folder: str = (
-        str(review_policy.get("unclear_folder", "unklar")).strip() or "unklar"
-    )
-    return {
+    if folders:
+        unclear_folder, unclear_folder_id = _resolve_unclear_fallback_folder(
+            folders, review_policy
+        )
+    else:
+        unclear_folder = (
+            str(review_policy.get("unclear_folder", "unklar")).strip() or "unklar"
+        )
+        unclear_folder_id = review_policy.get("unclear_folder_id")
+
+    result = {
         "unklar_konto": unclear_folder,
         "default_zielordner": unclear_folder,
     }
+    if unclear_folder_id:
+        result["unclear_folder_id"] = str(unclear_folder_id)
+    return result
 
 
 # -----------------------------------------------------------------------
@@ -471,6 +561,8 @@ def _compile_review_policy(review_policy: dict) -> dict:
 def _compile_document_profiles(
     document_profiles: list[dict],
     folders: list[dict],
+    *,
+    review_policy: dict | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Compile document_profile dicts into runtime rule dicts and warnings.
 
@@ -487,22 +579,15 @@ def _compile_document_profiles(
     Returns:
         (compiled_profile_dicts, warnings)
     """
-    folder_lookup: dict[str, str] = {}
-    for f in folders:
-        fid = f.get("id")
-        fname = f.get("folder_name") or f.get("name")
-        if fid and fname:
-            folder_lookup[str(fid)] = str(fname)
+    folder_destinations = build_folder_destinations(folders)
+    folder_lookup: dict[str, str] = {
+        fid: destination_display_name(dest)
+        for fid, dest in folder_destinations.items()
+    }
 
-    # Detect the unclear/review fallback folder from the folders list.
-    unclear_fallback = "unklar"
-    for f in folders:
-        role = str(f.get("role") or f.get("purpose") or "").lower()
-        if role in ("unclear", "review", "unklar"):
-            fname = f.get("folder_name") or f.get("name")
-            if fname:
-                unclear_fallback = str(fname)
-            break
+    unclear_fallback, _ = _resolve_unclear_fallback_folder(
+        folders, review_policy or {}
+    )
 
     compiled: list[dict] = []
     warnings: list[str] = []
@@ -545,6 +630,7 @@ def _compile_document_profiles(
                 f"nicht in folders gefunden."
             )
         target_folder = folder_lookup[target_folder_id]
+        target_destination = folder_destinations[target_folder_id]
 
         fallback_folder_id = profile.get("fallback_folder_id")
         if fallback_folder_id:
@@ -555,27 +641,50 @@ def _compile_document_profiles(
                     f"nicht in folders gefunden."
                 )
             fallback_folder = folder_lookup[fallback_folder_id]
+            fallback_destination = folder_destinations[fallback_folder_id]
         else:
             fallback_folder = unclear_fallback
+            fallback_destination = None
+            for fid, dest in folder_destinations.items():
+                if destination_display_name(dest) == unclear_fallback:
+                    fallback_destination = dest
+                    break
             warnings.append(
                 f"document_profile '{profile_id}': kein fallback_folder_id angegeben "
                 f"– verwende Fallback-Ordner '{unclear_fallback}'."
             )
 
-        compiled.append({
+        naming_schema = profile.get("naming_schema") or {}
+        entry: dict = {
             "id": profile_id,
             "label": str(profile.get("label") or profile_id),
             "document_type": str(profile.get("document_type") or "document"),
             "classification_hints": list(profile.get("classification_hints") or []),
             "negative_hints": list(profile.get("negative_hints") or []),
             "target_folder": target_folder,
+            "target_destination": dict(target_destination),
             "fallback_folder": fallback_folder,
             "confidence_threshold": float(profile.get("confidence_threshold") or 0.5),
             "duplicate_policy": str(profile.get("duplicate_policy") or "keep"),
-            "naming_template": profile.get("naming_template") or None,
-            "type_literal": profile.get("type_literal") or None,
-            "fallback_values": dict(profile.get("fallback_values") or {}),
-        })
+            "naming_template": (
+                naming_schema.get("template")
+                or profile.get("naming_template")
+                or None
+            ),
+            "type_literal": (
+                naming_schema.get("type_literal")
+                or profile.get("type_literal")
+                or None
+            ),
+            "fallback_values": dict(
+                naming_schema.get("fallback_values")
+                or profile.get("fallback_values")
+                or {}
+            ),
+        }
+        if fallback_destination is not None:
+            entry["fallback_destination"] = dict(fallback_destination)
+        compiled.append(entry)
 
     return compiled, warnings
 
@@ -655,15 +764,26 @@ def compile_profile_to_rules(
         preset_dict["dateiname_schema"] = _compile_naming_profile(naming_profile_raw)
 
     # routing_overrides is a top-level preset section for targeted routing key overrides
+    folders_raw: list[dict] = list(profile.get("folders") or [])
+    folder_destinations = build_folder_destinations(folders_raw)
+    zielordner_from_folders = _compile_folders_to_zielordner(folders_raw)
+
     review_policy_raw = profile.get("review_policy")
     if isinstance(review_policy_raw, dict):
-        preset_dict["routing_overrides"] = _compile_review_policy(review_policy_raw)
+        preset_dict["routing_overrides"] = _compile_review_policy(
+            review_policy_raw,
+            folders=folders_raw,
+        )
+
+    if zielordner_from_folders:
+        routing.setdefault("zielordner", {}).update(zielordner_from_folders)
 
     # document_profiles: top-level key, never placed under presets.
     document_profiles_raw: list[dict] = list(profile.get("document_profiles") or [])
-    folders_raw: list[dict] = list(profile.get("folders") or [])
     compiled_doc_profiles, doc_profile_warnings = _compile_document_profiles(
-        document_profiles_raw, folders_raw
+        document_profiles_raw,
+        folders_raw,
+        review_policy=review_policy_raw if isinstance(review_policy_raw, dict) else None,
     )
 
     result: dict = {
@@ -675,6 +795,11 @@ def compile_profile_to_rules(
 
     # Always emit document_profiles key so consumers can rely on its presence.
     result["document_profiles"] = compiled_doc_profiles
+
+    if folder_destinations:
+        result["folder_destinations"] = {
+            fid: dict(dest) for fid, dest in folder_destinations.items()
+        }
 
     # _meta carries non-routing compiler diagnostics; silently ignored by parsers.
     result["_meta"] = {

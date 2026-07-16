@@ -29,11 +29,20 @@ class RunLogger:
         report_dir = output_dir / "_runs" / self.run_id
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / "report.txt"
-        processed = sum(1 for event in self.file_events if event.get("status") == "processed")
+        processed = sum(
+            1
+            for event in self.file_events
+            if event.get("status") in {"processed", "success", "collision_renamed"}
+        )
         documents = sum(1 for event in self.file_events if event.get("type") == "document")
         duplicates = sum(1 for event in self.file_events if event.get("status") == "duplicate")
         unklar = sum(1 for event in self.file_events if event.get("status") == "unklar")
-        errors = sum(1 for event in self.file_events if event.get("status") == "failed")
+        errors = sum(
+            1
+            for event in self.file_events
+            if event.get("status")
+            in {"failed", "output_failed", "verification_failed", "archive_failed", "interrupted"}
+        )
         fallbacks = sum(1 for event in self.file_events if event.get("fallback_used") is True)
         review_events = [
             event
@@ -145,12 +154,12 @@ class RunLogger:
             notes.append("Neue Datei erstellt")
         elif output_action == "updated":
             notes.append("Bestehende Datei aktualisiert")
-        elif output_action == "unchanged":
-            notes.append("Datei unverändert übernommen")
+        elif output_action in {"duplicate_existing", "duplicate_same_run"}:
+            notes.append("Bestehender Output erkannt, kein neuer Export")
 
         status = self._report_status(event)
         event_type = self._report_type(event)
-        if status == "processed":
+        if status in {"processed", "success", "collision_renamed"}:
             notes.append("Rechnung korrekt verarbeitet")
         elif status == "document":
             notes.append("Dokument erkannt (keine Rechnung)")

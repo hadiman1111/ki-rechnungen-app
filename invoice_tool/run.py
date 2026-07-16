@@ -12,11 +12,12 @@ Usage:
         [--profile /path/to/profile_config.json]
 
 Design principles:
-- Source PDFs are NEVER moved, deleted, or modified. Only read.
+- Source PDFs in the user input folder are NEVER modified in place during processing.
 - A fresh input_snapshot is created per run by copying (not moving).
 - Processing runs exclusively on the snapshot, not on the original source.
-- Each run gets its own isolated subdirectory: output/<YYYYMMDD_HHMMSS>/
-- runtime/, logs/, and output/ are isolated per run.
+- Final renamed copies are written directly to the user-selected output root.
+- Originals are archived to <input>/archiv/<run-id>/ only after verified output success.
+- Technical run artifacts live under ~/Library/Application Support/KI-Rechnungen/runs/<run-id>/.
 - No hard-coded user paths. All paths are supplied by the caller or CLI.
 """
 from __future__ import annotations
@@ -29,17 +30,30 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from invoice_tool.app_paths import create_run_support_dir, project_root, run_support_root
 from invoice_tool.config import (
     ConfigError,
     load_app_config,
     load_document_profiles_from_runtime_rules,
+    load_folder_destinations_from_runtime_rules,
     load_office_rules,
     load_office_rules_from_dict,
     merge_rules_dicts,
 )
 from invoice_tool.extraction import ExtractionCoordinator, OpenAIVisionExtractor, TesseractExtractor
-from invoice_tool.models import AppConfig
+from invoice_tool.folder_destination import validate_runtime_destinations_preflight
+from invoice_tool.models import AppConfig, OfficeRules, ProcessingPreset
+from invoice_tool.file_lifecycle import (
+    MAPPING_FILENAME,
+    OutputMappingStore,
+    validate_input_output_roots,
+)
 from invoice_tool.processing import InvoiceProcessor, ProcessorError
+from invoice_tool.target_routing import (
+    load_target_routing_config,
+    profile_uses_cfg001_runtime_routing,
+    validate_target_routing_config,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,11 +62,13 @@ from invoice_tool.processing import InvoiceProcessor, ProcessorError
 
 _DEFAULT_CONFIG_FILENAME = "invoice_config.json"
 _SNAPSHOT_DIRNAME = "input_snapshot"
-_OUTPUT_DIRNAME = "output"
 _RUNTIME_DIRNAME = "runtime"
 _LOGS_DIRNAME = "logs"
 _PROFILE_SNAPSHOT_FILENAME = "profile_snapshot.json"
 _RUNTIME_RULES_FILENAME = "runtime_rules.json"
+_OUTPUT_MAPPING_FILENAME = "output_mapping.json"
+_DEFAULT_ARCHIVE_DIRNAME = "archiv"
+_DEFAULT_DOCUMENTS_SUBDIR = "documents"
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +77,9 @@ _RUNTIME_RULES_FILENAME = "runtime_rules.json"
 
 class RunError(RuntimeError):
     """Raised when a run cannot proceed due to an invalid configuration."""
+
+
+from invoice_tool.source_inventory import discover_source_pdfs
 
 
 def _validate_source_and_output(source: Path, output: Path) -> None:
@@ -73,53 +92,25 @@ def _validate_source_and_output(source: Path, output: Path) -> None:
     if not source.is_dir():
         raise RunError(f"source ist kein Ordner: {source}")
 
-    pdf_files = [
-        p for p in source.iterdir()
-        if p.is_file() and p.suffix.lower() == ".pdf"
-    ]
+    pdf_files = discover_source_pdfs(source)
     if not pdf_files:
         raise RunError(f"source enthält keine PDF-Dateien: {source}")
 
-    if source == output:
-        raise RunError(
-            f"source und output dürfen nicht identisch sein: {source}"
-        )
-
-    # source must not be inside output
     try:
-        source.relative_to(output)
-        raise RunError(
-            f"source darf nicht innerhalb von output liegen: "
-            f"source={source}, output={output}"
-        )
-    except ValueError:
-        pass
-
-    # output must not be inside source
-    try:
-        output.relative_to(source)
-        raise RunError(
-            f"output darf nicht innerhalb von source liegen: "
-            f"source={source}, output={output}"
-        )
-    except ValueError:
-        pass
+        validate_input_output_roots(source, output)
+    except Exception as exc:
+        raise RunError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
-# Run directory
+# Run directory (legacy helper kept for tests)
 # ---------------------------------------------------------------------------
 
 def create_run_dir(output: Path) -> Path:
     """Create a unique timestamped run directory under output.
 
-    Format: YYYYMMDD_HHMMSS; appended with _2, _3, … on collision.
-
-    Args:
-        output: Base directory that will contain run subdirectories.
-
-    Returns:
-        The newly created run directory (already exists on disk).
+    Legacy helper retained for unit tests. Production runs use Application Support
+    via create_run_support_dir().
     """
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -143,30 +134,28 @@ def create_run_dir(output: Path) -> Path:
 # Snapshot
 # ---------------------------------------------------------------------------
 
-def create_run_snapshot(source: Path, run_dir: Path) -> Path:
-    """Copy all PDFs from source into run_dir/input_snapshot/.
+def create_run_snapshot(
+    source: Path,
+    run_dir: Path,
+    pdf_files: list[Path] | None = None,
+) -> tuple[Path, dict[Path, Path]]:
+    """Copy selected PDFs from source into run_dir/input_snapshot/.
 
     Original files in source are NEVER modified, moved, or deleted.
     Only .pdf and .PDF files are copied; all other files are ignored.
 
-    Args:
-        source:  Directory containing the original PDF files.
-        run_dir: The isolated run directory for this run.
-
     Returns:
-        Path to the created snapshot directory (run_dir/input_snapshot/).
+        (snapshot_dir, snapshot_to_original) mapping snapshot paths to originals.
     """
     source = source.resolve()
     snapshot_dir = run_dir / _SNAPSHOT_DIRNAME
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    pdf_files = [
-        p for p in source.iterdir()
-        if p.is_file() and p.suffix.lower() == ".pdf"
-    ]
-    for pdf in pdf_files:
+    selected = pdf_files if pdf_files is not None else discover_source_pdfs(source)
+    snapshot_to_original: dict[Path, Path] = {}
+
+    for pdf in selected:
         dest = snapshot_dir / pdf.name
-        # Guard: never overwrite with a different file if name collides
         if dest.exists():
             stem = pdf.stem
             suffix = pdf.suffix
@@ -175,8 +164,9 @@ def create_run_snapshot(source: Path, run_dir: Path) -> Path:
                 dest = snapshot_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
         shutil.copy2(pdf, dest)
+        snapshot_to_original[dest.resolve()] = pdf.resolve()
 
-    return snapshot_dir
+    return snapshot_dir, snapshot_to_original
 
 
 # ---------------------------------------------------------------------------
@@ -187,32 +177,50 @@ def build_run_config(
     base_config: AppConfig,
     run_dir: Path,
     snapshot_dir: Path,
+    user_output_root: Path,
 ) -> AppConfig:
-    """Build an AppConfig with all paths isolated to this run.
-
-    Uses dataclasses.replace() so the original base_config is unchanged.
+    """Build an AppConfig with run-scoped technical paths and user output root.
 
     Path overrides:
         eingangsordner  = snapshot_dir
-        ausgangsordner  = run_dir / "output"
+        ausgangsordner  = user_output_root
         runtime_ordner  = run_dir / "runtime"
         log_ordner      = run_dir / "logs"
-
-    Args:
-        base_config:  The AppConfig loaded from invoice_config.json.
-        run_dir:      The isolated run directory for this run.
-        snapshot_dir: The snapshot directory created by create_run_snapshot.
-
-    Returns:
-        A new AppConfig instance with overridden paths.
     """
     return dataclasses.replace(
         base_config,
         eingangsordner=snapshot_dir,
-        ausgangsordner=run_dir / _OUTPUT_DIRNAME,
+        ausgangsordner=user_output_root.resolve(),
         runtime_ordner=run_dir / _RUNTIME_DIRNAME,
         log_ordner=run_dir / _LOGS_DIRNAME,
     )
+
+
+def _with_documents_basis(office_rules: OfficeRules, basis_path: Path) -> OfficeRules:
+    preset = office_rules.preset
+    new_dokumente = dataclasses.replace(preset.dokumente, basis_pfad=basis_path.resolve())
+    new_preset: ProcessingPreset = dataclasses.replace(preset, dokumente=new_dokumente)
+    new_presets = dict(office_rules.presets)
+    new_presets[office_rules.active_preset] = new_preset
+    return dataclasses.replace(office_rules, presets=new_presets)
+
+
+def _write_output_mapping(
+    run_dir: Path,
+    *,
+    run_id: str,
+    mappings: list[dict[str, str | None]],
+) -> Path:
+    mapping_path = run_dir / _OUTPUT_MAPPING_FILENAME
+    payload = {
+        "run_id": run_id,
+        "mappings": mappings,
+    }
+    mapping_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return mapping_path
 
 
 # ---------------------------------------------------------------------------
@@ -229,22 +237,8 @@ def run_once(
 ) -> Path:
     """Execute a full processing run with isolated source and output paths.
 
-    Args:
-        source:      Directory containing PDF files to process (never modified).
-        output:      Base directory for run subdirectories.
-        config_path: Path to invoice_config.json. Defaults to
-                     ./invoice_config.json relative to CWD.
-        rules_path:  Path to an alternative office_rules.json.
-                     In this MVP: accepted but raises if provided, because
-                     the existing config/loader chain does not yet support
-                     an external rules override without touching the config
-                     file. Will be implemented in a later step.
-        profile_path: Path to profile_config.json.
-                     In this MVP: the file is copied to the run dir as
-                     profile_snapshot.json but is NOT applied to routing.
-
     Returns:
-        Path to the created run directory.
+        Path to the technical run directory under Application Support.
 
     Raises:
         RunError:    For invalid source/output combinations or missing files.
@@ -253,24 +247,20 @@ def run_once(
     source = source.resolve()
     output = output.resolve()
 
-    # --- validation ---
     _validate_source_and_output(source, output)
 
-    # rules_path: MVP limitation
     if rules_path is not None:
         raise RunError(
             "rules_path ist in diesem MVP noch nicht unterstützt. "
             "Bitte lassen Sie --rules weg; die Regeln werden aus der invoice_config.json geladen."
         )
 
-    # --- config ---
     resolved_config = (
         config_path.resolve() if config_path is not None
         else Path(_DEFAULT_CONFIG_FILENAME).resolve()
     )
     base_config = load_app_config(resolved_config)
 
-    # Load base rules dict once (used both for baseline and for merging).
     try:
         base_rules_dict = json.loads(base_config.regeln_datei.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -279,33 +269,56 @@ def run_once(
     base_rules_dir = base_config.regeln_datei.parent.resolve()
     active_preset = base_config.aktives_preset or "office_default"
 
-    # --- create run directory and snapshot ---
-    run_dir = create_run_dir(output)
-    snapshot_dir = create_run_snapshot(source, run_dir)
+    run_dir, run_id = create_run_support_dir()
+    (run_dir / _RUNTIME_DIRNAME).mkdir(parents=True, exist_ok=True)
+    (run_dir / _LOGS_DIRNAME).mkdir(parents=True, exist_ok=True)
 
-    # --- profile: compile → merge → runtime_rules ---
+    active_profile_id: str | None = None
+    profile_data: dict | None = None
+
     if profile_path is not None:
         profile_src = profile_path.resolve()
         if not profile_src.exists():
             raise RunError(f"profile_path existiert nicht: {profile_src}")
 
-        # 1. Save a snapshot of the profile for traceability.
-        shutil.copy2(profile_src, run_dir / _PROFILE_SNAPSHOT_FILENAME)
-
-        # 2. Compile profile → generated patch (strassen + prioritaetsregeln only).
-        from invoice_tool.profile_compiler import compile_profile_to_rules  # noqa: PLC0415
         try:
             profile_data = json.loads(profile_src.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RunError(f"profile_path ist kein gueltiges JSON: {exc}") from exc
 
-        generated = compile_profile_to_rules(profile_data, preset_name=active_preset)
+        if not isinstance(profile_data, dict):
+            raise RunError("profile_path muss ein JSON-Objekt sein.")
 
-        # 3. Merge: only _MERGEABLE_ROUTING_SECTIONS are replaced.
+        preflight_errors = validate_runtime_destinations_preflight(
+            profile_data,
+            output_root=output,
+            source_root=source,
+            run_support_root=run_support_root(),
+            project_root_path=project_root(),
+        )
+        if profile_uses_cfg001_runtime_routing(profile_data):
+            preflight_errors.extend(
+                validate_target_routing_config(load_target_routing_config(profile_data))
+            )
+        if preflight_errors:
+            raise RunError(
+                "Profil-Zielordner sind ungültig; Verarbeitung wurde nicht gestartet: "
+                + "; ".join(preflight_errors)
+            )
+
+        active_profile_id = profile_src.stem if profile_src.parent.name == "profiles" else "local"
+
+    source_pdfs = discover_source_pdfs(source)
+    snapshot_dir, snapshot_to_original = create_run_snapshot(source, run_dir, source_pdfs)
+
+    if profile_path is not None:
+        profile_src = profile_path.resolve()
+        shutil.copy2(profile_src, run_dir / _PROFILE_SNAPSHOT_FILENAME)
+
+        from invoice_tool.profile_compiler import compile_profile_to_rules  # noqa: PLC0415
+        generated = compile_profile_to_rules(profile_data, preset_name=active_preset)
         merged_dict = merge_rules_dicts(base_rules_dict, generated)
 
-        # 4. Annotate with _meta for traceability (ignored by the parser).
-        # Build generated_sections dynamically from what the compiler produced.
         gen_preset = generated.get("presets", {}).get(active_preset, {})
         gen_routing = gen_preset.get("routing", {})
         generated_sections = [
@@ -316,7 +329,6 @@ def run_once(
             )
             if section in gen_routing
         ]
-        # classification, dateiname_schema, routing_overrides are top-level preset sections
         if "classification" in gen_preset:
             generated_sections.append("classification")
         if "dateiname_schema" in gen_preset:
@@ -324,9 +336,6 @@ def run_once(
         if "routing_overrides" in gen_preset:
             generated_sections.append("routing_overrides")
 
-        # payment_detection_rules uses PREPEND strategy (profile rules first, base rules kept).
-        # It appears in generated_sections when the profile contributed rules, but is never
-        # fully "protected" because both profile and base rules are always active.
         prepended_sections = [
             f"routing.{section}"
             for section in ("payment_detection_rules",)
@@ -355,13 +364,9 @@ def run_once(
             "merge_strategy": "replace_generated_sections_prepend_payment_detection",
         }
 
-        # 5a. Propagate top-level document_profiles from the compiled profile
-        #     into the merged dict so load_document_profiles_from_runtime_rules()
-        #     can read it below.  This key is intentionally outside of presets.
         if "document_profiles" in generated:
             merged_dict["document_profiles"] = generated["document_profiles"]
 
-        # 5b. Annotate document_profiles compiler warnings in _meta.
         doc_profile_warnings = generated.get("_meta", {}).get(
             "document_profiles_warnings", []
         )
@@ -369,7 +374,6 @@ def run_once(
             merged_dict.setdefault("_meta", {})
             merged_dict["_meta"]["document_profiles_warnings"] = doc_profile_warnings
 
-        # 6. Write runtime_rules.json into the run directory.
         runtime_rules_path = run_dir / _RUNTIME_RULES_FILENAME
         runtime_rules_path.write_text(
             json.dumps(merged_dict, ensure_ascii=False, indent=2) + "\n",
@@ -377,29 +381,31 @@ def run_once(
         )
         print(f"[run] Runtime-Regeln geschrieben: {runtime_rules_path}")
 
-        # 7. Build OfficeRules from merged dict (no file I/O on office_rules.json).
         office_rules = load_office_rules_from_dict(
             merged_dict,
             base_rules_dir,
             active_preset_override=active_preset,
         )
-
-        # 8. Load compiled document_profiles for runtime use.
         document_profiles = load_document_profiles_from_runtime_rules(merged_dict)
+        folder_destinations = load_folder_destinations_from_runtime_rules(merged_dict)
         if document_profiles:
             print(f"[run] {len(document_profiles)} document_profile(s) geladen.")
+        if folder_destinations:
+            print(f"[run] {len(folder_destinations)} Zielordner-Destination(s) geladen.")
     else:
-        # No profile: use base rules unchanged.  Behavior identical to before.
         office_rules = load_office_rules(
             base_config.regeln_datei,
             active_preset_override=base_config.aktives_preset,
         )
         document_profiles = []
+        folder_destinations = {}
 
-    # --- build isolated config ---
-    run_config = build_run_config(base_config, run_dir, snapshot_dir)
+    documents_basis = output / _DEFAULT_DOCUMENTS_SUBDIR
+    documents_basis.mkdir(parents=True, exist_ok=True)
+    office_rules = _with_documents_basis(office_rules, documents_basis)
 
-    # --- extractor ---
+    run_config = build_run_config(base_config, run_dir, snapshot_dir, output)
+
     try:
         fallback = TesseractExtractor()
     except Exception:  # noqa: BLE001
@@ -410,14 +416,29 @@ def run_once(
         fallback=fallback,
     )
 
-    # --- run ---
+    mapping_store = OutputMappingStore(run_dir, run_id)
     processor = InvoiceProcessor(
         run_config,
         extractor,
         office_rules=office_rules,
         document_profiles=document_profiles if document_profiles else None,
+        folder_destinations=folder_destinations or None,
+        original_source_dir=source,
+        snapshot_to_original=snapshot_to_original,
+        technical_run_dir=run_dir,
+        mapping_store=mapping_store,
+        active_profile_id=active_profile_id,
+        profile_data=profile_data,
+        target_routing_config=(
+            load_target_routing_config(profile_data)
+            if profile_data is not None
+            and profile_uses_cfg001_runtime_routing(profile_data)
+            else None
+        ),
     )
-    processor.process_all()
+    results = processor.process_all()
+    mapping_path = mapping_store.flush()
+    print(f"[run] Output-Mapping geschrieben: {mapping_path}")
 
     return run_dir
 
@@ -431,7 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="python -m invoice_tool.run",
         description=(
             "Run the PDF processing pipeline with freely chosen source and output paths. "
-            "Original files in --source are never modified."
+            "Original files in --source are never modified in place."
         ),
     )
     parser.add_argument(
@@ -446,7 +467,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         type=Path,
         metavar="DIR",
-        help="Base directory for run subdirectories. Created if it does not exist.",
+        help="User output root for final renamed copies.",
     )
     parser.add_argument(
         "--config",
@@ -473,11 +494,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="FILE",
         default=None,
-        help=(
-            "Path to profile_config.json. "
-            "MVP: file is copied to the run directory as profile_snapshot.json "
-            "but is NOT yet applied to routing."
-        ),
+        help="Path to profile_config.json.",
     )
     return parser
 
@@ -492,10 +509,9 @@ def main() -> int:
             source=args.source,
             output=args.output,
             config_path=args.config,
-            rules_path=args.rules,
             profile_path=args.profile,
         )
-        print(f"[run] Lauf abgeschlossen. Run-Ordner: {run_dir}")
+        print(f"[run] Lauf abgeschlossen. Technischer Run-Ordner: {run_dir}")
         return 0
     except (RunError, ConfigError, ProcessorError) as exc:
         print(f"Fehler: {exc}", file=sys.stderr)

@@ -15,7 +15,32 @@ class FilenameSchemaError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{(\w+)\}")
+_FILENAME_STEM_TOKEN_PATTERN = re.compile(r"\{[^}]+\}|[^_]+")
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f{}]')
+
+# Canonical routing/filename tokens for Rechnungen scan model (atomic, underscores preserved).
+CANONICAL_RECHNUNGEN_FILENAME_TOKENS: frozenset[str] = frozenset(
+    {
+        "invoice_date",
+        "art",
+        "supplier",
+        "amount",
+        "payment_field",
+        "currency",
+        "invoice_number",
+        "document_type",
+        "project",
+    }
+)
+
+
+def tokenize_filename_stem(stem: str) -> list[str]:
+    """Split a filename stem into literal segments and braced tokens.
+
+    Underscores inside ``{token_name}`` remain part of the token; only
+    separators outside braces split the stem.
+    """
+    return [part for part in _FILENAME_STEM_TOKEN_PATTERN.findall(stem or "") if part]
 
 # Standard placeholder keys supplied by the runtime caller.
 _ALLOWED_PLACEHOLDER_SOURCES: frozenset[str] = frozenset(

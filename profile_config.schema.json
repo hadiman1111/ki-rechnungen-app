@@ -91,6 +91,11 @@
       "description": "Nutzerdefinierte Dokumenttyp-Profile. Definieren, wie ein Dokumenttyp erkannt, benannt und abgelegt wird. Schema-Ebene geplant – Runtime-Compiler-Erweiterung noch nicht implementiert. Rechnungen bleiben der erste und stabile Anwendungsfall.",
       "items": { "$ref": "#/$defs/DocumentProfile" },
       "default": []
+    },
+
+    "target_routing": {
+      "$ref": "#/$defs/TargetRouting",
+      "description": "CFG-001 kanonische Zielordner-Konfiguration (global rules, targets, fallback)."
     }
 
   },
@@ -148,12 +153,16 @@
 
     "Folder": {
       "type": "object",
-      "required": ["id", "label", "folder_name"],
+      "required": ["id", "label"],
+      "anyOf": [
+        { "required": ["folder_name"] },
+        { "required": ["destination"] }
+      ],
       "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string",
-          "enum": ["ai", "ep", "private", "unklar", "amex"],
+          "minLength": 1,
           "description": "Logische ID des Zielordners."
         },
         "label": {
@@ -161,7 +170,34 @@
           "minLength": 1,
           "description": "Nutzerfreundlicher Anzeigename."
         },
-        "folder_name": { "$ref": "#/$defs/FolderName" }
+        "folder_name": { "$ref": "#/$defs/FolderName" },
+        "destination": { "$ref": "#/$defs/FolderDestination" },
+        "role": {
+          "type": "string",
+          "description": "Optionale Rolle, z. B. 'unclear' für Fallback-Ordner."
+        },
+        "purpose": {
+          "type": "string",
+          "description": "Synonym zu role (Legacy-Kompatibilität)."
+        }
+      }
+    },
+
+    "FolderDestination": {
+      "type": "object",
+      "required": ["mode", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["relative_to_output_root", "absolute"],
+          "description": "Relativ zum Ausgangsordner oder absoluter Pfad."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relativer Unterordner oder absoluter Zielpfad."
+        }
       }
     },
 
@@ -352,7 +388,12 @@
         "unclear_folder": {
           "type": "string",
           "minLength": 1,
-          "description": "Zielordner für unklar klassifizierte Dokumente."
+          "description": "Legacy: Zielordner-Name oder ID für unklar klassifizierte Dokumente."
+        },
+        "unclear_folder_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID aus folders[] für unklar klassifizierte Dokumente."
         },
         "business_unclear_payment_goes_to_unclear": {
           "type": "boolean",
@@ -385,13 +426,42 @@
         "recognition_hints": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Suchbegriffe für diesen Lieferanten im Rechnungstext."
+          "description": "Suchbegriffe für diesen Lieferanten im Rechnungstext bzw. Lieferantenfeld."
+        },
+        "issuer_hints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optionale Aussteller-Hinweise (z. B. Amazon EU S.a.r.l.), wenn match_scope=supplier und der Marketplace-Verkäufer als supplier extrahiert wurde. Keine bloßen Fließtext-Treffer wie nacktes 'amazon'."
+        },
+        "required_recipient_hints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Wenn gesetzt: Regel greift nur bei positivem Empfängernachweis (address_fragments / Rechnungsempfänger-Kontext)."
         },
         "payment_field": {
           "type": "string",
           "description": "Zahlungsfeld, das diesem Lieferanten zugewiesen wird."
         },
         "category": { "$ref": "#/$defs/CategoryId" },
+        "target_folder": {
+          "type": "string",
+          "description": "Optionaler Zielordner, unabhängig von category/art und payment_field."
+        },
+        "payment_reference": {
+          "type": "string",
+          "description": "Optionale Zahlungsreferenz (z. B. Kartenendung), nur wenn bestätigt."
+        },
+        "match_scope": {
+          "type": "string",
+          "enum": ["supplier", "text", "supplier_text"],
+          "default": "supplier",
+          "description": "supplier = nur Lieferant/Aussteller; text = Fließtext; supplier_text = Texttreffer nur mit Lieferantenbestätigung."
+        },
+        "exclusive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Wenn true: Supplier-Regel ersetzt die Standard-Zuordnung exklusiv."
+        },
         "enabled": { "type": "boolean", "default": true }
       }
     },
@@ -605,6 +675,75 @@
           "description": "Optionaler Hilfetext für den Nutzer im UI-Profil-Editor. Wird im UI angezeigt, hat keinen technischen Effekt."
         }
 
+      }
+    },
+
+    "LocalFolderDestination": {
+      "type": "object",
+      "required": ["type", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["local_folder", "legacy_relative"]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+
+    "TargetRoutingEntry": {
+      "type": "object",
+      "required": ["id", "display_name", "destination", "routing_values"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "display_name": { "type": "string", "minLength": 1 },
+        "active": { "type": "boolean", "default": true },
+        "destination": { "$ref": "#/$defs/LocalFolderDestination" },
+        "routing_values": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "overrides_enabled": { "type": "boolean", "default": false },
+        "overrides": { "type": "object", "default": {} }
+      }
+    },
+
+    "TargetRouting": {
+      "type": "object",
+      "required": ["schema_version", "global_document_rules", "targets", "fallback"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string", "minLength": 1 },
+        "global_document_rules": {
+          "type": "object",
+          "required": ["filename_template", "routing_field"],
+          "additionalProperties": false,
+          "properties": {
+            "filename_template": { "type": "string", "minLength": 1 },
+            "routing_field": { "type": "string", "minLength": 1 },
+            "case_sensitive": { "type": "boolean", "default": false },
+            "confidence_threshold": { "type": ["number", "null"] },
+            "duplicate_detection": { "type": "boolean" }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TargetRoutingEntry" }
+        },
+        "fallback": {
+          "type": "object",
+          "required": ["display_name", "destination"],
+          "additionalProperties": false,
+          "properties": {
+            "display_name": { "type": "string", "minLength": 1 },
+            "destination": { "$ref": "#/$defs/LocalFolderDestination" }
+          }
+        }
       }
     }
 

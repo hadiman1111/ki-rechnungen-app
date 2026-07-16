@@ -21,6 +21,21 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from invoice_tool.folder_destination import (
+    MODE_ABSOLUTE,
+    MODE_RELATIVE,
+    migrate_profile_destinations,
+    normalize_folder_destination,
+    validate_destination,
+)
+from invoice_tool.target_routing import (
+    DEST_TYPE_LEGACY_RELATIVE,
+    DEST_TYPE_LOCAL,
+    load_target_routing_config,
+    sync_target_routing_to_profile,
+    validate_target_routing_config,
+)
+
 
 # ---------------------------------------------------------------------------
 # Öffentliche Fehlerbasis
@@ -97,6 +112,198 @@ def load_profile_for_edit(profile_path: Path) -> dict:
         )
 
     return copy.deepcopy(data)
+
+
+def prepare_profile_for_edit(profile: dict) -> dict:
+    """Return a deep copy with migrated folder destinations for editing."""
+    migrated = migrate_profile_destinations(copy.deepcopy(profile))
+    migrated["target_routing"] = load_target_routing_config(migrated)
+    return migrated
+
+
+def _persist_target_routing(profile: dict, config: dict) -> dict:
+    synced = sync_target_routing_to_profile(profile, config)
+    errors = validate_target_routing_config(config)
+    if errors:
+        raise ProfileEditorError("; ".join(errors))
+    validation_errors = validate_profile_for_save(synced, skip_target_routing=True)
+    if validation_errors:
+        raise ProfileEditorError("; ".join(validation_errors))
+    return synced
+
+
+def update_global_document_rules(profile: dict, patch: dict) -> dict:
+    """Update global document rules inside target_routing."""
+    if not isinstance(patch, dict):
+        raise ProfileEditorError("patch muss ein dict sein.")
+    allowed = {
+        "filename_template",
+        "routing_field",
+        "case_sensitive",
+        "confidence_threshold",
+        "duplicate_detection",
+    }
+    disallowed = set(patch.keys()) - allowed
+    if disallowed:
+        raise ProfileEditorError(f"Nicht erlaubte Schlüssel: {sorted(disallowed)}")
+
+    config = load_target_routing_config(profile)
+    global_rules = config.setdefault("global_document_rules", {})
+    if not isinstance(global_rules, dict):
+        global_rules = {}
+        config["global_document_rules"] = global_rules
+    for key, value in patch.items():
+        global_rules[key] = value
+    return _persist_target_routing(profile, config)
+
+
+def add_target_folder(
+    profile: dict,
+    *,
+    display_name: str,
+    destination_path: str,
+    routing_values: list[str] | None = None,
+) -> dict:
+    """Add a new active target-folder configuration."""
+    from invoice_tool.target_routing import new_target_id
+
+    name = (display_name or "").strip()
+    path = (destination_path or "").strip()
+    if not name:
+        raise ProfileEditorError("Anzeigename fehlt.")
+    if not path:
+        raise ProfileEditorError("Zielordner fehlt.")
+
+    config = load_target_routing_config(profile)
+    targets = list(config.get("targets") or [])
+    values = [str(v).strip() for v in (routing_values or [name]) if str(v or "").strip()]
+    if not values:
+        raise ProfileEditorError("Mindestens ein Routing-Wert ist erforderlich.")
+    targets.append(
+        {
+            "id": new_target_id(),
+            "display_name": name,
+            "active": True,
+            "destination": {"type": DEST_TYPE_LOCAL, "path": path},
+            "routing_values": values,
+            "overrides_enabled": False,
+            "overrides": {},
+        }
+    )
+    config["targets"] = targets
+    return _persist_target_routing(profile, config)
+
+
+def update_target_folder(profile: dict, target_id: str, patch: dict) -> dict:
+    """Patch a target-folder configuration by id."""
+    if not isinstance(patch, dict):
+        raise ProfileEditorError("patch muss ein dict sein.")
+    allowed = {
+        "display_name",
+        "active",
+        "destination",
+        "routing_values",
+        "overrides_enabled",
+        "overrides",
+    }
+    disallowed = set(patch.keys()) - allowed
+    if disallowed:
+        raise ProfileEditorError(f"Nicht erlaubte Schlüssel: {sorted(disallowed)}")
+
+    config = load_target_routing_config(profile)
+    targets = config.get("targets")
+    if not isinstance(targets, list):
+        raise ProfileEditorError("Zielordner-Liste fehlt.")
+
+    matches = [i for i, t in enumerate(targets) if isinstance(t, dict) and t.get("id") == target_id]
+    if not matches:
+        raise ProfileEditorError(f"Zielordner '{target_id}' nicht gefunden.")
+
+    target = dict(targets[matches[0]])
+    for key, value in patch.items():
+        if key == "destination" and isinstance(value, dict):
+            dest_type = str(value.get("type") or DEST_TYPE_LOCAL)
+            path = str(value.get("path") or "").strip()
+            if dest_type not in (DEST_TYPE_LOCAL, DEST_TYPE_LEGACY_RELATIVE):
+                raise ProfileEditorError(f"Unbekannter Zieltyp: {dest_type}")
+            target["destination"] = {"type": dest_type, "path": path}
+        elif key == "routing_values":
+            if not isinstance(value, list):
+                raise ProfileEditorError("routing_values muss eine Liste sein.")
+            cleaned = [str(v).strip() for v in value if str(v or "").strip()]
+            if not cleaned:
+                raise ProfileEditorError("Mindestens ein Routing-Wert ist erforderlich.")
+            target["routing_values"] = cleaned
+        else:
+            target[key] = value
+
+    updated_targets = list(targets)
+    updated_targets[matches[0]] = target
+    config["targets"] = updated_targets
+    return _persist_target_routing(profile, config)
+
+
+def delete_target_folder(profile: dict, target_id: str) -> dict:
+    """Remove a target-folder configuration without touching real directories."""
+    config = load_target_routing_config(profile)
+    targets = config.get("targets")
+    if not isinstance(targets, list):
+        raise ProfileEditorError("Zielordner-Liste fehlt.")
+
+    fallback = config.get("fallback") if isinstance(config.get("fallback"), dict) else {}
+    review = profile.get("review_policy") if isinstance(profile.get("review_policy"), dict) else {}
+    if str(review.get("unclear_folder_id") or "") == target_id:
+        raise ProfileEditorError(
+            "Zielordner ist als Fallback referenziert und kann nicht gelöscht werden."
+        )
+
+    remaining = [t for t in targets if isinstance(t, dict) and t.get("id") != target_id]
+    if len(remaining) == len(targets):
+        raise ProfileEditorError(f"Zielordner '{target_id}' nicht gefunden.")
+    config["targets"] = remaining
+    return _persist_target_routing(profile, config)
+
+
+def update_fallback_destination(
+    profile: dict,
+    *,
+    display_name: str,
+    destination_path: str,
+    destination_type: str = DEST_TYPE_LOCAL,
+) -> dict:
+    """Update the fallback destination block."""
+    name = (display_name or "").strip()
+    path = (destination_path or "").strip()
+    if not name:
+        raise ProfileEditorError("Fallback-Anzeigename fehlt.")
+    if not path:
+        raise ProfileEditorError("Fallback-Zielordner fehlt.")
+    if destination_type not in (DEST_TYPE_LOCAL, DEST_TYPE_LEGACY_RELATIVE):
+        raise ProfileEditorError(f"Unbekannter Zieltyp: {destination_type}")
+
+    config = load_target_routing_config(profile)
+    config["fallback"] = {
+        "display_name": name,
+        "destination": {"type": destination_type, "path": path},
+    }
+    return _persist_target_routing(profile, config)
+
+
+def convert_legacy_target_to_local_folder(
+    profile: dict,
+    target_id: str,
+    *,
+    local_path: str,
+) -> dict:
+    """Convert a legacy relative target to an explicitly selected local folder."""
+    path = (local_path or "").strip()
+    if not path:
+        raise ProfileEditorError("Lokaler Zielordner fehlt.")
+    return update_target_folder(
+        profile,
+        target_id,
+        patch={"destination": {"type": DEST_TYPE_LOCAL, "path": path}},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,11 +385,82 @@ def update_document_profile(profile: dict, profile_id: str, patch: dict) -> dict
 
 
 # ---------------------------------------------------------------------------
+# 3b. update_folder_destination
+# ---------------------------------------------------------------------------
+
+
+def update_folder_destination(
+    profile: dict,
+    folder_id: str,
+    *,
+    mode: str,
+    path: str,
+) -> dict:
+    """Update destination for a folders[] entry."""
+    destination = {"mode": mode, "path": path.strip()}
+    errors = validate_destination(destination, prefix=f"folders[{folder_id}]")
+    if errors:
+        raise ProfileEditorError("; ".join(errors))
+
+    folders = profile.get("folders")
+    if not isinstance(folders, list):
+        raise ProfileEditorError("'folders' fehlt oder ist keine Liste.")
+
+    matches = [i for i, f in enumerate(folders) if isinstance(f, dict) and f.get("id") == folder_id]
+    if not matches:
+        raise ProfileEditorError(f"Ordner mit id '{folder_id}' nicht gefunden.")
+
+    result = copy.deepcopy(profile)
+    target = result["folders"][matches[0]]
+    target["destination"] = destination
+    if mode == MODE_RELATIVE:
+        target["folder_name"] = destination["path"]
+    return result
+
+
+def update_review_fallback_folder(
+    profile: dict,
+    *,
+    unclear_folder_id: str,
+) -> dict:
+    """Set the fallback destination for unclear/unmatched documents."""
+    result = copy.deepcopy(profile)
+    folders = result.get("folders")
+    if not isinstance(folders, list):
+        raise ProfileEditorError("'folders' fehlt oder ist keine Liste.")
+
+    folder_ids = {
+        str(f.get("id"))
+        for f in folders
+        if isinstance(f, dict) and f.get("id")
+    }
+    if unclear_folder_id not in folder_ids:
+        raise ProfileEditorError(
+            f"unclear_folder_id '{unclear_folder_id}' existiert nicht in folders."
+        )
+
+    review = result.get("review_policy")
+    if not isinstance(review, dict):
+        review = {}
+        result["review_policy"] = review
+
+    review["unclear_folder_id"] = unclear_folder_id
+    try:
+        dest = normalize_folder_destination(
+            next(f for f in folders if isinstance(f, dict) and f.get("id") == unclear_folder_id)
+        )
+        review["unclear_folder"] = dest["path"] if dest["mode"] == MODE_RELATIVE else dest["path"]
+    except ValueError:
+        pass
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 4. validate_profile_for_save
 # ---------------------------------------------------------------------------
 
 
-def validate_profile_for_save(profile: dict) -> list[str]:
+def validate_profile_for_save(profile: dict, *, skip_target_routing: bool = False) -> list[str]:
     """Prüft das Profil auf Konsistenz; gibt deutsche Fehlermeldungen zurück.
 
     Leere Liste = valide. Ruft weder profile_compiler noch jsonschema auf.
@@ -195,12 +473,50 @@ def validate_profile_for_save(profile: dict) -> list[str]:
         errors.append("Profil ist kein JSON-Objekt (dict).")
         return errors
 
+    if not skip_target_routing:
+        try:
+            routing_config = load_target_routing_config(profile)
+            errors.extend(validate_target_routing_config(routing_config))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Zielordner-Konfiguration: {exc}")
+
     folders = profile.get("folders")
     if not isinstance(folders, list):
         errors.append("'folders' fehlt oder ist keine Liste.")
         folder_ids: set[str] = set()
     else:
-        folder_ids = {f.get("id") for f in folders if isinstance(f, dict) and f.get("id")}
+        folder_ids = set()
+        for idx, folder in enumerate(folders):
+            prefix = f"folders[{idx}]"
+            if not isinstance(folder, dict):
+                errors.append(f"{prefix}: Eintrag ist kein dict.")
+                continue
+            fid = folder.get("id")
+            if not fid or not isinstance(fid, str):
+                errors.append(f"{prefix}: 'id' fehlt oder ist leer.")
+            else:
+                folder_ids.add(fid)
+            label = folder.get("label")
+            if not label or not isinstance(label, str):
+                errors.append(f"{prefix}: 'label' fehlt oder ist leer.")
+            try:
+                destination = normalize_folder_destination(folder)
+            except ValueError as exc:
+                errors.append(f"{prefix}: {exc}")
+                continue
+            errors.extend(
+                validate_destination(destination, prefix=f"{prefix}.destination")
+            )
+
+    review = profile.get("review_policy")
+    if isinstance(review, dict):
+        unclear_id = review.get("unclear_folder_id")
+        if unclear_id:
+            if unclear_id not in folder_ids:
+                errors.append(
+                    f"review_policy.unclear_folder_id '{unclear_id}' existiert nicht "
+                    "in folders."
+                )
 
     raw_dp = profile.get("document_profiles")
     if raw_dp is None:

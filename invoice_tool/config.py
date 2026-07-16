@@ -495,6 +495,14 @@ def load_document_profiles_from_runtime_rules(
     for item in raw_profiles:
         if not isinstance(item, dict):
             continue
+        target_dest_raw = item.get("target_destination")
+        target_destination = (
+            dict(target_dest_raw) if isinstance(target_dest_raw, dict) else None
+        )
+        fallback_dest_raw = item.get("fallback_destination")
+        fallback_destination = (
+            dict(fallback_dest_raw) if isinstance(fallback_dest_raw, dict) else None
+        )
         result.append(
             DocumentProfileRule(
                 id=str(item.get("id", "")),
@@ -504,6 +512,8 @@ def load_document_profiles_from_runtime_rules(
                 negative_hints=tuple(item.get("negative_hints") or []),
                 target_folder=str(item.get("target_folder", "")),
                 fallback_folder=str(item.get("fallback_folder", "unklar")),
+                target_destination=target_destination,
+                fallback_destination=fallback_destination,
                 confidence_threshold=float(item.get("confidence_threshold", 0.5)),
                 duplicate_policy=str(item.get("duplicate_policy", "keep")),
                 naming_template=item.get("naming_template") or None,
@@ -511,6 +521,25 @@ def load_document_profiles_from_runtime_rules(
                 fallback_values=dict(item.get("fallback_values") or {}),
             )
         )
+    return result
+
+
+def load_folder_destinations_from_runtime_rules(
+    rules_dict: dict,
+) -> dict[str, dict[str, str]]:
+    """Load compiled folder_destinations from runtime_rules."""
+    raw = rules_dict.get("folder_destinations")
+    if not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for folder_id, destination in raw.items():
+        if not isinstance(destination, dict):
+            continue
+        mode = str(destination.get("mode") or "relative_to_output_root")
+        path = str(destination.get("path") or "").strip()
+        if path:
+            result[str(folder_id)] = {"mode": mode, "path": path}
     return result
 
 
