@@ -40,7 +40,7 @@ SAAS_SURFACE_UI_LABELS: dict[str, str] = {
 
 DEFAULT_SAAS_REVIEW_RULE_LABEL = "Unklar bei Nicht-Treffer"
 DEFAULT_SAAS_CONFIG_NAME = "Neue Konfiguration"
-GENERIC_CONFIG_NAME_PLACEHOLDER = "z. B. Lieferant Hauptkonto"
+GENERIC_CONFIG_NAME_HINT = "z. B. Lieferant Hauptkonto"
 
 # Additional private-leak markers checked on UI surface payloads (beyond model guard).
 _EXTRA_PRIVATE_UI_MARKERS: tuple[str, ...] = (
@@ -103,7 +103,7 @@ class SaasConfigurationCreateDefaultsVM:
     filename_pattern: str
     review_rule: str
     payment_hint: str
-    name_placeholder: str
+    name_hint: str
 
 
 def load_blank_saas_profile() -> SaasProfileSurface:
@@ -115,11 +115,15 @@ def load_blank_saas_profile() -> SaasProfileSurface:
 
 
 def blank_profile_draft() -> ProfileDraftVM:
-    """ProfileDraftVM prefilled from build_blank_saas_profile() for UI-v2 create."""
+    """ProfileDraftVM for UI-v2 create from generic SaaS defaults.
+
+    Name starts empty so the editor requires an explicit user value
+    (surface label/default remains DEFAULT_SAAS_PROFILE_NAME).
+    """
 
     blank = load_blank_saas_profile()
     return ProfileDraftVM(
-        name=blank.profile_name,
+        name="",
         scan_model_id=blank.scan_model_id,
         is_new=True,
     )
@@ -163,7 +167,7 @@ def blank_configuration_create_defaults(
         filename_pattern=config.filename_pattern,
         review_rule=DEFAULT_SAAS_REVIEW_RULE_LABEL,
         payment_hint=config.payment_hint,
-        name_placeholder=GENERIC_CONFIG_NAME_PLACEHOLDER,
+        name_hint=GENERIC_CONFIG_NAME_HINT,
     )
 
 

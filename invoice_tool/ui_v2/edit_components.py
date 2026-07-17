@@ -101,7 +101,7 @@ def unsaved_changes_dialog(
     )
 
 
-def _outlined_input_kwargs() -> dict:
+def _outlined_text_field_kwargs() -> dict:
     return {
         "dense": True,
         "text_size": 12,
@@ -114,14 +114,40 @@ def _outlined_input_kwargs() -> dict:
     }
 
 
+def _outlined_dropdown_kwargs() -> dict:
+    return {
+        "dense": True,
+        "text_size": 12,
+        "border_radius": RADIUS_INPUT,
+        "border_color": COLOR_BORDER,
+        "focused_border_color": COLOR_BORDER_STRONG,
+        "bgcolor": COLOR_SURFACE,
+    }
+
+
+def full_width_field(field: ft.Control) -> ft.Container:
+    """Full-width wrapper for edit-form inputs inside scrollable panels.
+
+    Unlike a fixed-height clipped shell, this lets TextField/Dropdown paint
+    natively so borders scroll with their content (Flet 0.85 scroll ghost fix).
+    The wrapped control should set ``expand=True``.
+    """
+    return ft.Container(expand=True, alignment=ft.Alignment.CENTER_LEFT, content=field)
+
+
 def compact_input_shell(field: ft.Control) -> ft.Container:
-    """Uniform 34px control height for single-line inputs."""
-    return ft.Container(height=INPUT_CONTROL_HEIGHT, alignment=ft.Alignment.CENTER_LEFT, content=field)
+    """Backward-compatible alias — prefer :func:`full_width_field` in edit forms."""
+    return full_width_field(field)
 
 
 def outlined_field_kwargs() -> dict:
-    """Shared outline styling for TextField/Dropdown in edit forms."""
-    return _outlined_input_kwargs()
+    """Shared outline styling for TextField inputs in edit forms."""
+    return _outlined_text_field_kwargs()
+
+
+def outlined_dropdown_kwargs() -> dict:
+    """Shared outline styling for Dropdown controls in edit forms."""
+    return _outlined_dropdown_kwargs()
 
 
 def form_field(
@@ -130,7 +156,7 @@ def form_field(
     value: str = "",
     on_change: Callable[[ft.ControlEvent], None] | None = None,
     read_only: bool = False,
-    placeholder: str | None = None,
+    hint: str | None = None,
 ) -> ft.TextField:
     """Single-line input — pair with form_field_group for Make-style label-above layout."""
     del label  # Label is rendered by form_field_group.
@@ -138,8 +164,9 @@ def form_field(
         value=value,
         read_only=read_only,
         on_change=on_change,
-        hint_text=placeholder,
-        **_outlined_input_kwargs(),
+        hint_text=hint,
+        expand=True,
+        **_outlined_text_field_kwargs(),
     )
 
 

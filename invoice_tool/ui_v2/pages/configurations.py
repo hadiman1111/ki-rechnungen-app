@@ -7,11 +7,12 @@ from typing import Callable
 import flet as ft
 
 from invoice_tool.app_paths import resolve_active_profile_id
-from invoice_tool.configuration_model import copy_filename_pattern
+from invoice_tool.configuration_model import copy_filename_pattern, pattern_to_template
 from invoice_tool.profile_store import load_profile_bundle
 from invoice_tool.ui_v2.adapters.configuration_write_adapter import (
     delete_configuration,
     new_configuration_draft,
+    reorder_configurations,
     set_configuration_active,
     update_configuration,
     update_unmatched_configuration,
@@ -40,6 +41,7 @@ from invoice_tool.ui_v2.components import (
     make_status_toggle_pill,
     page_header,
     page_scaffold,
+    resolve_list_detail_height,
     secondary_button,
     status_badge,
 )
@@ -48,16 +50,16 @@ from invoice_tool.ui_v2.display_format import user_matching_summary_from_text
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM
 from invoice_tool.ui_v2.edit_components import (
     action_button,
-    compact_input_shell,
     confirmation_dialog,
     feedback_banner,
     form_field,
+    full_width_field,
     helper_text,
     unsaved_changes_dialog,
 )
 from invoice_tool.ui_v2.filename_editor import build_filename_pattern_editor
 from invoice_tool.ui_v2.saas_profile_surface import (
-    GENERIC_CONFIG_NAME_PLACEHOLDER,
+    GENERIC_CONFIG_NAME_HINT,
     SAAS_SURFACE_UI_LABELS,
     blank_configuration_create_defaults,
 )
@@ -162,6 +164,10 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         draft.name = saas_defaults.name
         draft.destination_path = saas_defaults.destination_folder
         state.config_draft = draft
+        saas_draft = state.saas_draft_store.begin_blank_configuration(
+            document_type=saas_defaults.document_type
+        )
+        saas_draft.filename_pattern = saas_defaults.filename_pattern
         state.config_list_selected_id = None
         state.config_field_errors = {}
         _set_feedback("")
@@ -262,6 +268,25 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.message, is_error=True)
         else:
             _set_feedback("Konfiguration aktiviert." if active else "Konfiguration deaktiviert.")
+        _refresh()
+
+    def _reorder(config_id: str, *, direction: int) -> None:
+        ordered_ids = [item.configuration_id for item in page_vm.configurations]
+        try:
+            index = ordered_ids.index(config_id)
+        except ValueError:
+            _set_feedback("Konfiguration nicht gefunden.", is_error=True)
+            _refresh()
+            return
+        target = index + direction
+        if target < 0 or target >= len(ordered_ids):
+            return
+        ordered_ids[index], ordered_ids[target] = ordered_ids[target], ordered_ids[index]
+        result = reorder_configurations(profile_id, ordered_ids)
+        if not result.success:
+            _set_feedback(result.message, is_error=True)
+        else:
+            _set_feedback(result.message)
         _refresh()
 
     def _request_delete(config_id: str, name: str) -> None:
@@ -379,6 +404,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             path = await choose_target_folder(dialog_title="Zielordner auswählen")
             if path:
                 draft.destination_path = path
+                state.saas_draft_store.update_configuration_field("destination_folder", path)
                 _refresh()
 
         def _schedule_pick(_event: ft.ControlEvent) -> None:
@@ -387,37 +413,87 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
 
         def _on_pattern_change(pattern) -> None:
             draft.filename_pattern = copy_filename_pattern(pattern)
+            try:
+                summary = pattern_to_template(pattern).strip()
+            except Exception:
+                summary = ""
+            if summary:
+                state.saas_draft_store.update_configuration_field("filename_pattern", summary)
 
         def _set_active(val: bool) -> None:
             draft.active = val
+            state.saas_draft_store.update_configuration_field("active", val)
             _refresh()
+
+        saas_config = state.saas_draft_store.configuration_draft
+        if saas_config is None and state.config_edit_mode == "create":
+            saas_config = state.saas_draft_store.begin_blank_configuration()
 
         if not draft.is_unmatched:
             name_field = form_field(
                 "Name",
                 value=draft.name,
-                placeholder=GENERIC_CONFIG_NAME_PLACEHOLDER,
+                hint=GENERIC_CONFIG_NAME_HINT,
+            )
+            document_type_field = form_field(
+                SAAS_SURFACE_UI_LABELS["document_type"],
+                value=(saas_config.document_type if saas_config else ""),
+            )
+            payment_field = form_field(
+                SAAS_SURFACE_UI_LABELS["payment_hint"],
+                value=(saas_config.payment_hint if saas_config else ""),
+            )
+            review_field = form_field(
+                SAAS_SURFACE_UI_LABELS["review_rule"],
+                value=(saas_config.review_rule_label() if saas_config else "Unklar bei Nicht-Treffer"),
             )
 
             def _update_name(_event: ft.ControlEvent | None = None) -> None:
                 draft.name = (name_field.value or "").strip()
+                state.saas_draft_store.update_configuration_field("name", draft.name)
+                state.config_field_errors = {}
+
+            def _update_saas_extras(_event: ft.ControlEvent | None = None) -> None:
+                state.saas_draft_store.update_configuration_field(
+                    "document_type", (document_type_field.value or "").strip()
+                )
+                state.saas_draft_store.update_configuration_field(
+                    "payment_hint", (payment_field.value or "").strip()
+                )
                 state.config_field_errors = {}
 
             name_field.on_change = _update_name
+            document_type_field.on_change = _update_saas_extras
+            payment_field.on_change = _update_saas_extras
 
             def _update_field(feature_key: str) -> None:
                 draft.matching.feature_key = feature_key
                 draft.matching.operator = "ist"
+                state.saas_draft_store.update_configuration_field(
+                    "matching_conditions",
+                    f"{feature_key} ist {', '.join(draft.matching.values)}".strip(),
+                )
                 state.config_field_errors = {}
                 _refresh()
 
             def _update_values(values: list[str]) -> None:
                 draft.matching.values = values
                 draft.matching.operator = "ist"
+                state.saas_draft_store.update_configuration_field(
+                    "matching_conditions",
+                    f"{draft.matching.feature_key} ist {', '.join(values)}".strip(),
+                )
                 state.config_field_errors = {}
                 _refresh()
 
-            editor_fields.append(form_field_group("Name", compact_input_shell(name_field), error=field_errors.get("name")))
+            editor_fields.append(form_field_group("Name", full_width_field(name_field), error=field_errors.get("name")))
+            editor_fields.append(
+                form_field_group(
+                    SAAS_SURFACE_UI_LABELS["document_type"],
+                    full_width_field(document_type_field),
+                    error=field_errors.get("document_type"),
+                )
+            )
             editor_fields.append(
                 build_rule_builder_field(
                     scan_model=scan_model,
@@ -428,11 +504,27 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
                     error=field_errors.get("matching"),
                 )
             )
+            editor_fields.append(
+                form_field_group(
+                    SAAS_SURFACE_UI_LABELS["review_rule"],
+                    full_width_field(review_field),
+                )
+            )
+            editor_fields.append(
+                form_field_group(
+                    SAAS_SURFACE_UI_LABELS["payment_hint"],
+                    full_width_field(payment_field),
+                )
+            )
         else:
             editor_fields.append(helper_text("Dokumente ohne eindeutige Zuordnung werden hier gesammelt."))
 
         if field_errors.get("_form"):
             editor_fields.append(inline_warning(field_errors["_form"]))
+
+        def _on_destination_change(path: str) -> None:
+            draft.destination_path = path
+            state.saas_draft_store.update_configuration_field("destination_folder", path)
 
         editor_fields.append(
             build_filename_pattern_editor(
@@ -445,7 +537,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         editor_fields.append(
             build_folder_picker_field(
                 value=draft.destination_path,
-                on_change=lambda path: setattr(draft, "destination_path", path),
+                on_change=_on_destination_change,
                 on_pick=_schedule_pick,
                 error=field_errors.get("destination_path"),
             )
@@ -455,23 +547,21 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             editor_fields.append(make_form_status_toggle(active=draft.active, on_change=_set_active))
 
         if state.config_edit_mode == "create":
+            generic_keys = ", ".join(
+                item["label"] for item in state.saas_draft_store.generic_editor_fields()
+            )
             editor_fields.append(
                 helper_text(
-                    f"{SAAS_SURFACE_UI_LABELS['matching_conditions']} · "
-                    f"{SAAS_SURFACE_UI_LABELS['destination']} · "
-                    f"{SAAS_SURFACE_UI_LABELS['filename_pattern']} · "
-                    f"{SAAS_SURFACE_UI_LABELS['review_rule']} · "
-                    f"{SAAS_SURFACE_UI_LABELS['payment_hint']} — "
-                    "Defaults aus dem generischen SaaS-Modell, ohne private Vorbelegung."
+                    f"Generischer Konfigurationseditor: {generic_keys}. "
+                    "In-Memory-Entwurf ohne private Vorbelegung."
                 )
             )
 
-        save_label = "Erstellen" if state.config_edit_mode == "create" else "Speichern"
         footer = make_panel_footer_end(
             secondary_button("Abbrechen", on_click=_cancel_edit),
-            make_accent_cta_button(save_label, on_click=_save_config),
+            make_accent_cta_button("Speichern", on_click=_save_config),
         )
-        detail_body = ft.Column(editor_fields, spacing=14, tight=True)
+        detail_body = ft.ListView(editor_fields, spacing=14, padding=0, auto_scroll=False, expand=True)
 
     elif selected_config is not None:
         config = selected_config
@@ -512,11 +602,37 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
                 on_toggle=lambda _e, cid=config.configuration_id, active=config.active: _toggle_active(cid, not active),
             )
 
-        footer = make_panel_footer_start(
+        view_actions: list[ft.Control] = [
             action_button(
                 "Bearbeiten",
                 on_click=lambda _e, cid=config.configuration_id, um=is_unmatched: _start_edit(cid, is_unmatched=um),
             ),
+        ]
+        if not is_unmatched:
+            activate_label = "Deaktivieren" if config.active else "Aktivieren"
+            view_actions.append(
+                action_button(
+                    activate_label,
+                    on_click=lambda _e, cid=config.configuration_id, active=config.active: _toggle_active(
+                        cid, not active
+                    ),
+                )
+            )
+            view_actions.append(
+                action_button(
+                    "Nach oben",
+                    on_click=lambda _e, cid=config.configuration_id: _reorder(cid, direction=-1),
+                )
+            )
+            view_actions.append(
+                action_button(
+                    "Nach unten",
+                    on_click=lambda _e, cid=config.configuration_id: _reorder(cid, direction=1),
+                )
+            )
+
+        footer = make_panel_footer_start(
+            *view_actions,
             destructive=None
             if is_unmatched
             else action_button(
@@ -538,27 +654,28 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             ),
         )
 
+    panel_height = resolve_list_detail_height(state.page, editing=is_editing)
     edit_body_padding = ft.Padding.only(left=18, right=18, top=16, bottom=12)
     view_body_padding = ft.Padding.only(left=18, right=18, top=2, bottom=0)
 
     detail_panel_ctrl = make_split_detail_panel(
         detail_title,
         detail_body,
+        height=panel_height,
         header_trailing=header_trailing,
         footer=footer,
-        scroll_body=False,
+        scroll_body=is_editing,
         body_padding=edit_body_padding if is_editing else view_body_padding,
     )
 
     items.append(
         list_detail_split(
-            list_panel("Konfigurationen", list_body, expand=True),
+            list_panel("Konfigurationen", list_body, height=panel_height),
             detail_panel_ctrl,
-            expand=True,
         )
     )
 
     for warning in page_vm.warnings:
         items.append(inline_warning(warning))
 
-    return page_scaffold(*items, expand_last=True)
+    return page_scaffold(*items)

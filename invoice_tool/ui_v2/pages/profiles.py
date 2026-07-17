@@ -35,23 +35,24 @@ from invoice_tool.ui_v2.components import (
     make_split_detail_panel,
     page_header,
     page_scaffold,
+    resolve_list_detail_height,
     status_badge,
 )
 from invoice_tool.ui_v2.draft_models import ProfileDraftVM
 from invoice_tool.ui_v2.edit_components import (
     action_button,
-    compact_input_shell,
     confirmation_dialog,
     feedback_banner,
     form_field,
+    full_width_field,
     helper_text,
+    outlined_dropdown_kwargs,
     outlined_field_kwargs,
     unsaved_changes_dialog,
 )
 from invoice_tool.ui_v2.saas_profile_surface import (
     SAAS_SURFACE_UI_LABELS,
     blank_profile_draft,
-    build_saas_profile_surface_vm,
 )
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.theme import SPACE_SM
@@ -140,6 +141,8 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         state.profile_edit_mode = "create"
         # Create defaults from generic SaaS model (no private tenant prefill).
         state.profile_draft = blank_profile_draft()
+        state.saas_draft_store.begin_blank_profile()
+        state.saas_draft_store.update_profile_field("profile_name", "")
         state.profile_list_selected_id = None
         state.profile_field_errors = {}
         _set_feedback("")
@@ -165,6 +168,10 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             scan_model_id=bundle.scan_model_id,
             is_new=False,
         )
+        saas_draft = state.saas_draft_store.begin_blank_profile()
+        state.saas_draft_store.update_profile_field("profile_name", bundle.name)
+        state.saas_draft_store.update_profile_field("scan_model_id", bundle.scan_model_id)
+        saas_draft.is_new = False
         state.profile_list_selected_id = profile_id
         state.profile_field_errors = {}
         _set_feedback("")
@@ -190,6 +197,10 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             errors["name"] = name_issues[0]
         if model_issues:
             errors["scan_model_id"] = model_issues[0]
+        saas_validation = state.saas_draft_store.validate_profile_draft()
+        errors.update(saas_validation.field_errors)
+        if saas_validation.private_default_violations:
+            errors["_form"] = "Private Tenant-Defaults sind nicht erlaubt."
         if errors:
             state.profile_field_errors = errors
             _set_feedback("")
@@ -330,10 +341,16 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     header_trailing: ft.Control | None = None
     detail_body: ft.Control
     footer: ft.Control | None = None
-    saas_surface = build_saas_profile_surface_vm()
+    saas_surface = state.saas_draft_store.surface_vm_from_draft()
+    saas_draft = state.saas_draft_store.profile_draft
 
     if is_editing and state.profile_draft is not None:
         draft = state.profile_draft
+        if saas_draft is None:
+            saas_draft = state.saas_draft_store.begin_blank_profile()
+            state.saas_draft_store.update_profile_field("profile_name", draft.name)
+            state.saas_draft_store.update_profile_field("scan_model_id", draft.scan_model_id)
+            saas_draft = state.saas_draft_store.profile_draft
         detail_title = (
             SAAS_SURFACE_UI_LABELS["new_profile"]
             if state.profile_edit_mode == "create"
@@ -346,66 +363,111 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             value=draft.scan_model_id or None,
             options=[ft.dropdown.Option(model.id, model.label) for model in list_scan_models()],
             hint_text=f"— {SAAS_SURFACE_UI_LABELS['scan_model']} —",
-            **outlined_field_kwargs(),
+            expand=True,
+            **outlined_dropdown_kwargs(),
+        )
+        document_type_field = form_field(
+            SAAS_SURFACE_UI_LABELS["document_type"],
+            value=(saas_draft.document_type if saas_draft else saas_surface.document_type),
+        )
+        matching_field = form_field(
+            SAAS_SURFACE_UI_LABELS["matching_conditions"],
+            value=(saas_draft.matching_conditions_text if saas_draft else ""),
+        )
+        destination_field = form_field(
+            SAAS_SURFACE_UI_LABELS["destination"],
+            value=(saas_draft.destination_folder if saas_draft else ""),
+        )
+        filename_field = form_field(
+            SAAS_SURFACE_UI_LABELS["filename_pattern"],
+            value=(saas_draft.filename_pattern if saas_draft else saas_surface.filename_pattern),
+        )
+        review_field = form_field(
+            SAAS_SURFACE_UI_LABELS["review_rule"],
+            value=(saas_draft.review_rule_label() if saas_draft else saas_surface.review_rule),
+        )
+        payment_field = form_field(
+            SAAS_SURFACE_UI_LABELS["payment_hint"],
+            value=(saas_draft.payment_hint if saas_draft else ""),
         )
 
         def _update_draft(_event: ft.ControlEvent | None = None) -> None:
             draft.name = (name_field.value or "").strip()
             draft.scan_model_id = (model_dd.value or "").strip()
+            state.saas_draft_store.update_profile_field("profile_name", draft.name)
+            state.saas_draft_store.update_profile_field("scan_model_id", draft.scan_model_id)
+            state.saas_draft_store.update_profile_field(
+                "document_type", (document_type_field.value or "").strip()
+            )
+            state.saas_draft_store.update_profile_field(
+                "matching_conditions", (matching_field.value or "").strip()
+            )
+            state.saas_draft_store.update_profile_field(
+                "destination_folder", (destination_field.value or "").strip()
+            )
+            state.saas_draft_store.update_profile_field(
+                "filename_pattern", (filename_field.value or "").strip()
+            )
+            state.saas_draft_store.update_profile_field(
+                "payment_hint", (payment_field.value or "").strip()
+            )
             state.profile_field_errors = {}
 
         name_field.on_change = _update_draft
         model_dd.on_change = _update_draft
+        document_type_field.on_change = _update_draft
+        matching_field.on_change = _update_draft
+        destination_field.on_change = _update_draft
+        filename_field.on_change = _update_draft
+        payment_field.on_change = _update_draft
 
         editor_fields: list[ft.Control] = [
-            form_field_group("Profilname", compact_input_shell(name_field), error=field_errors.get("name")),
+            form_field_group(
+                "Profilname",
+                full_width_field(name_field),
+                error=field_errors.get("name") or field_errors.get("profile_name"),
+            ),
             form_field_group(
                 SAAS_SURFACE_UI_LABELS["scan_model"],
-                compact_input_shell(model_dd),
+                full_width_field(model_dd),
                 error=field_errors.get("scan_model_id"),
             ),
             helper_text("Bestimmt, welche KI-Modellkonfiguration zur Dokumenterkennung verwendet wird."),
-            make_metadata_block(
-                make_metadata_row(SAAS_SURFACE_UI_LABELS["document_type"], saas_surface.document_type),
-                make_metadata_row(
-                    SAAS_SURFACE_UI_LABELS["matching_conditions"],
-                    saas_surface.matching_conditions_summary,
-                ),
-                make_metadata_row(
-                    SAAS_SURFACE_UI_LABELS["destination"],
-                    (
-                        " / ".join(
-                            part
-                            for part in (
-                                saas_surface.destination_category,
-                                saas_surface.destination_folder,
-                            )
-                            if part
-                        )
-                        or "—"
-                    ),
-                ),
-                make_metadata_row(
-                    SAAS_SURFACE_UI_LABELS["filename_pattern"],
-                    saas_surface.filename_pattern,
-                ),
-                make_metadata_row(SAAS_SURFACE_UI_LABELS["review_rule"], saas_surface.review_rule),
-                make_metadata_row(
-                    SAAS_SURFACE_UI_LABELS["payment_hint"],
-                    saas_surface.payment_hint or "—",
-                ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["document_type"],
+                full_width_field(document_type_field),
+                error=field_errors.get("document_type"),
+            ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["matching_conditions"],
+                full_width_field(matching_field),
+            ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["destination"],
+                full_width_field(destination_field),
+            ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["filename_pattern"],
+                full_width_field(filename_field),
+            ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["review_rule"],
+                full_width_field(review_field),
+            ),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["payment_hint"],
+                full_width_field(payment_field),
             ),
             helper_text(
-                "Weitere Felder folgen dem generischen SaaS-Profilmodell; "
+                "Entwurfsfelder im generischen SaaS-Profilmodell (In-Memory); "
                 "keine privaten Vorbelegungen. Verarbeitung wird hier nicht gestartet."
             ),
         ]
-        save_label = "Erstellen" if state.profile_edit_mode == "create" else "Speichern"
         footer = make_panel_footer_end(
             action_button("Abbrechen", on_click=_cancel_edit),
-            action_button(save_label, on_click=_save_profile, primary=True),
+            action_button("Speichern", on_click=_save_profile, primary=True),
         )
-        detail_body = ft.Column(editor_fields, spacing=SPACE_SM, tight=True)
+        detail_body = ft.ListView(editor_fields, spacing=SPACE_SM, padding=0, auto_scroll=False, expand=True)
 
     elif selected_id and (selected_entry := _profile_detail_for(state, profile, selected_id)) is not None:
         try:
@@ -455,21 +517,23 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             content=empty_state("Profil auswählen", detail="Wählen Sie links ein Profil, um Details anzuzeigen."),
         )
 
+    panel_height = resolve_list_detail_height(state.page, editing=is_editing)
     edit_body_padding = ft.Padding.only(left=18, right=18, top=16, bottom=12)
     view_body_padding = ft.Padding.only(left=18, right=18, top=2, bottom=0)
 
     detail_panel_ctrl = make_split_detail_panel(
         detail_title,
         detail_body,
+        height=panel_height,
         header_trailing=header_trailing,
         footer=footer,
-        scroll_body=False,
+        scroll_body=is_editing,
         body_padding=edit_body_padding if is_editing else view_body_padding,
     )
 
-    items.append(list_detail_split(list_panel("Profile", list_body, expand=True), detail_panel_ctrl, expand=True))
+    items.append(list_detail_split(list_panel("Profile", list_body, height=panel_height), detail_panel_ctrl))
 
     for warning in profile.warnings:
         items.append(inline_warning(warning))
 
-    return page_scaffold(*items, expand_last=True)
+    return page_scaffold(*items)

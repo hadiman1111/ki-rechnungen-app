@@ -43,7 +43,9 @@ from invoice_tool.ui_v2.theme import (
     FONT_SIZE_PAGE_TITLE,
     FONT_SIZE_SECTION_TITLE,
     FORM_MAX_WIDTH,
+    LIST_DETAIL_EDIT_HEIGHT,
     LIST_DETAIL_GAP,
+    LIST_DETAIL_MAX_HEIGHT,
     LIST_DETAIL_MIN_HEIGHT,
     LIST_PANEL_MIN_WIDTH,
     METADATA_LABEL_WIDTH,
@@ -206,6 +208,31 @@ def workflow_phase_card(title: str, body: ft.Control) -> ft.Container:
             spacing=SPACE_SM,
         ),
     )
+
+
+def resolve_list_detail_height(page: ft.Page | None, *, editing: bool) -> int:
+    """List/detail panel height — bounded by the real browser/window height.
+
+    The Make reference constants (`LIST_DETAIL_EDIT_HEIGHT` / `_MIN_HEIGHT`)
+    stay as a floor for the initial paint (before the page has reported a
+    real size) and for small windows, but on a larger window the panel grows
+    with it instead of staying stuck at a fixed pixel count — most visible on
+    the Konfigurationen edit panel, whose third field (Dateinamenmuster) needs
+    the most room.
+
+    Note: this intentionally computes a concrete height rather than switching
+    the surrounding Row/Column to `expand=True`. UI-v2 previously shipped an
+    `expand=True` list/detail layout that collapsed page content in Flet 0.85
+    (see docs/audits/KI_RECHNUNGEN_UI_V2_RENDERING_LAYOUT_RECOVERY_2026-07-11.md)
+    — do not reintroduce that pattern here.
+    """
+    baseline = LIST_DETAIL_EDIT_HEIGHT if editing else LIST_DETAIL_MIN_HEIGHT
+    page_height = getattr(page, "height", None)
+    if not page_height:
+        return baseline
+    chrome_reserved = 300  # page padding + header + KPI strip + safety margin
+    available = int(page_height) - chrome_reserved
+    return max(baseline, min(available, LIST_DETAIL_MAX_HEIGHT))
 
 
 def list_detail_split(list_panel_ctrl: ft.Control, detail_panel_ctrl: ft.Control, *, expand: bool = False) -> ft.Row:
@@ -1481,8 +1508,15 @@ def make_split_detail_panel(
     if header_trailing is not None:
         header_row.append(header_trailing)
     use_scroll = scroll_body if scroll_body is not None else (height is not None and (footer is not None or not compact_body))
-    if use_scroll:
-        body_section: ft.Control = ft.Container(
+    if use_scroll and isinstance(body, ft.ListView):
+        body_section = ft.Container(
+            expand=True,
+            padding=pad,
+            alignment=ft.Alignment.TOP_LEFT,
+            content=body,
+        )
+    elif use_scroll:
+        body_section = ft.Container(
             expand=True,
             padding=pad,
             alignment=ft.Alignment.TOP_LEFT,
@@ -1824,7 +1858,7 @@ def form_field_group(label: str, field: ft.Control, *, error: str | None = None,
         items.append(field_error(error))
     if helper:
         items.append(ft.Text(helper, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED))
-    return ft.Column(items, spacing=SPACE_XS, tight=True)
+    return ft.Column(items, spacing=SPACE_SM, tight=True)
 
 
 def divider() -> ft.Divider:
@@ -1839,7 +1873,10 @@ def divider() -> ft.Divider:
 def _outline_button_style(*, text_color: str = COLOR_TEXT_SECONDARY) -> ft.ButtonStyle:
     return ft.ButtonStyle(
         color=text_color,
-        bgcolor=COLOR_SURFACE,
+        # Slightly tinted surface (not pure white) so outline buttons stay
+        # visible as buttons against the white panel background instead of
+        # looking transparent/invisible with just a hairline border.
+        bgcolor=COLOR_SURFACE_ALT,
         elevation=0,
         side=ft.BorderSide(1, COLOR_BORDER),
         shape=ft.RoundedRectangleBorder(radius=6),
@@ -1848,22 +1885,22 @@ def _outline_button_style(*, text_color: str = COLOR_TEXT_SECONDARY) -> ft.Butto
     )
 
 
-def primary_button(label: str, *, on_click: Callable[[ft.ControlEvent], None], disabled: bool = False) -> ft.OutlinedButton:
+def primary_button(label: str, *, on_click: Callable[[ft.ControlEvent], None], disabled: bool = False, height: int = 28) -> ft.OutlinedButton:
     return ft.OutlinedButton(
         content=label,
         on_click=on_click,
         disabled=disabled,
-        height=28,
+        height=height,
         style=_outline_button_style(text_color=COLOR_PRIMARY),
     )
 
 
-def secondary_button(label: str, *, on_click: Callable[[ft.ControlEvent], None], disabled: bool = False) -> ft.OutlinedButton:
+def secondary_button(label: str, *, on_click: Callable[[ft.ControlEvent], None], disabled: bool = False, height: int = 28) -> ft.OutlinedButton:
     return ft.OutlinedButton(
         content=label,
         on_click=on_click,
         disabled=disabled,
-        height=28,
+        height=height,
         style=_outline_button_style(),
     )
 

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
+from invoice_tool.ui_v2.saas_profile_state import SaasProfileStateStore, new_saas_profile_state_store
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
 
 
@@ -30,6 +31,9 @@ class UiV2State:
     config_feedback: str = ""
     config_feedback_error: bool = False
     config_field_errors: dict[str, str] = field(default_factory=dict)
+
+    # In-memory generic SaaS drafts (no cloud persistence; no private defaults).
+    saas_draft_store: SaasProfileStateStore = field(default_factory=new_saas_profile_state_store)
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
@@ -58,6 +62,7 @@ class UiV2State:
         self.profile_feedback = ""
         self.profile_feedback_error = False
         self.profile_field_errors = {}
+        self.saas_draft_store.profile_draft = None
 
     def discard_config_edit(self) -> None:
         self.config_edit_mode = "view"
@@ -65,6 +70,7 @@ class UiV2State:
         self.config_feedback = ""
         self.config_feedback_error = False
         self.config_field_errors = {}
+        self.saas_draft_store.configuration_draft = None
 
     def discard_all_edits(self) -> None:
         self.discard_profile_edit()

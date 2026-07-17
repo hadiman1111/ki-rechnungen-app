@@ -13,7 +13,7 @@ from invoice_tool.saas_product_model import (
     build_blank_saas_profile,
 )
 from invoice_tool.ui_v2.saas_profile_surface import (
-    GENERIC_CONFIG_NAME_PLACEHOLDER,
+    GENERIC_CONFIG_NAME_HINT,
     SAAS_SURFACE_UI_LABELS,
     assert_ui_surface_defaults_are_generic,
     blank_configuration_create_defaults,
@@ -61,19 +61,21 @@ def test_profile_surface_uses_build_blank_saas_profile() -> None:
 
     draft = blank_profile_draft()
     assert draft.is_new is True
-    assert draft.name == DEFAULT_SAAS_PROFILE_NAME
+    assert draft.name == ""
     assert draft.scan_model_id == DEFAULT_SAAS_SCAN_MODEL_ID
+    assert DEFAULT_SAAS_PROFILE_NAME  # surface default remains generic
 
 
 def test_ui_v2_pages_import_saas_profile_surface() -> None:
     profiles_src = PROFILES_PAGE.read_text(encoding="utf-8")
     configs_src = CONFIGS_PAGE.read_text(encoding="utf-8")
     assert "blank_profile_draft" in profiles_src
-    assert "build_saas_profile_surface_vm" in profiles_src
+    assert "saas_draft_store" in profiles_src
     assert "saas_profile_surface" in profiles_src
     assert "blank_configuration_create_defaults" in configs_src
-    assert "GENERIC_CONFIG_NAME_PLACEHOLDER" in configs_src
+    assert "GENERIC_CONFIG_NAME_HINT" in configs_src
     assert "American Express" not in configs_src
+    assert "saas_draft_store" in configs_src or "begin_blank_configuration" in configs_src
 
 
 def test_surface_defaults_contain_no_private_markers() -> None:
@@ -89,8 +91,8 @@ def test_surface_defaults_contain_no_private_markers() -> None:
     config_blob = str(config_defaults)
     for marker in PRIVATE_MARKERS:
         assert marker not in config_blob, marker
-    assert "American Express" not in config_defaults.name_placeholder
-    assert config_defaults.name_placeholder == GENERIC_CONFIG_NAME_PLACEHOLDER
+    assert "American Express" not in config_defaults.name_hint
+    assert config_defaults.name_hint == GENERIC_CONFIG_NAME_HINT
     assert config_defaults.filename_pattern == DEFAULT_SAAS_FILENAME_PATTERN
     assert config_defaults.destination_category == ""
     assert config_defaults.destination_folder == ""
