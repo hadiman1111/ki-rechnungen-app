@@ -5,6 +5,7 @@
  * Points Flet desktop to a branded client under Contents/Resources/FletView
  * so the visible Dock identity is KI-Rechnungen (not generic Flet/fish).
  * The outer wrapper Info.plist uses LSUIElement; the Flet view does not.
+ * Dock may pin the FletView; its bootstrap cold-starts this outer stub.
  * No automatic invoice processing.
  */
 #include <errno.h>

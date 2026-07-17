@@ -11,6 +11,7 @@ DOCK_BUILD = ROOT / "scripts" / "build_macos_dock_app.sh"
 ROOT_BUILD = ROOT / "build_macos_app.sh"
 LAUNCHER = ROOT / "scripts" / "run_internal_launcher_flet085.sh"
 LAUNCHER_C = ROOT / "scripts" / "macos_dock_launcher.c"
+FLETVIEW_BOOTSTRAP_C = ROOT / "scripts" / "macos_fletview_bootstrap.c"
 ENTRY = ROOT / "app_internal_launcher.py"
 
 
@@ -40,6 +41,22 @@ def test_dock_build_script_exists_and_targets_internal_launcher() -> None:
     assert "actool" in content
     assert "AppIcon.appiconset" in content
     assert "CFBundleIconName" in content
+    assert "macos_fletview_bootstrap.c" in content
+    assert '${VIEW_EXEC_NAME}.real' in content
+    assert "FletView-Bootstrap" in content
+
+
+def test_fletview_bootstrap_cold_start_opens_outer_app() -> None:
+    assert FLETVIEW_BOOTSTRAP_C.is_file()
+    content = FLETVIEW_BOOTSTRAP_C.read_text(encoding="utf-8")
+    assert "is_warm_flet_launch" in content
+    assert "ki-rechnungen-app.real" in content
+    assert "/usr/bin/open" in content
+    assert "FletView" in content
+    assert "no automatic invoice processing" in content
+    assert "posix_spawn" in content
+    assert "argc >= 3" in content
+    assert "page_url" in content
 
 
 def test_native_stub_source_has_no_auto_processing() -> None:

@@ -5,6 +5,8 @@
 # Single-Dock-Strategie (ohne den gescheiterten LSUIElement-am-View-Ansatz):
 # - Äußerer Wrapper: LSUIElement=true (kein zweites Dock-Icon für den Stub)
 # - Gebündelter Flet-Client: Name/Icon KI-Rechnungen, KEIN LSUIElement (sichtbares Fenster)
+# - FletView-Bootstrap: Kaltstart aus dem Dock öffnet Outer-App (Python-Launcher),
+#   Warm-Start mit page_url exec't das echte Flutter-Binary (kein leeres Fenster)
 # - Entitlements der Quelle beim Re-Signieren erhalten (File-Picker)
 set -euo pipefail
 
@@ -17,6 +19,7 @@ BUNDLE_ID="de.kirechnungen.internal-launcher"
 VIEW_BUNDLE_ID="de.kirechnungen.view"
 LAUNCHER_SCRIPT="${PROJECT_ROOT}/scripts/run_internal_launcher_flet085.sh"
 LAUNCHER_C="${PROJECT_ROOT}/scripts/macos_dock_launcher.c"
+FLETVIEW_BOOTSTRAP_C="${PROJECT_ROOT}/scripts/macos_fletview_bootstrap.c"
 ICON_ICNS="${PROJECT_ROOT}/resources/app_icon.icns"
 ICON_PNG="${PROJECT_ROOT}/resources/app_icon.png"
 APPICONSET_DIR="${PROJECT_ROOT}/build/flutter/macos/Runner/Assets.xcassets/AppIcon.appiconset"
@@ -127,6 +130,7 @@ command -v clang >/dev/null 2>&1 || error "clang fehlt (Xcode Command Line Tools
 [[ -f "${LAUNCHER_SCRIPT}" ]] || error "Launcher-Skript fehlt: ${LAUNCHER_SCRIPT}"
 [[ -f "${ENTRY_PY}" ]] || error "app_internal_launcher.py fehlt."
 [[ -f "${LAUNCHER_C}" ]] || error "Native Stub-Quelle fehlt: ${LAUNCHER_C}"
+[[ -f "${FLETVIEW_BOOTSTRAP_C}" ]] || error "FletView-Bootstrap-Quelle fehlt: ${FLETVIEW_BOOTSTRAP_C}"
 [[ -f "${ICON_ICNS}" ]] || error "Icon fehlt: ${ICON_ICNS}"
 [[ -f "${ICON_PNG}" ]] || error "Icon-PNG fehlt: ${ICON_PNG}"
 
@@ -188,6 +192,22 @@ brand_fletview_assets_car "${VIEW_APP}"
 plist_set_or_add_string "${VIEW_PLIST}" "CFBundleIconName" "AppIcon"
 plist_set_or_add_string "${VIEW_PLIST}" "CFBundleIconFile" "AppIcon"
 ok "Flet-View gebrandet (Name=${APP_NAME}, Bundle=${VIEW_BUNDLE_ID}, kein LSUIElement, Assets.car)"
+
+# FletView-Bootstrap: Dock-Kaltstart → Outer-App; Flet-Warmstart → Real-Binary
+VIEW_MACOS_DIR="${VIEW_APP}/Contents/MacOS"
+VIEW_EXEC_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${VIEW_PLIST}")"
+[[ -n "${VIEW_EXEC_NAME}" ]] || error "CFBundleExecutable der FletView fehlt"
+VIEW_REAL_BIN="${VIEW_MACOS_DIR}/${VIEW_EXEC_NAME}.real"
+VIEW_BOOTSTRAP_BIN="${VIEW_MACOS_DIR}/${VIEW_EXEC_NAME}"
+[[ -f "${VIEW_BOOTSTRAP_BIN}" ]] || error "FletView-Executable fehlt: ${VIEW_BOOTSTRAP_BIN}"
+mv "${VIEW_BOOTSTRAP_BIN}" "${VIEW_REAL_BIN}"
+say "Kompiliere FletView-Bootstrap (Dock-Relaunch)…"
+clang -O2 -arch arm64 \
+  -o "${VIEW_BOOTSTRAP_BIN}" \
+  "${FLETVIEW_BOOTSTRAP_C}" \
+  || error "clang FletView-Bootstrap fehlgeschlagen"
+chmod +x "${VIEW_BOOTSTRAP_BIN}" "${VIEW_REAL_BIN}"
+ok "FletView-Bootstrap: ${VIEW_BOOTSTRAP_BIN} (Real: ${VIEW_REAL_BIN})"
 
 # Entitlements der Quelle erhalten (verhindert File-Picker ENTITLEMENT_NOT_FOUND).
 # Wichtig: `codesign -d --entitlements FILE` schreibt hier Text-Dump; XML kommt via `:-`.
@@ -327,4 +347,5 @@ say "Start (manuell): open \"${APP_PATH}\""
 say "Log: ~/Library/Logs/KI-Rechnungen/dock-app.log"
 say "Hinweis: Quelle/Ausgabe bleiben in der UI manuell wählbar; kein Auto-Lauf."
 say "Hinweis: Beim ersten Start ggf. Desktop-Zugriff in macOS erlauben."
-say "Hinweis: Sichtbares Dock-Icon ist der gebrandete Flet-View (KI-Rechnungen), nicht der Stub."
+say "Hinweis: Sichtbares Dock-Icon ist der gebrandete Flet-View (KI-Rechnungen)."
+say "Hinweis: Dock-Kaltstart des Views öffnet Outer-App → Python-Launcher (kein leeres Fenster)."
