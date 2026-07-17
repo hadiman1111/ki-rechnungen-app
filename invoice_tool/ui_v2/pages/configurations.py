@@ -56,6 +56,11 @@ from invoice_tool.ui_v2.edit_components import (
     unsaved_changes_dialog,
 )
 from invoice_tool.ui_v2.filename_editor import build_filename_pattern_editor
+from invoice_tool.ui_v2.saas_profile_surface import (
+    GENERIC_CONFIG_NAME_PLACEHOLDER,
+    SAAS_SURFACE_UI_LABELS,
+    blank_configuration_create_defaults,
+)
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.validation import validate_configuration_draft, validate_unmatched_draft
 from invoice_tool.ui_v2.view_models import ConfigurationSummaryVM, UiV2ReadOnlySnapshot
@@ -151,7 +156,12 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
 
     def _apply_start_create() -> None:
         state.config_edit_mode = "create"
-        state.config_draft = new_configuration_draft(profile_id)
+        draft = new_configuration_draft(profile_id)
+        # Overlay generic SaaS create defaults (empty name/target; no private prefill).
+        saas_defaults = blank_configuration_create_defaults()
+        draft.name = saas_defaults.name
+        draft.destination_path = saas_defaults.destination_folder
+        state.config_draft = draft
         state.config_list_selected_id = None
         state.config_field_errors = {}
         _set_feedback("")
@@ -383,7 +393,11 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _refresh()
 
         if not draft.is_unmatched:
-            name_field = form_field("Name", value=draft.name, placeholder="z.B. American Express")
+            name_field = form_field(
+                "Name",
+                value=draft.name,
+                placeholder=GENERIC_CONFIG_NAME_PLACEHOLDER,
+            )
 
             def _update_name(_event: ft.ControlEvent | None = None) -> None:
                 draft.name = (name_field.value or "").strip()
@@ -439,6 +453,18 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
 
         if not draft.is_unmatched:
             editor_fields.append(make_form_status_toggle(active=draft.active, on_change=_set_active))
+
+        if state.config_edit_mode == "create":
+            editor_fields.append(
+                helper_text(
+                    f"{SAAS_SURFACE_UI_LABELS['matching_conditions']} · "
+                    f"{SAAS_SURFACE_UI_LABELS['destination']} · "
+                    f"{SAAS_SURFACE_UI_LABELS['filename_pattern']} · "
+                    f"{SAAS_SURFACE_UI_LABELS['review_rule']} · "
+                    f"{SAAS_SURFACE_UI_LABELS['payment_hint']} — "
+                    "Defaults aus dem generischen SaaS-Modell, ohne private Vorbelegung."
+                )
+            )
 
         save_label = "Erstellen" if state.config_edit_mode == "create" else "Speichern"
         footer = make_panel_footer_end(

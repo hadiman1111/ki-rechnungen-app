@@ -48,6 +48,11 @@ from invoice_tool.ui_v2.edit_components import (
     outlined_field_kwargs,
     unsaved_changes_dialog,
 )
+from invoice_tool.ui_v2.saas_profile_surface import (
+    SAAS_SURFACE_UI_LABELS,
+    blank_profile_draft,
+    build_saas_profile_surface_vm,
+)
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.theme import SPACE_SM
 from invoice_tool.ui_v2.validation import validate_profile_name, validate_scan_model_id
@@ -133,7 +138,8 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
 
     def _apply_start_create() -> None:
         state.profile_edit_mode = "create"
-        state.profile_draft = ProfileDraftVM(name="", scan_model_id="", is_new=True)
+        # Create defaults from generic SaaS model (no private tenant prefill).
+        state.profile_draft = blank_profile_draft()
         state.profile_list_selected_id = None
         state.profile_field_errors = {}
         _set_feedback("")
@@ -267,7 +273,11 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         page_header(
             "Profile",
             subtitle="Erkennungsprofile und ihre Konfigurationen verwalten.",
-            trailing=action_button("Neues Profil", on_click=lambda _e: _start_create(), primary=True),
+            trailing=action_button(
+                SAAS_SURFACE_UI_LABELS["new_profile"],
+                on_click=lambda _e: _start_create(),
+                primary=True,
+            ),
         ),
     ]
 
@@ -301,7 +311,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     if is_creating:
         if profile_rows:
             profile_rows.append(divider())
-        profile_rows.append(make_create_list_marker("Neues Profil"))
+        profile_rows.append(make_create_list_marker(SAAS_SURFACE_UI_LABELS["new_profile"]))
 
     if profile_rows:
         list_body = ft.Column(profile_rows, spacing=0, scroll=ft.ScrollMode.AUTO)
@@ -309,7 +319,10 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         list_body = ft.Container(
             expand=True,
             alignment=ft.Alignment.CENTER,
-            content=empty_state("Keine Profile vorhanden", detail='Legen Sie mit „Neues Profil“ ein erstes Profil an.'),
+            content=empty_state(
+                "Keine Profile vorhanden",
+                detail=f'Legen Sie mit „{SAAS_SURFACE_UI_LABELS["new_profile"]}“ ein erstes Profil an.',
+            ),
         )
 
     field_errors = state.profile_field_errors or {}
@@ -317,17 +330,22 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     header_trailing: ft.Control | None = None
     detail_body: ft.Control
     footer: ft.Control | None = None
+    saas_surface = build_saas_profile_surface_vm()
 
     if is_editing and state.profile_draft is not None:
         draft = state.profile_draft
-        detail_title = "Neues Profil" if state.profile_edit_mode == "create" else f"Bearbeiten: {draft.name or 'Profil'}"
+        detail_title = (
+            SAAS_SURFACE_UI_LABELS["new_profile"]
+            if state.profile_edit_mode == "create"
+            else f"Bearbeiten: {draft.name or 'Profil'}"
+        )
         header_trailing = make_panel_close_button(_cancel_edit)
 
         name_field = form_field("Profilname", value=draft.name)
         model_dd = ft.Dropdown(
             value=draft.scan_model_id or None,
             options=[ft.dropdown.Option(model.id, model.label) for model in list_scan_models()],
-            hint_text="— Modell wählen —",
+            hint_text=f"— {SAAS_SURFACE_UI_LABELS['scan_model']} —",
             **outlined_field_kwargs(),
         )
 
@@ -341,8 +359,46 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
 
         editor_fields: list[ft.Control] = [
             form_field_group("Profilname", compact_input_shell(name_field), error=field_errors.get("name")),
-            form_field_group("Erkennungsmodell", compact_input_shell(model_dd), error=field_errors.get("scan_model_id")),
+            form_field_group(
+                SAAS_SURFACE_UI_LABELS["scan_model"],
+                compact_input_shell(model_dd),
+                error=field_errors.get("scan_model_id"),
+            ),
             helper_text("Bestimmt, welche KI-Modellkonfiguration zur Dokumenterkennung verwendet wird."),
+            make_metadata_block(
+                make_metadata_row(SAAS_SURFACE_UI_LABELS["document_type"], saas_surface.document_type),
+                make_metadata_row(
+                    SAAS_SURFACE_UI_LABELS["matching_conditions"],
+                    saas_surface.matching_conditions_summary,
+                ),
+                make_metadata_row(
+                    SAAS_SURFACE_UI_LABELS["destination"],
+                    (
+                        " / ".join(
+                            part
+                            for part in (
+                                saas_surface.destination_category,
+                                saas_surface.destination_folder,
+                            )
+                            if part
+                        )
+                        or "—"
+                    ),
+                ),
+                make_metadata_row(
+                    SAAS_SURFACE_UI_LABELS["filename_pattern"],
+                    saas_surface.filename_pattern,
+                ),
+                make_metadata_row(SAAS_SURFACE_UI_LABELS["review_rule"], saas_surface.review_rule),
+                make_metadata_row(
+                    SAAS_SURFACE_UI_LABELS["payment_hint"],
+                    saas_surface.payment_hint or "—",
+                ),
+            ),
+            helper_text(
+                "Weitere Felder folgen dem generischen SaaS-Profilmodell; "
+                "keine privaten Vorbelegungen. Verarbeitung wird hier nicht gestartet."
+            ),
         ]
         save_label = "Erstellen" if state.profile_edit_mode == "create" else "Speichern"
         footer = make_panel_footer_end(
