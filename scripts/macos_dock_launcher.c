@@ -2,20 +2,14 @@
  * Native macOS Dock-App stub for KI-Rechnungen.
  * Paths are injected at build time via -D macros.
  * Starts app_internal_launcher.py (same entry as run_internal_launcher_flet085.sh).
- * Keeps this process alive as the Dock-facing .app owner (fork/wait).
- * Points Flet desktop view to a branded, LSUIElement client inside this bundle
- * so no second Flet/fish Dock icon appears.
  * No automatic invoice processing.
  */
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
-#include <mach-o/dyld.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -63,56 +57,12 @@ static void show_alert(const char *message) {
   system(cmd);
 }
 
-/* Resolve <ThisApp>.app/Contents/Resources/FletView from the running executable. */
-static int resolve_flet_view_path(char *out, size_t out_size) {
-  char exe[PATH_MAX];
-  uint32_t size = sizeof(exe);
-  if (_NSGetExecutablePath(exe, &size) != 0) {
-    return -1;
-  }
-
-  char resolved[PATH_MAX];
-  if (realpath(exe, resolved) != NULL) {
-    strncpy(exe, resolved, sizeof(exe) - 1);
-    exe[sizeof(exe) - 1] = '\0';
-  }
-
-  /* .../Contents/MacOS/KI-Rechnungen -> .../Contents/MacOS */
-  char *slash = strrchr(exe, '/');
-  if (slash == NULL) {
-    return -1;
-  }
-  *slash = '\0';
-
-  /* .../Contents/MacOS -> .../Contents */
-  slash = strrchr(exe, '/');
-  if (slash == NULL) {
-    return -1;
-  }
-  *slash = '\0';
-
-  int n = snprintf(out, out_size, "%s/Resources/FletView", exe);
-  if (n < 0 || (size_t)n >= out_size) {
-    return -1;
-  }
-  return 0;
-}
-
-static int path_is_dir(const char *path) {
-  struct stat st;
-  if (stat(path, &st) != 0) {
-    return 0;
-  }
-  return S_ISDIR(st.st_mode);
-}
-
 int main(void) {
   char log_file[512];
   char line[1024];
-  char flet_view_path[PATH_MAX];
 
   ensure_log_dir(log_file, sizeof(log_file));
-  append_log(log_file, "KI-Rechnungen Dock-App Start (native stub, single dock identity)");
+  append_log(log_file, "KI-Rechnungen Dock-App Start (native stub)");
   snprintf(line, sizeof(line), "PROJECT_ROOT=%s", PROJECT_ROOT);
   append_log(log_file, line);
   snprintf(line, sizeof(line), "PYTHON_BIN=%s", PYTHON_BIN);
@@ -133,26 +83,12 @@ int main(void) {
   }
 
   if (access(ENTRY_PY, R_OK) != 0) {
-    append_log(log_file, "FEHLER: app_internal_launcher.py nicht lesbar (Datei oder macOS-Desktop-Zugriff)");
-    show_alert(
-        "Projektdateien nicht lesbar. Falls die App auf dem Schreibtisch liegt: "
-        "Systemeinstellungen → Datenschutz & Sicherheit → Dateien und Ordner "
-        "(oder Festplattenvollzugriff) → KI-Rechnungen für Schreibtisch erlauben. "
-        "Danach App neu starten.");
+    append_log(log_file, "FEHLER: app_internal_launcher.py nicht lesbar");
+    show_alert("app_internal_launcher.py fehlt.");
     return 1;
   }
-
-  if (resolve_flet_view_path(flet_view_path, sizeof(flet_view_path)) != 0 ||
-      !path_is_dir(flet_view_path)) {
-    append_log(log_file, "FEHLER: gebuendelter FletView-Pfad fehlt");
-    show_alert("Gebuendelter Flet-Client fehlt. Bitte die App neu bauen.");
-    return 1;
-  }
-  snprintf(line, sizeof(line), "FLET_VIEW_PATH=%s", flet_view_path);
-  append_log(log_file, line);
 
   setenv("PYTHONPATH", PROJECT_ROOT, 1);
-  setenv("FLET_VIEW_PATH", flet_view_path, 1);
 
   int log_fd = open(log_file, O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (log_fd >= 0) {
@@ -161,41 +97,11 @@ int main(void) {
     close(log_fd);
   }
 
-  append_log(
-      log_file,
-      "Starte internen Launcher als Kindprozess (Dock-Identitaet bleibt beim Wrapper)");
+  append_log(log_file, "Starte internen Launcher via Python-Entry (kein Auto-Lauf)");
+  execl(PYTHON_BIN, PYTHON_BIN, ENTRY_PY, (char *)NULL);
 
-  pid_t child = fork();
-  if (child < 0) {
-    snprintf(line, sizeof(line), "FEHLER: fork fehlgeschlagen: %s", strerror(errno));
-    append_log(log_file, line);
-    show_alert("Launcher konnte nicht gestartet werden. Details im Log.");
-    return 1;
-  }
-
-  if (child == 0) {
-    execl(PYTHON_BIN, PYTHON_BIN, ENTRY_PY, (char *)NULL);
-    _exit(127);
-  }
-
-  int status = 0;
-  if (waitpid(child, &status, 0) < 0) {
-    snprintf(line, sizeof(line), "FEHLER: waitpid fehlgeschlagen: %s", strerror(errno));
-    append_log(log_file, line);
-    show_alert("Launcher-Prozess unerwartet beendet. Details im Log.");
-    return 1;
-  }
-
-  if (WIFEXITED(status)) {
-    int code = WEXITSTATUS(status);
-    snprintf(line, sizeof(line), "Launcher beendet mit Exit-Code %d", code);
-    append_log(log_file, line);
-    if (code == 127) {
-      show_alert("Launcher konnte nicht gestartet werden. Details im Log.");
-    }
-    return code;
-  }
-
-  append_log(log_file, "Launcher durch Signal beendet");
+  snprintf(line, sizeof(line), "FEHLER: execl fehlgeschlagen: %s", strerror(errno));
+  append_log(log_file, line);
+  show_alert("Launcher konnte nicht gestartet werden. Details im Log.");
   return 1;
 }

@@ -50,39 +50,6 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 cp "${ICON_ICNS}" "${RESOURCES_DIR}/AppIcon.icns"
 
-# Gebündelter Flet-Desktop-Client (ohne eigenes Dock-Icon / ohne Fisch-Identität)
-FLET_VIEW_DIR="${RESOURCES_DIR}/FletView"
-mkdir -p "${FLET_VIEW_DIR}"
-say "Bereite gebündelten Flet-View-Client vor…"
-CLIENT_APP="$("${PYTHON_BIN}" - <<'PY'
-from pathlib import Path
-from flet_desktop import ensure_client_cached
-
-cache = ensure_client_cached()
-apps = sorted(Path(cache).glob("*.app"))
-if not apps:
-    raise SystemExit("Kein Flet.app im Client-Cache gefunden")
-print(apps[0])
-PY
-)"
-[[ -d "${CLIENT_APP}" ]] || error "Flet-Client nicht gefunden: ${CLIENT_APP}"
-ditto "${CLIENT_APP}" "${FLET_VIEW_DIR}/Flet.app"
-VIEW_PLIST="${FLET_VIEW_DIR}/Flet.app/Contents/Info.plist"
-[[ -f "${VIEW_PLIST}" ]] || error "Flet-View Info.plist fehlt"
-
-# Identität anpassen + LSUIElement: Fenster sichtbar, kein zweites Dock-Icon
-/usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "${VIEW_PLIST}"
-if /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "${VIEW_PLIST}" >/dev/null 2>&1; then
-  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "${VIEW_PLIST}"
-else
-  /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "${VIEW_PLIST}"
-fi
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}.view" "${VIEW_PLIST}"
-/usr/libexec/PlistBuddy -c "Delete :LSUIElement" "${VIEW_PLIST}" 2>/dev/null || true
-/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${VIEW_PLIST}"
-cp "${ICON_ICNS}" "${FLET_VIEW_DIR}/Flet.app/Contents/Resources/AppIcon.icns"
-ok "Flet-View gebündelt (LSUIElement, Name=${APP_NAME})"
-
 # Info.plist — Dock-Name KI-Rechnungen + TCC-Hinweise für Desktop-Projektpfad
 cat > "${CONTENTS}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -106,9 +73,9 @@ cat > "${CONTENTS}/Info.plist" <<EOF
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.1</string>
+	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
@@ -140,11 +107,10 @@ file "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${LAUNCHER_SCRIPT}"
 
-# Ad-hoc signieren (View zuerst, dann Outer-App)
+# Ad-hoc signieren (Mach-O Stub — nötig für stabile LaunchServices/TCC-Identität)
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "${FLET_VIEW_DIR}/Flet.app" >/dev/null 2>&1 || true
-  codesign --force --deep --sign - "${APP_PATH}" >/dev/null 2>&1 || true
-  ok "Ad-hoc codesign (Wrapper + FletView)"
+  codesign --force --sign - "${APP_PATH}" >/dev/null 2>&1 || true
+  ok "Ad-hoc codesign"
 fi
 
 # Plist-Smoke
@@ -173,4 +139,3 @@ say "Start (manuell): open \"${APP_PATH}\""
 say "Log: ~/Library/Logs/KI-Rechnungen/dock-app.log"
 say "Hinweis: Quelle/Ausgabe bleiben in der UI manuell wählbar; kein Auto-Lauf."
 say "Hinweis: Beim ersten Start ggf. Desktop-Zugriff in macOS erlauben."
-say "Hinweis: Flet-View ist als LSUIElement gebündelt — erwartet nur ein Dock-Icon „KI-Rechnungen“."

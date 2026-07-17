@@ -1,11 +1,16 @@
-# KI-Rechnungen — macOS Dock-Identity Fix
+# KI-Rechnungen — macOS Dock-Identity Fix (zurückgenommen)
 
-**Task ID:** `KI_RECHNUNGEN_MACOS_DOCK_IDENTITY_FIX_01`  
+**Task ID (Fix):** `KI_RECHNUNGEN_MACOS_DOCK_IDENTITY_FIX_01`  
+**Task ID (Repair/Rollback):** `KI_RECHNUNGEN_MACOS_DOCK_IDENTITY_FIX_REPAIR_OR_SAFE_ROLLBACK_01`  
 **Datum:** 2026-07-17
 
-## Diagnose
+## Status
 
-Der Dock-Wrapper (`scripts/macos_dock_launcher.c`) startete bisher per `execl` den
+**ZURÜCKGENOMMEN / SAFE ROLLBACK** — App-Start hat Vorrang vor Single-Dock-Icon.
+
+## Ursprüngliche Diagnose (Fix)
+
+Der Dock-Wrapper (`scripts/macos_dock_launcher.c`) startete per `execl` den
 Python-/Flet-Launcher. Flet 0.85 öffnet danach einen separaten Desktop-Client
 (`Flet.app`, Bundle-ID `com.appveyor.flet`, Fisch-Icon) über `open … -n`.
 
@@ -14,32 +19,34 @@ Dadurch entstanden zwei Dock-Identitäten:
 1. `KI-Rechnungen.app` (Wrapper / angepinntes Icon)
 2. `Flet.app` (sichtbares Fenster, Fisch-Symbol)
 
-## Fix (kleinster stabiler Eingriff)
+## Was der Fix versuchte
 
-1. **Wrapper behält Dock-Identität:** Stub `fork`/`waitpid` statt Prozessersatz
-   durch `execl` im Parent.
-2. **Gebündelter Flet-View:** Build kopiert den Flet-0.85-Client nach
-   `Contents/Resources/FletView/Flet.app`.
-3. **Kein zweites Dock-Icon:** View-`Info.plist` setzt `LSUIElement=true`,
-   Name/Identifier auf KI-Rechnungen-View, Icon ersetzt.
-4. **`FLET_VIEW_PATH`:** Stub setzt zur Laufzeit den View-Pfad relativ zum
-   laufenden `.app`-Executable (gilt auch für Desktop-Kopie).
-5. **Entry-Patch:** `app_internal_launcher.py` lässt `FLET_VIEW_PATH` vor einem
-   vorhandenen `build/macos/*.app` gewinnen (Flet-Default-Reihenfolge sonst
-   umgekehrt — das war die konkrete Ursache des Fisch-Icons bei vorhandenem
-   `build/macos`).
+1. Wrapper behält Dock-Identität (`fork`/`waitpid`)
+2. Gebündelter Flet-View unter `Contents/Resources/FletView/`
+3. `LSUIElement=true` am View-Client
+4. `FLET_VIEW_PATH` vom Stub gesetzt
+5. Entry-Patch in `app_internal_launcher.py` für Flet-Pfad-Priorität
 
-Entry bleibt `app_internal_launcher.py` / interner Launcher — kein Auto-Lauf,
-keine Routing-/Profiländerung.
+## Warum zurückgenommen
 
-## Grenzen
+Nach dem Fix startete die lokale App laut PO nicht mehr sichtbar („gar nichts“).
+Log-/Diagnose-Befunde:
 
-- Kein vollständiger `flet build`/PyInstaller-Standalone; Python kommt weiter aus
-  `.venv-flet085`.
-- Dock-Identität des Fensters hängt an LSUIElement des View-Clients; bei
-  macOS-/LaunchServices-Regressionen ggf. manueller Check nötig.
-- Für eine echte Single-Binary-App wäre ein voller Flet-macOS-Build der nächste
-  Schritt.
+- Intermittierende TCC-/Desktop-Zugriffsfehler (`pyvenv.cfg` PermissionError,
+  `app_internal_launcher.py nicht lesbar`)
+- Gebündelter Flet-Client ohne nötige File-Picker-Entitlements
+  (`ENTITLEMENT_NOT_FOUND`)
+- `LSUIElement=true` machte das Fensterverhalten unzuverlässig / unsichtbar
+
+Ein sicherer Schnellfix war in diesem Task nicht gegeben. Packaging-Verhalten
+wurde auf den zuletzt funktionierenden Stand aus `origin/main` / `3fb70ca`
+zurückgesetzt.
+
+## Bewusst akzeptierter Zwischenstand
+
+- App startet wieder über den einfachen Dock-Stub (`execl` → Python-Entry)
+- Zusätzliches Flet-/Fisch-Symbol im Dock kann wieder auftreten
+- Vollständige Single-Dock-Icon-Lösung bleibt späteres Standalone-Packaging-Ziel
 
 ## Build
 
