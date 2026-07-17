@@ -18,6 +18,9 @@ VIEW_BUNDLE_ID="de.kirechnungen.view"
 LAUNCHER_SCRIPT="${PROJECT_ROOT}/scripts/run_internal_launcher_flet085.sh"
 LAUNCHER_C="${PROJECT_ROOT}/scripts/macos_dock_launcher.c"
 ICON_ICNS="${PROJECT_ROOT}/resources/app_icon.icns"
+ICON_PNG="${PROJECT_ROOT}/resources/app_icon.png"
+APPICONSET_DIR="${PROJECT_ROOT}/build/flutter/macos/Runner/Assets.xcassets/AppIcon.appiconset"
+ASSETS_XCASSETS_DIR="${PROJECT_ROOT}/build/flutter/macos/Runner/Assets.xcassets"
 COPY_TO_DESKTOP="${COPY_TO_DESKTOP:-0}"
 DESKTOP_APP_PATH="${HOME}/Desktop/${APP_NAME}.app"
 PYTHON_BIN="${PROJECT_ROOT}/.venv-flet085/bin/python"
@@ -26,6 +29,81 @@ ENTRY_PY="${PROJECT_ROOT}/app_internal_launcher.py"
 say() { printf '%s\n' "$1"; }
 ok() { say "[OK] $1"; }
 error() { say "[FEHLER] $1" >&2; exit 1; }
+
+# Brand Flutter/macOS AppIcon.appiconset from resources/app_icon.png and compile Assets.car.
+# Dock uses CFBundleIconName=AppIcon → Assets.car; replacing only AppIcon.icns is not enough.
+brand_fletview_assets_car() {
+  local view_app="$1"
+  local view_resources="${view_app}/Contents/Resources"
+  local compile_tmp
+  local new_car
+  local old_md5=""
+  local new_md5=""
+
+  [[ -f "${ICON_PNG}" ]] || error "Icon-PNG fehlt: ${ICON_PNG}"
+  [[ -d "${view_resources}" ]] || error "FletView Resources fehlen: ${view_resources}"
+  command -v sips >/dev/null 2>&1 || error "sips fehlt (macOS Image Tools)."
+  xcrun --find actool >/dev/null 2>&1 || error "actool fehlt (Xcode Command Line Tools / Xcode)."
+
+  mkdir -p "${APPICONSET_DIR}"
+  if [[ ! -f "${APPICONSET_DIR}/Contents.json" ]]; then
+    cat > "${APPICONSET_DIR}/Contents.json" <<'JSON'
+{
+    "info": {
+        "version": 1,
+        "author": "xcode"
+    },
+    "images": [
+        { "size": "16x16", "idiom": "mac", "filename": "app_icon_16.png", "scale": "1x" },
+        { "size": "16x16", "idiom": "mac", "filename": "app_icon_32.png", "scale": "2x" },
+        { "size": "32x32", "idiom": "mac", "filename": "app_icon_32.png", "scale": "1x" },
+        { "size": "32x32", "idiom": "mac", "filename": "app_icon_64.png", "scale": "2x" },
+        { "size": "128x128", "idiom": "mac", "filename": "app_icon_128.png", "scale": "1x" },
+        { "size": "128x128", "idiom": "mac", "filename": "app_icon_256.png", "scale": "2x" },
+        { "size": "256x256", "idiom": "mac", "filename": "app_icon_256.png", "scale": "1x" },
+        { "size": "256x256", "idiom": "mac", "filename": "app_icon_512.png", "scale": "2x" },
+        { "size": "512x512", "idiom": "mac", "filename": "app_icon_512.png", "scale": "1x" },
+        { "size": "512x512", "idiom": "mac", "filename": "app_icon_1024.png", "scale": "2x" }
+    ]
+}
+JSON
+  fi
+
+  say "Brande AppIcon.appiconset aus ${ICON_PNG}…"
+  local size
+  for size in 16 32 64 128 256 512 1024; do
+    sips -z "${size}" "${size}" "${ICON_PNG}" --out "${APPICONSET_DIR}/app_icon_${size}.png" >/dev/null \
+      || error "sips fehlgeschlagen für app_icon_${size}.png"
+  done
+  ok "AppIcon.appiconset gebrandet (${APPICONSET_DIR})"
+
+  if [[ -f "${view_resources}/Assets.car" ]]; then
+    old_md5="$(md5 -q "${view_resources}/Assets.car")"
+  fi
+
+  compile_tmp="$(mktemp -d "${TMPDIR:-/tmp}/ki-appicon-XXXXXX")"
+  say "Kompiliere Assets.car mit actool…"
+  xcrun actool \
+    --compile "${compile_tmp}" \
+    --platform macosx \
+    --minimum-deployment-target 11.0 \
+    --app-icon AppIcon \
+    --output-partial-info-plist "${compile_tmp}/assetcatalog_generated_info.plist" \
+    "${ASSETS_XCASSETS_DIR}" >/dev/null \
+    || error "actool Assets.car-Kompilierung fehlgeschlagen"
+
+  new_car="${compile_tmp}/Assets.car"
+  [[ -f "${new_car}" ]] || error "actool hat kein Assets.car erzeugt"
+  new_md5="$(md5 -q "${new_car}")"
+  [[ -n "${old_md5}" && "${new_md5}" == "${old_md5}" ]] \
+    && error "Assets.car unverändert (noch Flet-Fisch-Katalog): ${new_md5}"
+
+  cp "${new_car}" "${view_resources}/Assets.car"
+  # Prefer project icns (richer), keep CFBundleIconName→Assets.car branded.
+  cp "${ICON_ICNS}" "${view_resources}/AppIcon.icns"
+  rm -rf "${compile_tmp}"
+  ok "FletView Assets.car gebrandet (md5 ${old_md5:-none} → ${new_md5})"
+}
 
 # Escape for C string literals (-D macros).
 c_escape() {
@@ -50,6 +128,7 @@ command -v clang >/dev/null 2>&1 || error "clang fehlt (Xcode Command Line Tools
 [[ -f "${ENTRY_PY}" ]] || error "app_internal_launcher.py fehlt."
 [[ -f "${LAUNCHER_C}" ]] || error "Native Stub-Quelle fehlt: ${LAUNCHER_C}"
 [[ -f "${ICON_ICNS}" ]] || error "Icon fehlt: ${ICON_ICNS}"
+[[ -f "${ICON_PNG}" ]] || error "Icon-PNG fehlt: ${ICON_PNG}"
 
 FLET_VERSION="$("${PYTHON_BIN}" -c 'import flet; print(flet.__version__)')"
 [[ "${FLET_VERSION}" == 0.85.* ]] || error "Erwartet Flet 0.85.*, gefunden: ${FLET_VERSION}"
@@ -103,8 +182,12 @@ plist_set_or_add_string "${VIEW_PLIST}" "CFBundleName" "${APP_NAME}"
 plist_set_or_add_string "${VIEW_PLIST}" "CFBundleDisplayName" "${APP_NAME}"
 plist_set_or_add_string "${VIEW_PLIST}" "CFBundleIdentifier" "${VIEW_BUNDLE_ID}"
 /usr/libexec/PlistBuddy -c "Delete :LSUIElement" "${VIEW_PLIST}" 2>/dev/null || true
-cp "${ICON_ICNS}" "${VIEW_APP}/Contents/Resources/AppIcon.icns"
-ok "Flet-View gebrandet (Name=${APP_NAME}, Bundle=${VIEW_BUNDLE_ID}, kein LSUIElement)"
+# Dock-Icon kommt bei Flutter/macOS aus CFBundleIconName=AppIcon → Assets.car.
+# AppIcon.icns allein reicht nicht; Katalog neu branden und Assets.car ersetzen.
+brand_fletview_assets_car "${VIEW_APP}"
+plist_set_or_add_string "${VIEW_PLIST}" "CFBundleIconName" "AppIcon"
+plist_set_or_add_string "${VIEW_PLIST}" "CFBundleIconFile" "AppIcon"
+ok "Flet-View gebrandet (Name=${APP_NAME}, Bundle=${VIEW_BUNDLE_ID}, kein LSUIElement, Assets.car)"
 
 # Entitlements der Quelle erhalten (verhindert File-Picker ENTITLEMENT_NOT_FOUND).
 # Wichtig: `codesign -d --entitlements FILE` schreibt hier Text-Dump; XML kommt via `:-`.

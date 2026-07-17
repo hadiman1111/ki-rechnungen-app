@@ -23,6 +23,7 @@ def test_dock_build_script_exists_and_targets_internal_launcher() -> None:
     assert "Library/Logs/KI-Rechnungen" in content
     assert "CFBundleDisplayName" in content
     assert "app_icon.icns" in content
+    assert "app_icon.png" in content
     assert "macos_dock_launcher.c" in content
     assert "app_internal_launcher.py" in content
     assert ".venv-flet085/bin/python" in content
@@ -33,6 +34,12 @@ def test_dock_build_script_exists_and_targets_internal_launcher() -> None:
     assert "files.user-selected.read-write" in content
     # View must not be hidden via LSUIElement (previous broken approach)
     assert "FletView darf kein LSUIElement" in content
+    # Dock icon comes from CFBundleIconName → Assets.car, not only AppIcon.icns
+    assert "brand_fletview_assets_car" in content
+    assert "Assets.car" in content
+    assert "actool" in content
+    assert "AppIcon.appiconset" in content
+    assert "CFBundleIconName" in content
 
 
 def test_native_stub_source_has_no_auto_processing() -> None:
