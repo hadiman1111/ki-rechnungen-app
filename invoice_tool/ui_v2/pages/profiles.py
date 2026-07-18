@@ -295,6 +295,42 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     if state.profile_feedback:
         items.append(feedback_banner(state.profile_feedback, is_error=state.profile_feedback_error))
 
+    def _save_saas_draft_local(_event: ft.ControlEvent) -> None:
+        result = state.save_saas_drafts_to_disk()
+        if result.ok:
+            _set_feedback(f"{result.persistence_label} (lokaler SaaS-Entwurf, kein Cloud-Store).")
+        else:
+            _set_feedback(result.error or result.persistence_label, is_error=True)
+        _refresh()
+
+    def _load_saas_draft_local(_event: ft.ControlEvent) -> None:
+        result = state.load_saas_drafts_from_disk()
+        if not result.ok:
+            _set_feedback(result.error or result.persistence_label, is_error=True)
+            _refresh()
+            return
+        if result.status == "missing_blank":
+            _set_feedback("Kein lokaler SaaS-Entwurf vorhanden — generischer Blank-Draft aktiv.")
+        else:
+            _set_feedback(f"{result.persistence_label} (lokaler SaaS-Entwurf, kein Cloud-Store).")
+        _refresh()
+
+    items.append(
+        helper_text(
+            f"SaaS-Entwurf: {state.saas_disk_persistence_label} — nur lokale Disk-Persistenz, kein Cloud-/Mandantenbackend."
+        )
+    )
+    items.append(
+        ft.Row(
+            [
+                action_button("Entwurf lokal speichern", on_click=_save_saas_draft_local),
+                action_button("Entwurf lokal laden", on_click=_load_saas_draft_local),
+            ],
+            spacing=SPACE_SM,
+            wrap=True,
+        )
+    )
+
     items.append(
         kpi_strip(
             ("Profile", str(len(profile.profiles)), False),

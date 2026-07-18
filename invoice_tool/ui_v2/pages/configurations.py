@@ -326,6 +326,12 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         items.append(feedback_banner(state.config_feedback, is_error=state.config_feedback_error))
 
     items.append(
+        helper_text(
+            f"SaaS-Entwurf: {state.saas_disk_persistence_label} — nur lokale Disk-Persistenz, kein Cloud-/Mandantenbackend."
+        )
+    )
+
+    items.append(
         kpi_strip(
             ("Profil", snapshot.profile.profile_name, False),
             ("Konfigurationen", str(page_vm.total_count), False),

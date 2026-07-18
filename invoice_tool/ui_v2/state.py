@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
 from invoice_tool.ui_v2.saas_profile_state import SaasProfileStateStore, new_saas_profile_state_store
+from invoice_tool.ui_v2.saas_profile_store import (
+    SaasProfileDiskStore,
+    SaasProfileStoreResult,
+    new_saas_profile_disk_store,
+)
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
 
 
@@ -34,6 +40,9 @@ class UiV2State:
 
     # In-memory generic SaaS drafts (no cloud persistence; no private defaults).
     saas_draft_store: SaasProfileStateStore = field(default_factory=new_saas_profile_state_store)
+    # Bounded local disk store for SaaS drafts (injectable path; not Hadi/SOMAA profiles).
+    saas_disk_store: SaasProfileDiskStore = field(default_factory=new_saas_profile_disk_store)
+    saas_disk_persistence_label: str = "Nicht gespeichert"
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
@@ -76,3 +85,29 @@ class UiV2State:
         self.discard_profile_edit()
         self.discard_config_edit()
         self.pending_delete = None
+
+    def configure_saas_disk_store(self, store_path: Path) -> None:
+        """Inject a store path (tests / isolated runs). Never points at Hadi profiles."""
+
+        self.saas_disk_store = new_saas_profile_disk_store(store_path)
+
+    def save_saas_drafts_to_disk(self) -> SaasProfileStoreResult:
+        """Persist current generic SaaS drafts locally (no cloud, no working profile)."""
+
+        profile = self.saas_draft_store.profile_draft or self.saas_draft_store.begin_blank_profile()
+        result = self.saas_disk_store.save(
+            profile,
+            self.saas_draft_store.configuration_draft,
+        )
+        self.saas_disk_persistence_label = result.persistence_label
+        return result
+
+    def load_saas_drafts_from_disk(self) -> SaasProfileStoreResult:
+        """Load generic SaaS drafts from the local disk store."""
+
+        result = self.saas_disk_store.load()
+        self.saas_disk_persistence_label = result.persistence_label
+        if result.ok and result.profile_draft is not None:
+            self.saas_draft_store.profile_draft = result.profile_draft
+            self.saas_draft_store.configuration_draft = result.configuration_draft
+        return result
