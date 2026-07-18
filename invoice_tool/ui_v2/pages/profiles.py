@@ -50,6 +50,9 @@ from invoice_tool.ui_v2.edit_components import (
     outlined_field_kwargs,
     unsaved_changes_dialog,
 )
+from invoice_tool.ui_v2.saas_profile_persistence_view import (
+    build_saas_persistence_status_panel,
+)
 from invoice_tool.ui_v2.saas_profile_surface import (
     SAAS_SURFACE_UI_LABELS,
     blank_profile_draft,
@@ -297,29 +300,40 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
 
     def _save_saas_draft_local(_event: ft.ControlEvent) -> None:
         result = state.save_saas_drafts_to_disk()
+        status_vm = state.saas_persistence_status_vm()
         if result.ok:
-            _set_feedback(f"{result.persistence_label} (lokaler SaaS-Entwurf, kein Cloud-Store).")
+            _set_feedback(
+                f"{status_vm.status_label} — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+            )
         else:
-            _set_feedback(result.error or result.persistence_label, is_error=True)
+            _set_feedback(
+                status_vm.error_text or result.error or status_vm.status_label,
+                is_error=True,
+            )
         _refresh()
 
     def _load_saas_draft_local(_event: ft.ControlEvent) -> None:
         result = state.load_saas_drafts_from_disk()
+        status_vm = state.saas_persistence_status_vm()
         if not result.ok:
-            _set_feedback(result.error or result.persistence_label, is_error=True)
+            _set_feedback(
+                status_vm.error_text or result.error or status_vm.status_label,
+                is_error=True,
+            )
             _refresh()
             return
         if result.status == "missing_blank":
-            _set_feedback("Kein lokaler SaaS-Entwurf vorhanden — generischer Blank-Draft aktiv.")
+            _set_feedback(
+                "Nicht gespeichert — kein lokaler SaaS-Entwurf vorhanden; generischer Blank-Draft aktiv."
+            )
         else:
-            _set_feedback(f"{result.persistence_label} (lokaler SaaS-Entwurf, kein Cloud-Store).")
+            _set_feedback(
+                f"{status_vm.status_label} — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+            )
         _refresh()
 
-    items.append(
-        helper_text(
-            f"SaaS-Entwurf: {state.saas_disk_persistence_label} — nur lokale Disk-Persistenz, kein Cloud-/Mandantenbackend."
-        )
-    )
+    # Clear UX: SaaS draft ≠ internal working profile; local disk only.
+    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
     items.append(
         ft.Row(
             [

@@ -58,6 +58,9 @@ from invoice_tool.ui_v2.edit_components import (
     unsaved_changes_dialog,
 )
 from invoice_tool.ui_v2.filename_editor import build_filename_pattern_editor
+from invoice_tool.ui_v2.saas_profile_persistence_view import (
+    build_saas_persistence_status_panel,
+)
 from invoice_tool.ui_v2.saas_profile_surface import (
     GENERIC_CONFIG_NAME_HINT,
     SAAS_SURFACE_UI_LABELS,
@@ -325,11 +328,8 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
     if state.config_feedback:
         items.append(feedback_banner(state.config_feedback, is_error=state.config_feedback_error))
 
-    items.append(
-        helper_text(
-            f"SaaS-Entwurf: {state.saas_disk_persistence_label} — nur lokale Disk-Persistenz, kein Cloud-/Mandantenbackend."
-        )
-    )
+    # Same local SaaS-draft status as profiles — not the internal working profile.
+    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
 
     items.append(
         kpi_strip(

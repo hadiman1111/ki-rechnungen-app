@@ -75,7 +75,7 @@ class SaasProfileStoreResult:
         if self.status == STATUS_MISSING_BLANK:
             return "Nicht gespeichert"
         if self.status == STATUS_CORRUPTED:
-            return "Beschädigte Datei"
+            return "Lokaler Draft beschädigt"
         if self.status == STATUS_PRIVATE_DEFAULTS:
             return "Private Defaults blockiert"
         if self.status == STATUS_VALIDATION_ERROR:
@@ -194,7 +194,7 @@ class SaasProfileDiskStore:
             raw_text = path.read_text(encoding="utf-8")
             data = json.loads(raw_text)
         except (OSError, UnicodeDecodeError) as exc:
-            self._last_status = "Beschädigte Datei"
+            self._last_status = "Lokaler Draft beschädigt"
             return SaasProfileStoreResult(
                 ok=False,
                 status=STATUS_CORRUPTED,
@@ -202,7 +202,7 @@ class SaasProfileDiskStore:
                 error=f"Datei unlesbar: {exc}",
             )
         except json.JSONDecodeError as exc:
-            self._last_status = "Beschädigte Datei"
+            self._last_status = "Lokaler Draft beschädigt"
             return SaasProfileStoreResult(
                 ok=False,
                 status=STATUS_CORRUPTED,
@@ -211,7 +211,7 @@ class SaasProfileDiskStore:
             )
 
         if not isinstance(data, dict):
-            self._last_status = "Beschädigte Datei"
+            self._last_status = "Lokaler Draft beschädigt"
             return SaasProfileStoreResult(
                 ok=False,
                 status=STATUS_CORRUPTED,

@@ -9,7 +9,15 @@ from typing import Any, Callable
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
 from invoice_tool.ui_v2.saas_profile_state import SaasProfileStateStore, new_saas_profile_state_store
+from invoice_tool.ui_v2.saas_profile_persistence_view import (
+    SaasPersistenceStatusVM,
+    build_saas_persistence_status_vm,
+    format_persistence_timestamp,
+)
 from invoice_tool.ui_v2.saas_profile_store import (
+    STATUS_LOADED,
+    STATUS_MISSING_BLANK,
+    STATUS_SAVED,
     SaasProfileDiskStore,
     SaasProfileStoreResult,
     new_saas_profile_disk_store,
@@ -43,6 +51,10 @@ class UiV2State:
     # Bounded local disk store for SaaS drafts (injectable path; not Hadi/SOMAA profiles).
     saas_disk_store: SaasProfileDiskStore = field(default_factory=new_saas_profile_disk_store)
     saas_disk_persistence_label: str = "Nicht gespeichert"
+    saas_disk_last_status: str = STATUS_MISSING_BLANK
+    saas_disk_last_error: str | None = None
+    saas_disk_last_saved_at: str | None = None
+    saas_disk_last_loaded_at: str | None = None
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
@@ -91,6 +103,17 @@ class UiV2State:
 
         self.saas_disk_store = new_saas_profile_disk_store(store_path)
 
+    def saas_persistence_status_vm(self) -> SaasPersistenceStatusVM:
+        """Visible local-draft persistence status for Profile/Configuration pages."""
+
+        return build_saas_persistence_status_vm(
+            store_status=self.saas_disk_last_status,
+            persistence_label=self.saas_disk_persistence_label,
+            last_saved_at=self.saas_disk_last_saved_at,
+            last_loaded_at=self.saas_disk_last_loaded_at,
+            last_error=self.saas_disk_last_error,
+        )
+
     def save_saas_drafts_to_disk(self) -> SaasProfileStoreResult:
         """Persist current generic SaaS drafts locally (no cloud, no working profile)."""
 
@@ -99,15 +122,28 @@ class UiV2State:
             profile,
             self.saas_draft_store.configuration_draft,
         )
-        self.saas_disk_persistence_label = result.persistence_label
+        self._apply_saas_disk_result(result, operation="save")
         return result
 
     def load_saas_drafts_from_disk(self) -> SaasProfileStoreResult:
         """Load generic SaaS drafts from the local disk store."""
 
         result = self.saas_disk_store.load()
-        self.saas_disk_persistence_label = result.persistence_label
+        self._apply_saas_disk_result(result, operation="load")
         if result.ok and result.profile_draft is not None:
             self.saas_draft_store.profile_draft = result.profile_draft
             self.saas_draft_store.configuration_draft = result.configuration_draft
         return result
+
+    def _apply_saas_disk_result(self, result: SaasProfileStoreResult, *, operation: str) -> None:
+        self.saas_disk_persistence_label = result.persistence_label
+        self.saas_disk_last_status = result.status
+        self.saas_disk_last_error = result.error
+        stamp = format_persistence_timestamp()
+        if result.ok and result.status == STATUS_SAVED and operation == "save":
+            self.saas_disk_last_saved_at = stamp
+        if result.ok and result.status == STATUS_LOADED and operation == "load":
+            self.saas_disk_last_loaded_at = stamp
+        if not result.ok:
+            # Keep prior timestamps; surface error via last_error / status VM.
+            return

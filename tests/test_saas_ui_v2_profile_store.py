@@ -286,9 +286,10 @@ def test_internal_launcher_files_not_in_changeset() -> None:
 def test_profiles_page_exposes_local_persistence_status() -> None:
     profiles = (ROOT / "invoice_tool" / "ui_v2" / "pages" / "profiles.py").read_text(encoding="utf-8")
     configs = (ROOT / "invoice_tool" / "ui_v2" / "pages" / "configurations.py").read_text(encoding="utf-8")
-    assert "saas_disk_persistence_label" in profiles
+    assert "saas_persistence_status_vm" in profiles
+    assert "build_saas_persistence_status_panel" in profiles
     assert "save_saas_drafts_to_disk" in profiles
     assert "load_saas_drafts_from_disk" in profiles
-    assert "kein Cloud" in profiles
-    assert "saas_disk_persistence_label" in configs
-    assert "kein Cloud" in configs
+    assert "Cloud-Synchronisierung" in profiles or "keine Cloud" in profiles
+    assert "saas_persistence_status_vm" in configs
+    assert "build_saas_persistence_status_panel" in configs
