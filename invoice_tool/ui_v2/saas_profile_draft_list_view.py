@@ -34,6 +34,13 @@ SELECTED_NONE_LABEL = "Kein Entwurf gewählt"
 ACTION_NEW = "Neuer Entwurf"
 ACTION_LOAD = "Entwurf laden"
 ACTION_SAVE = "Entwurf speichern"
+ACTION_RENAME = "Entwurf umbenennen"
+ACTION_DELETE = "Entwurf löschen"
+DELETE_WARN = (
+    "Entwurf löschen entfernt nur den gewählten lokalen SaaS-Entwurf. "
+    "Aktiver Entwurf: erneutes „Entwurf löschen“ zur Bestätigung. Kein Cloud-Sync."
+)
+RENAME_FIELD_HINT = "Neuer Anzeigename (lokaler SaaS-Entwurf)"
 
 _PRIVATE_UI_MARKERS: tuple[str, ...] = (
     "SOMAA",
@@ -73,6 +80,11 @@ class SaasDraftListVM:
     action_new: str
     action_load: str
     action_save: str
+    action_rename: str
+    action_delete: str
+    delete_warn: str
+    rename_field_hint: str
+    delete_confirm_pending: bool = False
 
     def all_ui_texts(self) -> tuple[str, ...]:
         texts = [
@@ -86,6 +98,10 @@ class SaasDraftListVM:
             self.action_new,
             self.action_load,
             self.action_save,
+            self.action_rename,
+            self.action_delete,
+            self.delete_warn,
+            self.rename_field_hint,
         ]
         for row in self.rows:
             texts.extend(
@@ -103,6 +119,7 @@ def build_saas_draft_list_vm(
     items: tuple[SaasDraftListItem, ...] | list[SaasDraftListItem],
     *,
     selected_draft_id: str | None = None,
+    delete_confirm_pending: bool = False,
 ) -> SaasDraftListVM:
     rows: list[SaasDraftListRowVM] = []
     selected_label = SELECTED_NONE_LABEL
@@ -135,6 +152,11 @@ def build_saas_draft_list_vm(
         action_new=ACTION_NEW,
         action_load=ACTION_LOAD,
         action_save=ACTION_SAVE,
+        action_rename=ACTION_RENAME,
+        action_delete=ACTION_DELETE,
+        delete_warn=DELETE_WARN,
+        rename_field_hint=RENAME_FIELD_HINT,
+        delete_confirm_pending=delete_confirm_pending,
     )
     _assert_draft_list_ux_safe(vm)
     return vm
@@ -147,13 +169,16 @@ def build_saas_draft_list_panel(
     on_new: Callable[[], None] | None = None,
     on_load: Callable[[], None] | None = None,
     on_save: Callable[[], None] | None = None,
+    on_rename: Callable[[str], None] | None = None,
+    on_delete: Callable[[], None] | None = None,
+    rename_value: str = "",
 ) -> Any:
-    """Flet panel: local SaaS draft list with new/load/save actions."""
+    """Flet panel: local SaaS draft list with new/load/save/rename/delete actions."""
 
     import flet as ft
 
-    from invoice_tool.ui_v2.components import compact_list_item, inline_error, status_badge
-    from invoice_tool.ui_v2.edit_components import action_button, helper_text
+    from invoice_tool.ui_v2.components import compact_list_item, inline_error, inline_warning, status_badge
+    from invoice_tool.ui_v2.edit_components import action_button, helper_text, outlined_field_kwargs
     from invoice_tool.ui_v2.theme import COLOR_TEXT_PRIMARY, SPACE_SM, SPACE_XS
 
     header = ft.Row(
@@ -216,6 +241,35 @@ def build_saas_draft_list_panel(
         actions.append(action_button(vm.action_save, on_click=lambda _e: on_save(), primary=True))
     if actions:
         rows.append(ft.Row(actions, spacing=SPACE_SM, wrap=True))
+
+    if on_rename is not None or on_delete is not None:
+        rows.append(helper_text(vm.delete_warn))
+        if vm.delete_confirm_pending:
+            rows.append(
+                inline_warning(
+                    "Löschen bestätigen: erneut „Entwurf löschen“ für den aktiven lokalen SaaS-Entwurf."
+                )
+            )
+        rename_field: ft.TextField | None = None
+        if on_rename is not None:
+            rename_field = ft.TextField(
+                label=vm.rename_field_hint,
+                value=rename_value,
+                **outlined_field_kwargs(),
+            )
+            rows.append(rename_field)
+
+        manage_actions: list[ft.Control] = []
+        if on_rename is not None and rename_field is not None:
+
+            def _rename_click(_event: ft.ControlEvent, field: ft.TextField = rename_field) -> None:
+                on_rename(field.value or "")
+
+            manage_actions.append(action_button(vm.action_rename, on_click=_rename_click))
+        if on_delete is not None:
+            manage_actions.append(action_button(vm.action_delete, on_click=lambda _e: on_delete()))
+        if manage_actions:
+            rows.append(ft.Row(manage_actions, spacing=SPACE_SM, wrap=True))
 
     return ft.Column(rows, spacing=SPACE_XS, tight=True)
 

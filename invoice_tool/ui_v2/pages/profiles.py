@@ -354,8 +354,48 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         state.select_saas_draft(draft_id)
         _refresh()
 
+    def _rename_saas_draft_local(new_name: str) -> None:
+        result = state.rename_saas_draft(new_name)
+        status_vm = state.saas_persistence_status_vm()
+        if result.ok:
+            label = result.display_name or new_name
+            _set_feedback(
+                f"Lokal umbenannt „{label}“ — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+            )
+        else:
+            _set_feedback(
+                status_vm.error_text or result.error or status_vm.status_label,
+                is_error=True,
+            )
+        _refresh()
+
+    def _delete_saas_draft_local() -> None:
+        confirmed = state.saas_delete_confirm_pending
+        result = state.delete_saas_draft(confirmed=confirmed)
+        status_vm = state.saas_persistence_status_vm()
+        if result.ok:
+            _set_feedback(
+                "Lokal gelöscht — lokaler SaaS-Entwurf entfernt, keine Cloud-Synchronisierung."
+            )
+        elif result.status == "delete_needs_confirm":
+            _set_feedback(
+                status_vm.error_text or result.error or "Löschen bestätigen.",
+                is_error=False,
+            )
+        else:
+            _set_feedback(
+                status_vm.error_text or result.error or status_vm.status_label,
+                is_error=True,
+            )
+        _refresh()
+
     # Clear UX: SaaS draft ≠ internal working profile; local disk only.
     items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
+    selected_rename = ""
+    for item in state.list_saas_drafts():
+        if item.draft_id == state.saas_selected_draft_id:
+            selected_rename = item.display_name
+            break
     items.append(
         build_saas_draft_list_panel(
             state.saas_draft_list_vm(),
@@ -363,6 +403,9 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             on_new=lambda: _create_saas_draft_local(),
             on_load=lambda: _load_saas_draft_local(),
             on_save=lambda: _save_saas_draft_local(),
+            on_rename=_rename_saas_draft_local,
+            on_delete=_delete_saas_draft_local,
+            rename_value=selected_rename,
         )
     )
     items.append(

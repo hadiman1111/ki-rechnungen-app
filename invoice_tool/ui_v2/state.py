@@ -19,9 +19,13 @@ from invoice_tool.ui_v2.saas_profile_persistence_view import (
     format_persistence_timestamp,
 )
 from invoice_tool.ui_v2.saas_profile_store import (
+    STATUS_DELETED,
+    STATUS_DELETE_NEEDS_CONFIRM,
     STATUS_LOADED,
     STATUS_MISSING_BLANK,
+    STATUS_RENAMED,
     STATUS_SAVED,
+    STATUS_VALIDATION_ERROR,
     SaasDraftListItem,
     SaasProfileDiskStore,
     SaasProfileStoreResult,
@@ -62,6 +66,8 @@ class UiV2State:
     saas_disk_last_loaded_at: str | None = None
     # Selected entry in the bounded local SaaS draft list (not internal working profile).
     saas_selected_draft_id: str | None = None
+    # Armed after first delete click on the active local SaaS draft (no silent wipe).
+    saas_delete_confirm_pending: bool = False
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
@@ -110,6 +116,7 @@ class UiV2State:
 
         self.saas_disk_store = new_saas_profile_disk_store(store_path)
         self.saas_selected_draft_id = None
+        self.saas_delete_confirm_pending = False
 
     def saas_persistence_status_vm(self) -> SaasPersistenceStatusVM:
         """Visible local-draft persistence status for Profile/Configuration pages."""
@@ -129,10 +136,12 @@ class UiV2State:
         return build_saas_draft_list_vm(
             self.list_saas_drafts(),
             selected_draft_id=self.saas_selected_draft_id,
+            delete_confirm_pending=self.saas_delete_confirm_pending,
         )
 
     def select_saas_draft(self, draft_id: str | None) -> None:
         self.saas_selected_draft_id = (draft_id or "").strip() or None
+        self.saas_delete_confirm_pending = False
 
     def create_saas_draft(self, display_name: str | None = None) -> SaasProfileStoreResult:
         """Create a new generic local SaaS draft and select it."""
@@ -146,9 +155,87 @@ class UiV2State:
         self._apply_saas_disk_result(result, operation="save")
         if result.ok and result.draft_id:
             self.saas_selected_draft_id = result.draft_id
+            self.saas_delete_confirm_pending = False
             if result.profile_draft is not None:
                 self.saas_draft_store.profile_draft = result.profile_draft
             self.saas_draft_store.configuration_draft = result.configuration_draft
+        return result
+
+    def rename_saas_draft(
+        self,
+        new_display_name: str,
+        draft_id: str | None = None,
+    ) -> SaasProfileStoreResult:
+        """Rename the selected (or explicit) local SaaS draft display name only."""
+
+        target_id = (draft_id or self.saas_selected_draft_id or "").strip()
+        if not target_id:
+            result = SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=self.saas_disk_store.store_path,
+                error="Kein lokaler SaaS-Entwurf gewählt.",
+            )
+            self._apply_saas_disk_result(result, operation="rename")
+            return result
+        result = self.saas_disk_store.rename_draft(target_id, new_display_name)
+        self._apply_saas_disk_result(result, operation="rename")
+        if result.ok:
+            self.saas_selected_draft_id = result.draft_id or target_id
+            self.saas_delete_confirm_pending = False
+        return result
+
+    def delete_saas_draft(
+        self,
+        draft_id: str | None = None,
+        *,
+        confirmed: bool = False,
+    ) -> SaasProfileStoreResult:
+        """Delete a local SaaS draft. Active selection requires an explicit confirm step."""
+
+        target_id = (draft_id or self.saas_selected_draft_id or "").strip()
+        if not target_id:
+            result = SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=self.saas_disk_store.store_path,
+                error="Kein lokaler SaaS-Entwurf gewählt.",
+            )
+            self._apply_saas_disk_result(result, operation="delete")
+            return result
+
+        deleting_selected = target_id == self.saas_selected_draft_id
+        if deleting_selected and not confirmed:
+            self.saas_delete_confirm_pending = True
+            try:
+                path = self.saas_disk_store.draft_file_path(target_id)
+            except ValueError:
+                path = self.saas_disk_store.store_path
+            result = SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_DELETE_NEEDS_CONFIRM,
+                path=path,
+                error=(
+                    "Aktiven lokalen SaaS-Entwurf löschen? Erneut „Entwurf löschen“ bestätigen. "
+                    "Kein Cloud-Sync — nur lokale Datei."
+                ),
+                draft_id=target_id,
+            )
+            self._apply_saas_disk_result(result, operation="delete")
+            return result
+
+        result = self.saas_disk_store.delete_draft(target_id)
+        self._apply_saas_disk_result(result, operation="delete")
+        if not result.ok:
+            return result
+
+        self.saas_delete_confirm_pending = False
+        if deleting_selected or self.saas_selected_draft_id == target_id:
+            # Clear selection safely; do not invent private or blank defaults silently.
+            remaining = [item for item in self.list_saas_drafts() if item.draft_id != target_id]
+            self.saas_selected_draft_id = remaining[0].draft_id if remaining else None
+            self.saas_draft_store.profile_draft = None
+            self.saas_draft_store.configuration_draft = None
         return result
 
     def load_saas_draft(self, draft_id: str | None = None) -> SaasProfileStoreResult:
@@ -216,6 +303,11 @@ class UiV2State:
         self.saas_disk_last_error = result.error
         stamp = format_persistence_timestamp()
         if result.ok and result.status == STATUS_SAVED and operation == "save":
+            self.saas_disk_last_saved_at = stamp
+        if result.ok and result.status == STATUS_RENAMED and operation == "rename":
+            self.saas_disk_last_saved_at = stamp
+        if result.ok and result.status == STATUS_DELETED and operation == "delete":
+            # Deletion is a local disk change; keep timestamp as last successful mutation.
             self.saas_disk_last_saved_at = stamp
         if result.ok and result.status == STATUS_LOADED and operation == "load":
             self.saas_disk_last_loaded_at = stamp

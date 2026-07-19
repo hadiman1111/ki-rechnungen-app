@@ -44,12 +44,16 @@ STATUS_CORRUPTED = "corrupted"
 STATUS_VALIDATION_ERROR = "validation_error"
 STATUS_PRIVATE_DEFAULTS = "private_defaults"
 STATUS_IO_ERROR = "io_error"
+STATUS_RENAMED = "renamed"
+STATUS_DELETED = "deleted"
+STATUS_DELETE_NEEDS_CONFIRM = "delete_needs_confirm"
 
 DRAFT_ITEM_OK = "ok"
 DRAFT_ITEM_CORRUPTED = "corrupted"
 DRAFT_ITEM_MISSING = "missing"
 
 _DRAFT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
 _MANIFEST_FILENAMES = frozenset({"manifest.json", ".ds_store"})
 
 # Paths that must never be written by this store.
@@ -106,6 +110,12 @@ class SaasProfileStoreResult:
             return "Lokal gespeichert"
         if self.status == STATUS_LOADED and self.ok:
             return "Lokal geladen"
+        if self.status == STATUS_RENAMED and self.ok:
+            return "Lokal umbenannt"
+        if self.status == STATUS_DELETED and self.ok:
+            return "Lokal gelöscht"
+        if self.status == STATUS_DELETE_NEEDS_CONFIRM:
+            return "Löschen bestätigen"
         if self.status == STATUS_MISSING_BLANK:
             return "Nicht gespeichert"
         if self.status == STATUS_CORRUPTED:
@@ -270,6 +280,178 @@ class SaasProfileDiskStore:
             created_at=created_at,
             updated_at=_utc_now_iso(),
         )
+
+    def rename_draft(self, draft_id: str, new_display_name: str) -> SaasProfileStoreResult:
+        """Rename only the display name / metadata. Draft-ID stays unchanged."""
+
+        try:
+            normalized = _normalize_draft_id(draft_id)
+        except ValueError as exc:
+            path = self.drafts_root / f"{draft_id}.json"
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                error=str(exc),
+                draft_id=str(draft_id or ""),
+            )
+
+        cleaned_name = _normalize_display_name(new_display_name)
+        if not cleaned_name:
+            path = self.draft_file_path(normalized)
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                error="Anzeigename darf nicht leer sein.",
+                draft_id=normalized,
+            )
+
+        path = self.draft_file_path(normalized)
+        path_error = self._assert_path_inside_store(path)
+        if path_error:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=path,
+                error=path_error,
+                draft_id=normalized,
+            )
+        if not path.is_file():
+            self._last_status = "Nicht gespeichert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_MISSING_BLANK,
+                path=path,
+                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                draft_id=normalized,
+            )
+
+        loaded = self._load_from_path(path, expected_draft_id=normalized)
+        if not loaded.ok or loaded.profile_draft is None:
+            # Corrupt / invalid drafts stay listable and deletable, but not silently renamed.
+            return SaasProfileStoreResult(
+                ok=False,
+                status=loaded.status if loaded.status else STATUS_CORRUPTED,
+                path=path,
+                error=loaded.error or "Lokaler Draft beschädigt — Umbenennen nicht möglich.",
+                draft_id=normalized,
+                display_name=loaded.display_name,
+            )
+
+        created_at = ""
+        meta = self._read_meta_soft(path)
+        if meta.get("created_at"):
+            created_at = str(meta["created_at"])
+        else:
+            created_at = _utc_now_iso()
+
+        written = self._write_draft_file(
+            path=path,
+            profile_draft=loaded.profile_draft,
+            configuration_draft=loaded.configuration_draft,
+            draft_id=normalized,
+            display_name=cleaned_name,
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+        )
+        if not written.ok:
+            return written
+        self._last_status = "Lokal umbenannt"
+        return SaasProfileStoreResult(
+            ok=True,
+            status=STATUS_RENAMED,
+            path=path,
+            profile_draft=written.profile_draft,
+            configuration_draft=written.configuration_draft,
+            locally_persisted=True,
+            draft_id=normalized,
+            display_name=cleaned_name,
+        )
+
+    def delete_draft(self, draft_id: str) -> SaasProfileStoreResult:
+        """Delete only the JSON file for ``draft_id`` inside the store directory."""
+
+        try:
+            normalized = _normalize_draft_id(draft_id)
+        except ValueError as exc:
+            path = self.drafts_root / f"{draft_id}.json"
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                error=str(exc),
+                draft_id=str(draft_id or ""),
+            )
+
+        path = self.draft_file_path(normalized)
+        path_error = self._assert_path_inside_store(path)
+        if path_error:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=path,
+                error=path_error,
+                draft_id=normalized,
+            )
+        if path.name in FORBIDDEN_WRITE_BASENAMES:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=path,
+                error=f"Verbotener Löschzielname: {path.name}",
+                draft_id=normalized,
+            )
+        if not path.is_file():
+            self._last_status = "Nicht gespeichert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_MISSING_BLANK,
+                path=path,
+                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                draft_id=normalized,
+                locally_persisted=False,
+            )
+
+        try:
+            path.unlink()
+        except OSError as exc:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=path,
+                error=f"Löschen fehlgeschlagen: {exc}",
+                draft_id=normalized,
+            )
+
+        self._last_status = "Lokal gelöscht"
+        return SaasProfileStoreResult(
+            ok=True,
+            status=STATUS_DELETED,
+            path=path,
+            locally_persisted=False,
+            draft_id=normalized,
+        )
+
+    def _assert_path_inside_store(self, path: Path) -> str | None:
+        """Refuse any path that would escape the injectable drafts root."""
+
+        try:
+            root = self.drafts_root.resolve()
+            resolved = path.resolve()
+            resolved.relative_to(root)
+            if resolved.parent != root:
+                return "Löschen/Umbenennen außerhalb des Store-Verzeichnisses ist nicht erlaubt."
+        except (OSError, ValueError):
+            return "Löschen/Umbenennen außerhalb des Store-Verzeichnisses ist nicht erlaubt."
+        return None
 
     def save(
         self,
@@ -603,6 +785,14 @@ def _normalize_draft_id(draft_id: str) -> str:
     if not value or not _DRAFT_ID_RE.match(value):
         raise ValueError(f"Ungültige Draft-ID: {draft_id!r}")
     return value
+
+
+def _normalize_display_name(display_name: str) -> str:
+    """Neutralize control characters and collapse whitespace; empty after clean is invalid."""
+
+    cleaned = _CONTROL_CHARS_RE.sub(" ", display_name or "")
+    cleaned = " ".join(cleaned.split())
+    return cleaned.strip()
 
 
 def _utc_now_iso() -> str:

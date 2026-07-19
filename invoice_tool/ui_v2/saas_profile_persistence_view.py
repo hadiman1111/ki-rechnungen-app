@@ -13,10 +13,13 @@ from typing import TYPE_CHECKING, Any
 
 from invoice_tool.ui_v2.saas_profile_store import (
     STATUS_CORRUPTED,
+    STATUS_DELETED,
+    STATUS_DELETE_NEEDS_CONFIRM,
     STATUS_IO_ERROR,
     STATUS_LOADED,
     STATUS_MISSING_BLANK,
     STATUS_PRIVATE_DEFAULTS,
+    STATUS_RENAMED,
     STATUS_SAVED,
     STATUS_VALIDATION_ERROR,
     SaasProfileStoreResult,
@@ -29,6 +32,9 @@ if TYPE_CHECKING:
 UX_STATUS_UNSAVED = "Nicht gespeichert"
 UX_STATUS_SAVED = "Lokal gespeichert"
 UX_STATUS_LOADED = "Lokal geladen"
+UX_STATUS_RENAMED = "Lokal umbenannt"
+UX_STATUS_DELETED = "Lokal gelöscht"
+UX_STATUS_DELETE_CONFIRM = "Löschen bestätigen"
 UX_STATUS_CORRUPTED = "Lokaler Draft beschädigt"
 UX_STATUS_VALIDATION = "Validierungsfehler"
 UX_STATUS_PRIVATE = "Private Defaults blockiert"
@@ -105,6 +111,9 @@ def map_store_status_to_ux_label(store_status: str | None) -> str:
     mapping = {
         STATUS_SAVED: UX_STATUS_SAVED,
         STATUS_LOADED: UX_STATUS_LOADED,
+        STATUS_RENAMED: UX_STATUS_RENAMED,
+        STATUS_DELETED: UX_STATUS_DELETED,
+        STATUS_DELETE_NEEDS_CONFIRM: UX_STATUS_DELETE_CONFIRM,
         STATUS_MISSING_BLANK: UX_STATUS_UNSAVED,
         STATUS_CORRUPTED: UX_STATUS_CORRUPTED,
         STATUS_VALIDATION_ERROR: UX_STATUS_VALIDATION,
@@ -122,6 +131,9 @@ def map_store_status_to_ux_label(store_status: str | None) -> str:
         UX_STATUS_UNSAVED,
         UX_STATUS_SAVED,
         UX_STATUS_LOADED,
+        UX_STATUS_RENAMED,
+        UX_STATUS_DELETED,
+        UX_STATUS_DELETE_CONFIRM,
         UX_STATUS_CORRUPTED,
         UX_STATUS_VALIDATION,
         UX_STATUS_PRIVATE,
@@ -164,7 +176,10 @@ def build_saas_persistence_status_vm(
         STATUS_IO_ERROR,
     }
     if store_result is not None and not store_result.ok:
-        is_error = True
+        # Needs-confirm is a guarded warn state, not a hard persistence failure.
+        is_error = status_code != STATUS_DELETE_NEEDS_CONFIRM
+    if status_code == STATUS_DELETE_NEEDS_CONFIRM:
+        is_error = False
 
     timestamp_text = _format_timestamp_text(
         status_code=status_code,
@@ -172,13 +187,22 @@ def build_saas_persistence_status_vm(
         last_loaded_at=last_loaded_at,
     )
     error_text = ""
-    if is_error and error:
+    if error and (is_error or status_code == STATUS_DELETE_NEEDS_CONFIRM):
         if status_code == STATUS_CORRUPTED:
             error_text = f"Lokaler Draft beschädigt: {error}"
         else:
             error_text = error
 
-    badge_tone = "error" if is_error else ("success" if locally_persisted or status_code in {STATUS_SAVED, STATUS_LOADED} else "neutral")
+    badge_tone = (
+        "error"
+        if is_error
+        else (
+            "success"
+            if locally_persisted
+            or status_code in {STATUS_SAVED, STATUS_LOADED, STATUS_RENAMED, STATUS_DELETED}
+            else "neutral"
+        )
+    )
 
     vm = SaasPersistenceStatusVM(
         status_label=label,
@@ -188,7 +212,8 @@ def build_saas_persistence_status_vm(
         timestamp_text=timestamp_text,
         error_text=error_text,
         is_error=is_error,
-        locally_persisted=locally_persisted or status_code in {STATUS_SAVED, STATUS_LOADED},
+        locally_persisted=locally_persisted
+        or status_code in {STATUS_SAVED, STATUS_LOADED, STATUS_RENAMED},
         store_status=status_code,
         badge_tone=badge_tone,
     )
@@ -269,6 +294,9 @@ def _infer_status_from_label(label: str) -> str:
     reverse = {
         UX_STATUS_SAVED: STATUS_SAVED,
         UX_STATUS_LOADED: STATUS_LOADED,
+        UX_STATUS_RENAMED: STATUS_RENAMED,
+        UX_STATUS_DELETED: STATUS_DELETED,
+        UX_STATUS_DELETE_CONFIRM: STATUS_DELETE_NEEDS_CONFIRM,
         UX_STATUS_UNSAVED: STATUS_MISSING_BLANK,
         UX_STATUS_CORRUPTED: STATUS_CORRUPTED,
         "Beschädigte Datei": STATUS_CORRUPTED,
