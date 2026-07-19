@@ -10,7 +10,10 @@ No cloud/auth/tenant backend. No productive processing.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -28,6 +31,7 @@ from invoice_tool.ui_v2.saas_profile_state import SaasConfigurationDraft, SaasPr
 SCHEMA_VERSION = 1
 STORE_KIND = "saas_ui_v2_profile_draft"
 DEFAULT_DRAFT_FILENAME = "saas_profile_draft.json"
+GENERIC_DRAFT_DISPLAY_PREFIX = "Lokaler Entwurf"
 
 # Isolated from ~/Library/Application Support/KI-Rechnungen (Hadi/SOMAA working profiles).
 SAAS_UI_V2_SUPPORT_DIR_NAME = "KI-Rechnungen-SaaS-UI-v2"
@@ -40,6 +44,13 @@ STATUS_CORRUPTED = "corrupted"
 STATUS_VALIDATION_ERROR = "validation_error"
 STATUS_PRIVATE_DEFAULTS = "private_defaults"
 STATUS_IO_ERROR = "io_error"
+
+DRAFT_ITEM_OK = "ok"
+DRAFT_ITEM_CORRUPTED = "corrupted"
+DRAFT_ITEM_MISSING = "missing"
+
+_DRAFT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_MANIFEST_FILENAMES = frozenset({"manifest.json", ".ds_store"})
 
 # Paths that must never be written by this store.
 FORBIDDEN_WRITE_BASENAMES: frozenset[str] = frozenset(
@@ -54,6 +65,27 @@ FORBIDDEN_WRITE_BASENAMES: frozenset[str] = frozenset(
 
 
 @dataclass(frozen=True)
+class SaasDraftListItem:
+    """Metadata row for one local SaaS draft (not an internal working profile)."""
+
+    draft_id: str
+    display_name: str
+    created_at: str
+    updated_at: str
+    status: str
+    path: Path
+    error: str | None = None
+
+    @property
+    def is_usable(self) -> bool:
+        return self.status == DRAFT_ITEM_OK
+
+    @property
+    def locality_label(self) -> str:
+        return "lokal / nicht Cloud"
+
+
+@dataclass(frozen=True)
 class SaasProfileStoreResult:
     """Outcome of a save or load operation."""
 
@@ -65,6 +97,8 @@ class SaasProfileStoreResult:
     error: str | None = None
     private_default_violations: tuple[str, ...] = ()
     locally_persisted: bool = False
+    draft_id: str | None = None
+    display_name: str | None = None
 
     @property
     def persistence_label(self) -> str:
@@ -90,10 +124,18 @@ class SaasProfileDiskStore:
     """JSON file store for generic SaaS profile/configuration drafts.
 
     ``store_path`` is injectable so tests always use ``tmp_path``.
+    When ``store_path`` is a ``.json`` file, list/create APIs use its parent
+    directory. When it is a directory, the active single-file path becomes
+    ``<dir>/saas_profile_draft.json``.
     """
 
     store_path: Path
     _last_status: str = field(default="Nicht gespeichert", init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        path = Path(self.store_path)
+        if path.suffix.lower() != ".json":
+            self.store_path = path / DEFAULT_DRAFT_FILENAME
 
     @classmethod
     def default(cls) -> SaasProfileDiskStore:
@@ -107,12 +149,174 @@ class SaasProfileDiskStore:
     def last_persistence_label(self) -> str:
         return self._last_status
 
+    @property
+    def drafts_root(self) -> Path:
+        """Directory that holds one JSON file per local SaaS draft."""
+
+        return Path(self.store_path).parent
+
+    def draft_file_path(self, draft_id: str) -> Path:
+        normalized = _normalize_draft_id(draft_id)
+        return self.drafts_root / f"{normalized}.json"
+
+    def list_drafts(self) -> tuple[SaasDraftListItem, ...]:
+        root = self.drafts_root
+        if not root.is_dir():
+            return ()
+        items: list[SaasDraftListItem] = []
+        for path in sorted(root.glob("*.json"), key=lambda p: p.name.lower()):
+            if path.name.lower() in _MANIFEST_FILENAMES:
+                continue
+            if path.name in FORBIDDEN_WRITE_BASENAMES:
+                continue
+            items.append(self._list_item_from_path(path))
+        items.sort(key=lambda item: (item.updated_at or "", item.display_name.lower()), reverse=True)
+        return tuple(items)
+
+    def create_draft(
+        self,
+        *,
+        display_name: str | None = None,
+        profile_draft: SaasProfileDraft | None = None,
+        configuration_draft: SaasConfigurationDraft | None = None,
+    ) -> SaasProfileStoreResult:
+        """Create a new generic local SaaS draft file under ``drafts_root``."""
+
+        draft_id = _new_draft_id()
+        name = (display_name or "").strip() or self._next_generic_display_name()
+        now = _utc_now_iso()
+        profile = profile_draft or _blank_profile_draft()
+        if not (profile.profile_name or "").strip() or profile.profile_name == DEFAULT_SAAS_PROFILE_NAME:
+            # Keep profile_name generic; list label is display_name.
+            pass
+        path = self.draft_file_path(draft_id)
+        return self._write_draft_file(
+            path=path,
+            profile_draft=profile,
+            configuration_draft=configuration_draft,
+            draft_id=draft_id,
+            display_name=name,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def load_draft(self, draft_id: str) -> SaasProfileStoreResult:
+        """Load one draft by id. Missing/corrupt never invent private defaults."""
+
+        try:
+            normalized = _normalize_draft_id(draft_id)
+        except ValueError as exc:
+            path = self.drafts_root / f"{draft_id}.json"
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                error=str(exc),
+                draft_id=str(draft_id or ""),
+            )
+        path = self.draft_file_path(normalized)
+        if not path.is_file():
+            self._last_status = "Nicht gespeichert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_MISSING_BLANK,
+                path=path,
+                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                draft_id=normalized,
+                locally_persisted=False,
+            )
+        return self._load_from_path(path, expected_draft_id=normalized)
+
+    def save_draft(
+        self,
+        draft_id: str,
+        profile_draft: SaasProfileDraft,
+        configuration_draft: SaasConfigurationDraft | None = None,
+        *,
+        display_name: str | None = None,
+    ) -> SaasProfileStoreResult:
+        """Update only the selected draft file (local disk, no cloud)."""
+
+        try:
+            normalized = _normalize_draft_id(draft_id)
+        except ValueError as exc:
+            path = self.drafts_root / f"{draft_id}.json"
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                profile_draft=profile_draft,
+                configuration_draft=configuration_draft,
+                error=str(exc),
+                draft_id=str(draft_id or ""),
+            )
+        path = self.draft_file_path(normalized)
+        created_at = _utc_now_iso()
+        existing_name = (display_name or "").strip() or self._next_generic_display_name()
+        if path.is_file():
+            meta = self._read_meta_soft(path)
+            if meta.get("created_at"):
+                created_at = str(meta["created_at"])
+            if not (display_name or "").strip() and meta.get("display_name"):
+                existing_name = str(meta["display_name"])
+        return self._write_draft_file(
+            path=path,
+            profile_draft=profile_draft,
+            configuration_draft=configuration_draft,
+            draft_id=normalized,
+            display_name=existing_name,
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+        )
+
     def save(
         self,
         profile_draft: SaasProfileDraft,
         configuration_draft: SaasConfigurationDraft | None = None,
     ) -> SaasProfileStoreResult:
         path = Path(self.store_path)
+        meta = self._read_meta_soft(path) if path.is_file() else {}
+        draft_id = str(meta.get("draft_id") or path.stem)
+        display_name = str(meta.get("display_name") or GENERIC_DRAFT_DISPLAY_PREFIX)
+        created_at = str(meta.get("created_at") or _utc_now_iso())
+        return self._write_draft_file(
+            path=path,
+            profile_draft=profile_draft,
+            configuration_draft=configuration_draft,
+            draft_id=draft_id if _DRAFT_ID_RE.match(draft_id) else path.stem,
+            display_name=display_name,
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+        )
+
+    def load(self) -> SaasProfileStoreResult:
+        path = Path(self.store_path)
+        if not path.is_file():
+            blank = _blank_profile_draft()
+            self._last_status = "Nicht gespeichert"
+            return SaasProfileStoreResult(
+                ok=True,
+                status=STATUS_MISSING_BLANK,
+                path=path,
+                profile_draft=blank,
+                configuration_draft=None,
+                locally_persisted=False,
+            )
+        return self._load_from_path(path)
+
+    def _write_draft_file(
+        self,
+        *,
+        path: Path,
+        profile_draft: SaasProfileDraft,
+        configuration_draft: SaasConfigurationDraft | None,
+        draft_id: str,
+        display_name: str,
+        created_at: str,
+        updated_at: str,
+    ) -> SaasProfileStoreResult:
         if path.name in FORBIDDEN_WRITE_BASENAMES:
             self._last_status = "Speicherfehler"
             return SaasProfileStoreResult(
@@ -120,9 +324,18 @@ class SaasProfileDiskStore:
                 status=STATUS_IO_ERROR,
                 path=path,
                 error=f"Verbotener Speicherzielname: {path.name}",
+                draft_id=draft_id,
+                display_name=display_name,
             )
 
-        payload = _drafts_to_payload(profile_draft, configuration_draft)
+        payload = _drafts_to_payload(
+            profile_draft,
+            configuration_draft,
+            draft_id=draft_id,
+            display_name=display_name,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
         violations = find_private_saas_default_violations(_guard_slice(payload))
         if violations:
             self._last_status = "Private Defaults blockiert"
@@ -134,6 +347,8 @@ class SaasProfileDiskStore:
                 configuration_draft=configuration_draft,
                 error="Private Tenant-Defaults dürfen nicht persistiert werden.",
                 private_default_violations=tuple(violations),
+                draft_id=draft_id,
+                display_name=display_name,
             )
 
         try:
@@ -147,6 +362,8 @@ class SaasProfileDiskStore:
                 profile_draft=profile_draft,
                 configuration_draft=configuration_draft,
                 error=str(exc),
+                draft_id=draft_id,
+                display_name=display_name,
             )
 
         try:
@@ -164,6 +381,8 @@ class SaasProfileDiskStore:
                 profile_draft=profile_draft,
                 configuration_draft=configuration_draft,
                 error=f"Schreiben fehlgeschlagen: {exc}",
+                draft_id=draft_id,
+                display_name=display_name,
             )
 
         self._last_status = "Lokal gespeichert"
@@ -174,22 +393,16 @@ class SaasProfileDiskStore:
             profile_draft=profile_draft,
             configuration_draft=configuration_draft,
             locally_persisted=True,
+            draft_id=draft_id,
+            display_name=display_name,
         )
 
-    def load(self) -> SaasProfileStoreResult:
-        path = Path(self.store_path)
-        if not path.is_file():
-            blank = _blank_profile_draft()
-            self._last_status = "Nicht gespeichert"
-            return SaasProfileStoreResult(
-                ok=True,
-                status=STATUS_MISSING_BLANK,
-                path=path,
-                profile_draft=blank,
-                configuration_draft=None,
-                locally_persisted=False,
-            )
-
+    def _load_from_path(
+        self,
+        path: Path,
+        *,
+        expected_draft_id: str | None = None,
+    ) -> SaasProfileStoreResult:
         try:
             raw_text = path.read_text(encoding="utf-8")
             data = json.loads(raw_text)
@@ -200,6 +413,7 @@ class SaasProfileDiskStore:
                 status=STATUS_CORRUPTED,
                 path=path,
                 error=f"Datei unlesbar: {exc}",
+                draft_id=expected_draft_id or path.stem,
             )
         except json.JSONDecodeError as exc:
             self._last_status = "Lokaler Draft beschädigt"
@@ -208,6 +422,7 @@ class SaasProfileDiskStore:
                 status=STATUS_CORRUPTED,
                 path=path,
                 error=f"Ungültiges JSON: {exc.msg}",
+                draft_id=expected_draft_id or path.stem,
             )
 
         if not isinstance(data, dict):
@@ -217,6 +432,7 @@ class SaasProfileDiskStore:
                 status=STATUS_CORRUPTED,
                 path=path,
                 error="Root muss ein JSON-Objekt sein.",
+                draft_id=expected_draft_id or path.stem,
             )
 
         validation_error = _validate_envelope(data)
@@ -227,6 +443,8 @@ class SaasProfileDiskStore:
                 status=STATUS_VALIDATION_ERROR,
                 path=path,
                 error=validation_error,
+                draft_id=expected_draft_id or str(data.get("draft_id") or path.stem),
+                display_name=str(data.get("display_name") or "") or None,
             )
 
         try:
@@ -244,10 +462,20 @@ class SaasProfileDiskStore:
                 status=STATUS_VALIDATION_ERROR,
                 path=path,
                 error=f"Draft-Felder ungültig: {exc}",
+                draft_id=expected_draft_id or str(data.get("draft_id") or path.stem),
             )
 
         violations = find_private_saas_default_violations(
-            _guard_slice(_drafts_to_payload(profile_draft, configuration_draft))
+            _guard_slice(
+                _drafts_to_payload(
+                    profile_draft,
+                    configuration_draft,
+                    draft_id=str(data.get("draft_id") or path.stem),
+                    display_name=str(data.get("display_name") or GENERIC_DRAFT_DISPLAY_PREFIX),
+                    created_at=str(data.get("created_at") or ""),
+                    updated_at=str(data.get("updated_at") or ""),
+                )
+            )
         )
         if violations:
             self._last_status = "Private Defaults blockiert"
@@ -257,8 +485,11 @@ class SaasProfileDiskStore:
                 path=path,
                 error="Persistierte Datei enthält private Tenant-Defaults.",
                 private_default_violations=tuple(violations),
+                draft_id=expected_draft_id or str(data.get("draft_id") or path.stem),
             )
 
+        draft_id = str(data.get("draft_id") or path.stem)
+        display_name = str(data.get("display_name") or profile_draft.profile_name or GENERIC_DRAFT_DISPLAY_PREFIX)
         self._last_status = "Lokal geladen"
         return SaasProfileStoreResult(
             ok=True,
@@ -267,7 +498,78 @@ class SaasProfileDiskStore:
             profile_draft=profile_draft,
             configuration_draft=configuration_draft,
             locally_persisted=True,
+            draft_id=draft_id,
+            display_name=display_name,
         )
+
+    def _list_item_from_path(self, path: Path) -> SaasDraftListItem:
+        stem = path.stem
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return SaasDraftListItem(
+                draft_id=stem,
+                display_name=stem,
+                created_at="",
+                updated_at="",
+                status=DRAFT_ITEM_CORRUPTED,
+                path=path,
+                error=f"Lokaler Draft beschädigt: {exc}",
+            )
+        if not isinstance(data, dict):
+            return SaasDraftListItem(
+                draft_id=stem,
+                display_name=stem,
+                created_at="",
+                updated_at="",
+                status=DRAFT_ITEM_CORRUPTED,
+                path=path,
+                error="Lokaler Draft beschädigt: Root muss ein JSON-Objekt sein.",
+            )
+        validation_error = _validate_envelope(data)
+        draft_id = str(data.get("draft_id") or stem)
+        profile = data.get("profile") if isinstance(data.get("profile"), Mapping) else {}
+        display_name = str(
+            data.get("display_name")
+            or (profile.get("profile_name") if isinstance(profile, Mapping) else "")
+            or GENERIC_DRAFT_DISPLAY_PREFIX
+        )
+        if validation_error:
+            return SaasDraftListItem(
+                draft_id=draft_id,
+                display_name=display_name,
+                created_at=str(data.get("created_at") or ""),
+                updated_at=str(data.get("updated_at") or ""),
+                status=DRAFT_ITEM_CORRUPTED,
+                path=path,
+                error=validation_error,
+            )
+        return SaasDraftListItem(
+            draft_id=draft_id,
+            display_name=display_name,
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+            status=DRAFT_ITEM_OK,
+            path=path,
+        )
+
+    def _read_meta_soft(self, path: Path) -> dict[str, str]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            "draft_id": str(data.get("draft_id") or ""),
+            "display_name": str(data.get("display_name") or ""),
+            "created_at": str(data.get("created_at") or ""),
+            "updated_at": str(data.get("updated_at") or ""),
+        }
+
+    def _next_generic_display_name(self) -> str:
+        count = len(self.list_drafts()) + 1
+        return f"{GENERIC_DRAFT_DISPLAY_PREFIX} {count}"
 
 
 def default_saas_ui_v2_draft_dir() -> Path:
@@ -289,7 +591,22 @@ def default_saas_ui_v2_draft_path() -> Path:
 def new_saas_profile_disk_store(store_path: Path | None = None) -> SaasProfileDiskStore:
     if store_path is None:
         return SaasProfileDiskStore.default()
-    return SaasProfileDiskStore.for_path(store_path)
+    return SaasProfileDiskStore.for_path(Path(store_path))
+
+
+def _new_draft_id() -> str:
+    return f"draft_{uuid.uuid4().hex[:12]}"
+
+
+def _normalize_draft_id(draft_id: str) -> str:
+    value = (draft_id or "").strip()
+    if not value or not _DRAFT_ID_RE.match(value):
+        raise ValueError(f"Ungültige Draft-ID: {draft_id!r}")
+    return value
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _blank_profile_draft() -> SaasProfileDraft:
@@ -314,8 +631,13 @@ def _blank_profile_draft() -> SaasProfileDraft:
 def _drafts_to_payload(
     profile_draft: SaasProfileDraft,
     configuration_draft: SaasConfigurationDraft | None,
+    *,
+    draft_id: str | None = None,
+    display_name: str | None = None,
+    created_at: str | None = None,
+    updated_at: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": STORE_KIND,
         "persistence": "local_disk_only",
@@ -327,6 +649,15 @@ def _drafts_to_payload(
             else None
         ),
     }
+    if draft_id:
+        payload["draft_id"] = draft_id
+    if display_name is not None:
+        payload["display_name"] = display_name
+    if created_at:
+        payload["created_at"] = created_at
+    if updated_at:
+        payload["updated_at"] = updated_at
+    return payload
 
 
 def _profile_draft_to_dict(draft: SaasProfileDraft) -> dict[str, Any]:

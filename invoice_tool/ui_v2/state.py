@@ -9,6 +9,10 @@ from typing import Any, Callable
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
 from invoice_tool.ui_v2.saas_profile_state import SaasProfileStateStore, new_saas_profile_state_store
+from invoice_tool.ui_v2.saas_profile_draft_list_view import (
+    SaasDraftListVM,
+    build_saas_draft_list_vm,
+)
 from invoice_tool.ui_v2.saas_profile_persistence_view import (
     SaasPersistenceStatusVM,
     build_saas_persistence_status_vm,
@@ -18,6 +22,7 @@ from invoice_tool.ui_v2.saas_profile_store import (
     STATUS_LOADED,
     STATUS_MISSING_BLANK,
     STATUS_SAVED,
+    SaasDraftListItem,
     SaasProfileDiskStore,
     SaasProfileStoreResult,
     new_saas_profile_disk_store,
@@ -55,6 +60,8 @@ class UiV2State:
     saas_disk_last_error: str | None = None
     saas_disk_last_saved_at: str | None = None
     saas_disk_last_loaded_at: str | None = None
+    # Selected entry in the bounded local SaaS draft list (not internal working profile).
+    saas_selected_draft_id: str | None = None
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
@@ -99,9 +106,10 @@ class UiV2State:
         self.pending_delete = None
 
     def configure_saas_disk_store(self, store_path: Path) -> None:
-        """Inject a store path (tests / isolated runs). Never points at Hadi profiles."""
+        """Inject a store path or drafts directory (tests). Never points at Hadi profiles."""
 
         self.saas_disk_store = new_saas_profile_disk_store(store_path)
+        self.saas_selected_draft_id = None
 
     def saas_persistence_status_vm(self) -> SaasPersistenceStatusVM:
         """Visible local-draft persistence status for Profile/Configuration pages."""
@@ -114,25 +122,92 @@ class UiV2State:
             last_error=self.saas_disk_last_error,
         )
 
+    def list_saas_drafts(self) -> tuple[SaasDraftListItem, ...]:
+        return self.saas_disk_store.list_drafts()
+
+    def saas_draft_list_vm(self) -> SaasDraftListVM:
+        return build_saas_draft_list_vm(
+            self.list_saas_drafts(),
+            selected_draft_id=self.saas_selected_draft_id,
+        )
+
+    def select_saas_draft(self, draft_id: str | None) -> None:
+        self.saas_selected_draft_id = (draft_id or "").strip() or None
+
+    def create_saas_draft(self, display_name: str | None = None) -> SaasProfileStoreResult:
+        """Create a new generic local SaaS draft and select it."""
+
+        profile = self.saas_draft_store.begin_blank_profile()
+        result = self.saas_disk_store.create_draft(
+            display_name=display_name,
+            profile_draft=profile,
+            configuration_draft=self.saas_draft_store.configuration_draft,
+        )
+        self._apply_saas_disk_result(result, operation="save")
+        if result.ok and result.draft_id:
+            self.saas_selected_draft_id = result.draft_id
+            if result.profile_draft is not None:
+                self.saas_draft_store.profile_draft = result.profile_draft
+            self.saas_draft_store.configuration_draft = result.configuration_draft
+        return result
+
+    def load_saas_draft(self, draft_id: str | None = None) -> SaasProfileStoreResult:
+        """Load a selected (or explicit) local SaaS draft. Corrupt/missing do not overwrite."""
+
+        target_id = (draft_id or self.saas_selected_draft_id or "").strip()
+        if not target_id:
+            return self.load_saas_drafts_from_disk()
+        prior_profile = self.saas_draft_store.profile_draft
+        prior_config = self.saas_draft_store.configuration_draft
+        result = self.saas_disk_store.load_draft(target_id)
+        self._apply_saas_disk_result(result, operation="load")
+        if result.ok and result.profile_draft is not None:
+            self.saas_selected_draft_id = result.draft_id or target_id
+            self.saas_draft_store.profile_draft = result.profile_draft
+            self.saas_draft_store.configuration_draft = result.configuration_draft
+        else:
+            # Keep in-memory drafts unchanged on corrupt/missing.
+            self.saas_draft_store.profile_draft = prior_profile
+            self.saas_draft_store.configuration_draft = prior_config
+        return result
+
     def save_saas_drafts_to_disk(self) -> SaasProfileStoreResult:
         """Persist current generic SaaS drafts locally (no cloud, no working profile)."""
 
         profile = self.saas_draft_store.profile_draft or self.saas_draft_store.begin_blank_profile()
-        result = self.saas_disk_store.save(
-            profile,
-            self.saas_draft_store.configuration_draft,
-        )
+        if self.saas_selected_draft_id:
+            result = self.saas_disk_store.save_draft(
+                self.saas_selected_draft_id,
+                profile,
+                self.saas_draft_store.configuration_draft,
+            )
+        else:
+            result = self.saas_disk_store.save(
+                profile,
+                self.saas_draft_store.configuration_draft,
+            )
         self._apply_saas_disk_result(result, operation="save")
+        if result.ok and result.draft_id:
+            self.saas_selected_draft_id = result.draft_id
         return result
 
     def load_saas_drafts_from_disk(self) -> SaasProfileStoreResult:
         """Load generic SaaS drafts from the local disk store."""
 
+        if self.saas_selected_draft_id:
+            return self.load_saas_draft(self.saas_selected_draft_id)
+        prior_profile = self.saas_draft_store.profile_draft
+        prior_config = self.saas_draft_store.configuration_draft
         result = self.saas_disk_store.load()
         self._apply_saas_disk_result(result, operation="load")
         if result.ok and result.profile_draft is not None:
             self.saas_draft_store.profile_draft = result.profile_draft
             self.saas_draft_store.configuration_draft = result.configuration_draft
+            if result.draft_id:
+                self.saas_selected_draft_id = result.draft_id
+        elif not result.ok:
+            self.saas_draft_store.profile_draft = prior_profile
+            self.saas_draft_store.configuration_draft = prior_config
         return result
 
     def _apply_saas_disk_result(self, result: SaasProfileStoreResult, *, operation: str) -> None:

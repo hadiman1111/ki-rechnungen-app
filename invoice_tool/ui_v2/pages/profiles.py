@@ -50,6 +50,9 @@ from invoice_tool.ui_v2.edit_components import (
     outlined_field_kwargs,
     unsaved_changes_dialog,
 )
+from invoice_tool.ui_v2.saas_profile_draft_list_view import (
+    build_saas_draft_list_panel,
+)
 from invoice_tool.ui_v2.saas_profile_persistence_view import (
     build_saas_persistence_status_panel,
 )
@@ -298,7 +301,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     if state.profile_feedback:
         items.append(feedback_banner(state.profile_feedback, is_error=state.profile_feedback_error))
 
-    def _save_saas_draft_local(_event: ft.ControlEvent) -> None:
+    def _save_saas_draft_local(_event: ft.ControlEvent | None = None) -> None:
         result = state.save_saas_drafts_to_disk()
         status_vm = state.saas_persistence_status_vm()
         if result.ok:
@@ -312,7 +315,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             )
         _refresh()
 
-    def _load_saas_draft_local(_event: ft.ControlEvent) -> None:
+    def _load_saas_draft_local(_event: ft.ControlEvent | None = None) -> None:
         result = state.load_saas_drafts_from_disk()
         status_vm = state.saas_persistence_status_vm()
         if not result.ok:
@@ -332,8 +335,36 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             )
         _refresh()
 
+    def _create_saas_draft_local(_event: ft.ControlEvent | None = None) -> None:
+        result = state.create_saas_draft()
+        status_vm = state.saas_persistence_status_vm()
+        if result.ok:
+            label = result.display_name or "Lokaler Entwurf"
+            _set_feedback(
+                f"Neuer lokaler SaaS-Entwurf „{label}“ — keine Cloud-Synchronisierung."
+            )
+        else:
+            _set_feedback(
+                status_vm.error_text or result.error or status_vm.status_label,
+                is_error=True,
+            )
+        _refresh()
+
+    def _select_saas_draft(draft_id: str) -> None:
+        state.select_saas_draft(draft_id)
+        _refresh()
+
     # Clear UX: SaaS draft ≠ internal working profile; local disk only.
     items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
+    items.append(
+        build_saas_draft_list_panel(
+            state.saas_draft_list_vm(),
+            on_select=_select_saas_draft,
+            on_new=lambda: _create_saas_draft_local(),
+            on_load=lambda: _load_saas_draft_local(),
+            on_save=lambda: _save_saas_draft_local(),
+        )
+    )
     items.append(
         ft.Row(
             [

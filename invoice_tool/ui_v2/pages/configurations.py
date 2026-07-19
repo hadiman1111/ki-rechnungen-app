@@ -58,6 +58,9 @@ from invoice_tool.ui_v2.edit_components import (
     unsaved_changes_dialog,
 )
 from invoice_tool.ui_v2.filename_editor import build_filename_pattern_editor
+from invoice_tool.ui_v2.saas_profile_draft_list_view import (
+    build_saas_draft_list_panel,
+)
 from invoice_tool.ui_v2.saas_profile_persistence_view import (
     build_saas_persistence_status_panel,
 )
@@ -328,8 +331,50 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
     if state.config_feedback:
         items.append(feedback_banner(state.config_feedback, is_error=state.config_feedback_error))
 
-    # Same local SaaS-draft status as profiles — not the internal working profile.
+    def _select_saas_draft(draft_id: str) -> None:
+        state.select_saas_draft(draft_id)
+        _refresh()
+
+    def _create_saas_draft_local() -> None:
+        result = state.create_saas_draft()
+        if result.ok:
+            label = result.display_name or "Lokaler Entwurf"
+            _set_feedback(
+                f"Neuer lokaler SaaS-Entwurf „{label}“ — keine Cloud-Synchronisierung."
+            )
+        else:
+            _set_feedback(result.error or "Speicherfehler", is_error=True)
+        _refresh()
+
+    def _load_saas_draft_local() -> None:
+        result = state.load_saas_draft()
+        if not result.ok:
+            _set_feedback(result.error or "Lokaler Draft beschädigt", is_error=True)
+        elif result.status == "missing_blank":
+            _set_feedback("Nicht gespeichert — kein lokaler SaaS-Entwurf vorhanden.")
+        else:
+            _set_feedback("Lokal geladen — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+        _refresh()
+
+    def _save_saas_draft_local() -> None:
+        result = state.save_saas_drafts_to_disk()
+        if result.ok:
+            _set_feedback("Lokal gespeichert — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+        else:
+            _set_feedback(result.error or "Speicherfehler", is_error=True)
+        _refresh()
+
+    # Same local SaaS-draft status/list as profiles — not the internal working profile.
     items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
+    items.append(
+        build_saas_draft_list_panel(
+            state.saas_draft_list_vm(),
+            on_select=_select_saas_draft,
+            on_new=_create_saas_draft_local,
+            on_load=_load_saas_draft_local,
+            on_save=_save_saas_draft_local,
+        )
+    )
 
     items.append(
         kpi_strip(
