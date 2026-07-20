@@ -7,19 +7,22 @@ Processing is not started from this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from invoice_tool.saas_product_model import (
+    CLASSIFICATION_POLICY_UI_TEXTS,
     DEFAULT_SAAS_FILENAME_PATTERN,
     DEFAULT_SAAS_PROFILE_NAME,
     DEFAULT_SAAS_REVIEW_FOLDER,
+    ClassificationPolicy,
     SaasConfigurationSurface,
     SaasProfileEditorField,
     SaasProfileSurface,
     assert_saas_defaults_are_generic,
     blank_saas_profile_as_dict,
     build_blank_saas_profile,
+    classification_policy_ui_texts,
     find_private_saas_default_violations,
     list_generic_scan_models,
     saas_profile_editor_fields,
@@ -36,6 +39,11 @@ SAAS_SURFACE_UI_LABELS: dict[str, str] = {
     "filename_pattern": "Dateinamensmuster",
     "review_rule": "Review-Regel",
     "payment_hint": "Zahlung/Kontierung optional",
+    "classification_policy": "Klassifikations-Policy",
+    "payment_evidence": "Zahlungsweg-Erkennung",
+    "invoice_direction": "Rechnungsrichtung erkennen",
+    "document_type_detection": "Dokumenttyp-Erkennung",
+    "mixed_address": "Gemischte geschäftliche/private Adresssignale",
 }
 
 DEFAULT_SAAS_REVIEW_RULE_LABEL = "Unklar bei Nicht-Treffer"
@@ -88,6 +96,8 @@ class SaasProfileSurfaceVM:
     fields: tuple[SaasSurfaceFieldDisplay, ...]
     review_hints: tuple[str, ...]
     ui_labels: Mapping[str, str]
+    classification_policy: ClassificationPolicy = field(default_factory=ClassificationPolicy)
+    classification_policy_texts: tuple[str, ...] = CLASSIFICATION_POLICY_UI_TEXTS
 
 
 @dataclass(frozen=True)
@@ -217,6 +227,8 @@ def build_saas_profile_surface_vm(
         fields=fields,
         review_hints=saas_surface_review_hints(profile),
         ui_labels=dict(SAAS_SURFACE_UI_LABELS),
+        classification_policy=profile.classification_policy,
+        classification_policy_texts=classification_policy_ui_texts(),
     )
 
 
@@ -232,7 +244,13 @@ def saas_surface_review_hints(surface: SaasProfileSurface | None = None) -> tupl
         f'Dateinamensmuster-Default: {profile.default_filename_pattern or DEFAULT_SAAS_FILENAME_PATTERN}',
         f'Review: nicht zugeordnete Dokumente → Ordner „{profile.review_unclear_folder}".',
         "Zahlungs-/Kontierungshinweis ist optional und nie mit privaten Kartenwerten vorbelegt.",
+        "Zahlungsweg-Erkennung: Lieferanten-IBAN/BIC nicht als Zahlungsweg werten.",
+        "Apple Pay ohne Karten-/Konto-Endung zur Prüfung.",
+        "Rechnungsrichtung erkennen: Ausgangsrechnung nicht als Eingangsrechnung.",
+        "Dokumenttyp-Erkennung: Buchhaltungsauswertungen zur Prüfung.",
+        "Gemischte geschäftliche/private Adresssignale zur Prüfung.",
         "Verarbeitung wird von dieser Oberfläche nicht gestartet.",
+        "Kein Cloud-/Mandantenbetrieb in dieser lokalen Oberfläche.",
     ]
     return tuple(hints)
 
@@ -268,6 +286,8 @@ def surface_payload_as_dict(vm: SaasProfileSurfaceVM | None = None) -> dict[str,
             "filename_pattern": display.filename_pattern,
             "review_rule": display.review_rule,
             "payment_hint": display.payment_hint,
+            "classification_policy": display.classification_policy.to_dict(),
+            "classification_policy_texts": list(display.classification_policy_texts),
             "ui_labels": dict(display.ui_labels),
             "field_values": {field.key: field.value for field in display.fields},
             "field_labels": {field.key: field.label for field in display.fields},
@@ -286,6 +306,8 @@ def surface_payload_as_dict(vm: SaasProfileSurfaceVM | None = None) -> dict[str,
         "notes": vm.notes,
         "configurations": [],
         "default_filename_pattern": vm.filename_pattern,
+        "classification_policy": vm.classification_policy.to_dict(),
+        "classification_policy_texts": list(vm.classification_policy_texts),
         "ui_labels": dict(vm.ui_labels),
         "field_values": {field.key: field.value for field in vm.fields},
         "field_labels": {field.key: field.label for field in vm.fields},

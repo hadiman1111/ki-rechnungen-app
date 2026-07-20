@@ -15,8 +15,10 @@ from invoice_tool.saas_product_model import (
     DEFAULT_SAAS_REVIEW_FOLDER,
     DEFAULT_SAAS_SCAN_MODEL_ID,
     GENERIC_SCAN_MODELS,
+    ClassificationPolicy,
     assert_saas_defaults_are_generic,
     build_blank_saas_profile,
+    default_classification_policy,
     find_private_saas_default_violations,
     list_generic_scan_models,
     saas_profile_editor_fields,
@@ -94,6 +96,7 @@ class SaasProfileDraft:
     notes: str = ""
     is_new: bool = True
     configurations: list[SaasConfigurationDraft] = field(default_factory=list)
+    classification_policy: ClassificationPolicy = field(default_factory=default_classification_policy)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +113,7 @@ class SaasProfileDraft:
             "default_filename_pattern": self.filename_pattern,
             "notes": self.notes,
             "configurations": [item.to_dict() for item in self.configurations],
+            "classification_policy": self.classification_policy.to_dict(),
         }
 
     def review_rule_label(self) -> str:
@@ -157,6 +161,7 @@ class SaasProfileStateStore:
             notes=blank.notes,
             is_new=True,
             configurations=[],
+            classification_policy=blank.classification_policy,
         )
         self.profile_draft = draft
         self._assert_draft_generic(draft.to_dict())
@@ -359,6 +364,7 @@ class SaasProfileStateStore:
             review_unclear_folder=self.profile_draft.review_unclear_folder,
             default_filename_pattern=self.profile_draft.filename_pattern,
             notes=self.profile_draft.notes,
+            classification_policy=self.profile_draft.classification_policy,
         )
         return build_saas_profile_surface_vm(surface)
 

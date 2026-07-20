@@ -288,7 +288,9 @@ def apply_final_assignment(
     account_decision: AccountDecision,
     street_key: str | None,
     preset: ProcessingPreset,
+    extracted: ExtractedData | None = None,
 ) -> RoutingDecision:
+    routing: RoutingDecision | None = None
     for rule in preset.routing.final_assignment_rules:
         if rule.art_any and art not in set(rule.art_any):
             continue
@@ -316,7 +318,7 @@ def apply_final_assignment(
             payment_field=final_payment_field,
             preset=preset,
         )
-        return RoutingDecision(
+        routing = RoutingDecision(
             art=final_art or art,
             zielordner=zielordner,
             status=status,
@@ -328,24 +330,43 @@ def apply_final_assignment(
                 f"Final-Assignment-Regel '{rule.name}' getroffen."
             ),
         )
+        break
 
-    zielordner, status = resolve_output_route(
-        art=art,
-        payment_field=preset.routing.default_payment_field,
+    if routing is None:
+        zielordner, status = resolve_output_route(
+            art=art,
+            payment_field=preset.routing.default_payment_field,
+            preset=preset,
+        )
+        routing = RoutingDecision(
+            art=art,
+            zielordner=zielordner,
+            status=status,
+            konto=None,
+            payment_field=preset.routing.default_payment_field,
+            street_key=street_key,
+            begruendung=(
+                f"{account_decision.begruendung}; {payment_decision.begruendung}; "
+                "Keine Final-Assignment-Regel getroffen."
+            ),
+        )
+
+    from invoice_tool.routing_guards import apply_payment_evidence_guard
+
+    effective_extracted = extracted or ExtractedData(
+        invoice_date_raw=None,
+        supplier_raw=None,
+        amount_raw=None,
+        raw_text="",
+    )
+    routing, _evidence = apply_payment_evidence_guard(
+        routing,
+        extracted=effective_extracted,
+        account_decision=account_decision,
+        payment_decision=payment_decision,
         preset=preset,
     )
-    return RoutingDecision(
-        art=art,
-        zielordner=zielordner,
-        status=status,
-        konto=None,
-        payment_field=preset.routing.default_payment_field,
-        street_key=street_key,
-        begruendung=(
-            f"{account_decision.begruendung}; {payment_decision.begruendung}; "
-            "Keine Final-Assignment-Regel getroffen."
-        ),
-    )
+    return routing
 
 
 _FALLBACK_FOLDER = "unklar"

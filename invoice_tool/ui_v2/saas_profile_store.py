@@ -24,6 +24,8 @@ from invoice_tool.saas_product_model import (
     DEFAULT_SAAS_SCAN_MODEL_ID,
     GENERIC_SCAN_MODELS,
     assert_saas_defaults_are_generic,
+    classification_policy_from_dict,
+    default_classification_policy,
     find_private_saas_default_violations,
 )
 from invoice_tool.ui_v2.saas_profile_state import SaasConfigurationDraft, SaasProfileDraft
@@ -1121,6 +1123,7 @@ def _blank_profile_draft() -> SaasProfileDraft:
         notes="",
         is_new=True,
         configurations=[],
+        classification_policy=default_classification_policy(),
     )
 
 
@@ -1171,6 +1174,7 @@ def _profile_draft_to_dict(draft: SaasProfileDraft) -> dict[str, Any]:
         "notes": draft.notes,
         "is_new": bool(draft.is_new),
         "configurations": [item.to_dict() for item in draft.configurations],
+        "classification_policy": draft.classification_policy.to_dict(),
     }
 
 
@@ -1203,6 +1207,7 @@ def _profile_draft_from_dict(raw: Mapping[str, Any]) -> SaasProfileDraft:
     for item in configs_raw:
         if isinstance(item, Mapping):
             configurations.append(_configuration_draft_from_dict(item))
+    policy_raw = raw.get("classification_policy")
     return SaasProfileDraft(
         profile_name=str(raw.get("profile_name") or DEFAULT_SAAS_PROFILE_NAME),
         scan_model_id=scan_model_id,
@@ -1217,6 +1222,9 @@ def _profile_draft_from_dict(raw: Mapping[str, Any]) -> SaasProfileDraft:
         notes=str(raw.get("notes") or ""),
         is_new=bool(raw.get("is_new", True)),
         configurations=configurations,
+        classification_policy=classification_policy_from_dict(
+            policy_raw if isinstance(policy_raw, Mapping) else None
+        ),
     )
 
 
@@ -1384,4 +1392,5 @@ def _guard_slice(payload: Mapping[str, Any]) -> dict[str, Any]:
         "destination_folder": profile.get("destination_folder", ""),
         "payment_hint": profile.get("payment_hint", ""),
         "matching_conditions": profile.get("matching_conditions", ""),
+        "classification_policy": profile.get("classification_policy") or {},
     }

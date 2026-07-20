@@ -532,7 +532,8 @@ def test_card_payment_maps_to_vobaai_for_ai_case() -> None:
         invoice_date_raw="20.03.2026",
         supplier_raw="Somaa Architektur",
         amount_raw="120,00",
-        raw_text="SOMAA Architektur card payment",
+        raw_text="SOMAA Architektur card payment ending 7166",
+        card_endings=["7166"],
         source_method="openai",
     )
     account = resolve_account(extracted, rules.preset)
@@ -544,6 +545,7 @@ def test_card_payment_maps_to_vobaai_for_ai_case() -> None:
         account_decision=account,
         street_key=None,
         preset=rules.preset,
+        extracted=extracted,
     )
     assert routing.payment_field == "vobaai"
     assert routing.konto == "vobaai"
@@ -556,7 +558,10 @@ def test_transfer_maps_to_ep_account() -> None:
         invoice_date_raw="20.03.2026",
         supplier_raw="Somaa Event Production",
         amount_raw="120,00",
-        raw_text="SOMAA event production bank transfer",
+        raw_text=(
+            "SOMAA event production SEPA Lastschrift "
+            "Der Rechnungsbetrag wird entsprechend der Prenotification von Ihrem Konto abgebucht."
+        ),
         source_method="openai",
     )
     account = resolve_account(extracted, rules.preset)
@@ -568,6 +573,7 @@ def test_transfer_maps_to_ep_account() -> None:
         account_decision=account,
         street_key=None,
         preset=rules.preset,
+        extracted=extracted,
     )
     assert routing.payment_field == "vobaep"
     assert routing.konto == "vobaep"
@@ -604,6 +610,7 @@ def test_direct_debit_prenotification_maps_to_vobaai_for_somaa_ai() -> None:
 
 
 def test_somaa_iban_bic_without_other_payment_text_maps_to_vobaai() -> None:
+    """Lieferanten-IBAN/BIC allein ist kein sicherer Zahlungsweg → unklar."""
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
         invoice_date_raw="20.03.2026",
@@ -625,11 +632,13 @@ def test_somaa_iban_bic_without_other_payment_text_maps_to_vobaai() -> None:
         account_decision=account,
         street_key="bismarck",
         preset=rules.preset,
+        extracted=extracted,
     )
     assert payment.payment_method == "transfer"
     assert routing.art == "ai"
-    assert routing.konto == "vobaai"
-    assert routing.payment_field == "vobaai"
+    assert routing.konto is None
+    assert routing.payment_field == "unklar"
+    assert routing.zielordner == "unklar"
 
 
 def test_payment_detection_avoids_short_substring_false_positives() -> None:
@@ -652,6 +661,7 @@ def test_payment_detection_avoids_short_substring_false_positives() -> None:
 
 
 def test_somaa_invoice_without_payment_info_defaults_to_vobaai() -> None:
+    """SOMAA-Kontext ohne sicheren Zahlungsnachweis → unklar (nicht vobaai)."""
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
         invoice_date_raw="17/03/2026",
@@ -675,11 +685,13 @@ def test_somaa_invoice_without_payment_info_defaults_to_vobaai() -> None:
         account_decision=account,
         street_key="bismarck",
         preset=rules.preset,
+        extracted=extracted,
     )
     assert payment.payment_method == "transfer"
-    assert routing.konto == "vobaai"
-    assert routing.payment_field == "vobaai"
-    assert routing.status == "processed"
+    assert routing.konto is None
+    assert routing.payment_field == "unklar"
+    assert routing.zielordner == "unklar"
+    assert routing.status == "unklar"
 
 
 def test_no_somaa_and_no_payment_signals_stays_unklar() -> None:
@@ -711,6 +723,7 @@ def test_no_somaa_and_no_payment_signals_stays_unklar() -> None:
 
 
 def test_ec_card_signal_maps_to_vobaep_for_ep_case() -> None:
+    """EC-Karten-Wortlaut ohne bekannte Endung ist kein sicherer Zahlungsweg."""
     rules = load_office_rules(Path("office_rules.json"))
     extracted = ExtractedData(
         invoice_date_raw="20.03.2026",
@@ -728,10 +741,35 @@ def test_ec_card_signal_maps_to_vobaep_for_ep_case() -> None:
         account_decision=account,
         street_key=None,
         preset=rules.preset,
+        extracted=extracted,
     )
     assert payment.payment_method == "card"
-    assert routing.konto == "vobaep"
-    assert routing.payment_field == "vobaep"
+    assert routing.konto is None
+    assert routing.payment_field == "unklar"
+    assert routing.zielordner == "unklar"
+
+    # Mit bekannter EP-Kartenendung bleibt vobaep gültig.
+    with_ending = ExtractedData(
+        invoice_date_raw="20.03.2026",
+        supplier_raw="Somaa Event Production",
+        amount_raw="120,00",
+        raw_text="SOMAA Event Production bezahlt per EC-Karte endet auf 4879",
+        card_endings=["4879"],
+        source_method="openai",
+    )
+    account2 = resolve_account(with_ending, rules.preset)
+    art2, _ = determine_business_context(with_ending, account2, rules.preset)
+    payment2 = detect_payment_method(with_ending, rules.preset)
+    routing2 = apply_final_assignment(
+        art=art2,
+        payment_decision=payment2,
+        account_decision=account2,
+        street_key=None,
+        preset=rules.preset,
+        extracted=with_ending,
+    )
+    assert routing2.payment_field == "vobaep"
+    assert routing2.konto == "vobaep"
 
 
 def test_supplier_cleaning_removes_clear_address_suffix(tmp_path: Path) -> None:
@@ -842,6 +880,7 @@ def test_document_is_stored_separately_with_vn_suffix(tmp_path: Path) -> None:
 
 
 def test_invoice_without_clean_payment_defaults_somaa_invoice_to_vobaai(tmp_path: Path) -> None:
+    """SOMAA ohne Zahlungsnachweis landet zur Prüfung (unklar), nicht in vobaai."""
     config_path, rules_path, input_dir, output_dir, documents_dir = make_test_setup(tmp_path)
     config = load_app_config(config_path)
     rules = load_office_rules(rules_path)
@@ -866,12 +905,13 @@ def test_invoice_without_clean_payment_defaults_somaa_invoice_to_vobaai(tmp_path
     assert len(results) == 1
     result = results[0]
     assert result.dokumenttyp == "invoice"
-    assert result.storage_file.parent == output_dir / "ai"
-    assert result.konto == "vobaai"
-    assert result.payment_field == "vobaai"
-    assert result.routing_status == "processed"
+    assert result.storage_file.parent == output_dir / "unklar"
+    assert result.konto is None
+    assert result.payment_field == "unklar"
+    assert result.routing_status == "unklar"
     assert result.is_complete_success
     assert "unknown-date" in result.storage_file.name
+    assert "vobaai" not in result.storage_file.name
     assert not list(documents_dir.glob("*.pdf"))
 
 

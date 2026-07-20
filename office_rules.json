@@ -38,7 +38,13 @@
           "steuerbescheid",
           "bestellte artikel",
           "bestellbestätigung",
-          "order confirmation"
+          "order confirmation",
+          "jahreskonto",
+          "kanzlei-rechnungswesen",
+          "ungeklärte posten",
+          "ungeklaerte posten",
+          "auswertung entspricht dem derzeitigen stand der buchführung",
+          "auswertung entspricht dem derzeitigen stand der buchfuehrung"
         ],
         "internal_invoice_keywords": [
           "eigenbeleg",

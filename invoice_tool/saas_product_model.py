@@ -9,7 +9,7 @@ SOMAA operations; local/private profiles remain outside SaaS defaults.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 # Markers that must never appear in SaaS blank defaults or product-default payloads.
@@ -49,6 +49,125 @@ DEFAULT_SAAS_REVIEW_FOLDER = "unklar"
 DEFAULT_SAAS_FILENAME_PATTERN = (
     "{invoice_date}_{supplier}_{amount}_{payment_field}.pdf"
 )
+
+# Generic classification / payment policy defaults for SaaS UI-v2 (no tenant values).
+DEFAULT_UNKNOWN_PAYMENT_TARGET = "unklar"
+DEFAULT_OUTGOING_INVOICES_TARGET = "unklar"
+DEFAULT_ACCOUNTING_REPORTS_TARGET = "documents"
+DEFAULT_MIXED_ADDRESS_TARGET = "unklar"
+
+CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
+    "Zahlungsweg-Erkennung",
+    "Sichere Zahlungsweg-Signale erforderlich",
+    "Lieferanten-IBAN/BIC nicht als Zahlungsweg werten",
+    "Apple Pay ohne Karten-/Konto-Endung zur Prüfung",
+    "Bei unbekanntem Zahlungsweg: Zur Prüfung",
+    "Rechnungsrichtung erkennen",
+    "Eingangsrechnung",
+    "Ausgangsrechnung",
+    "Eigene Rechnungen nicht als Eingangsrechnungen verarbeiten",
+    "Ausgangsrechnungen zur Prüfung oder separater Zielbereich",
+    "Dokumenttyp-Erkennung",
+    "Rechnungen von Buchhaltungsauswertungen unterscheiden",
+    "Kontoauszüge, Jahreskonten und Buchungslisten zur Prüfung",
+    "DATEV-/Kanzlei-Auswertungen nicht als Eingangsrechnung behandeln",
+    "Gemischte geschäftliche/private Adresssignale zur Prüfung",
+    "Abweichende private Rechnungsadresse als Unsicherheitsmerkmal",
+)
+
+
+@dataclass(frozen=True)
+class ClassificationPolicy:
+    """Generic scan/classification policy for SaaS profiles (no private defaults)."""
+
+    require_explicit_payer_payment_evidence: bool = True
+    supplier_bank_details_are_payment_evidence: bool = False
+    apple_pay_requires_known_card_reference: bool = True
+    unknown_payment_target: str = DEFAULT_UNKNOWN_PAYMENT_TARGET
+    detect_invoice_direction: bool = True
+    outgoing_invoices_target: str = DEFAULT_OUTGOING_INVOICES_TARGET
+    detect_accounting_reports: bool = True
+    accounting_reports_target: str = DEFAULT_ACCOUNTING_REPORTS_TARGET
+    mixed_business_private_address_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "require_explicit_payer_payment_evidence": self.require_explicit_payer_payment_evidence,
+            "supplier_bank_details_are_payment_evidence": self.supplier_bank_details_are_payment_evidence,
+            "apple_pay_requires_known_card_reference": self.apple_pay_requires_known_card_reference,
+            "unknown_payment_target": self.unknown_payment_target,
+            "detect_invoice_direction": self.detect_invoice_direction,
+            "outgoing_invoices_target": self.outgoing_invoices_target,
+            "detect_accounting_reports": self.detect_accounting_reports,
+            "accounting_reports_target": self.accounting_reports_target,
+            "mixed_business_private_address_target": self.mixed_business_private_address_target,
+        }
+
+
+def default_classification_policy() -> ClassificationPolicy:
+    return ClassificationPolicy()
+
+
+def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> ClassificationPolicy:
+    """Parse policy with safe defaults; ignore unknown keys."""
+
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_classification_policy()
+
+    def _bool(key: str, fallback: bool) -> bool:
+        value = data.get(key, fallback)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "ja"}
+        return fallback
+
+    def _target(key: str, fallback: str) -> str:
+        value = data.get(key, fallback)
+        text = str(value or "").strip().lower()
+        if text in {"unklar", "documents", "document", "zur_pruefung", "zur-prüfung"}:
+            if text in {"document", "zur_pruefung", "zur-prüfung"}:
+                return "unklar" if text != "document" else "documents"
+            return text
+        return fallback
+
+    return ClassificationPolicy(
+        require_explicit_payer_payment_evidence=_bool(
+            "require_explicit_payer_payment_evidence",
+            defaults.require_explicit_payer_payment_evidence,
+        ),
+        supplier_bank_details_are_payment_evidence=_bool(
+            "supplier_bank_details_are_payment_evidence",
+            defaults.supplier_bank_details_are_payment_evidence,
+        ),
+        apple_pay_requires_known_card_reference=_bool(
+            "apple_pay_requires_known_card_reference",
+            defaults.apple_pay_requires_known_card_reference,
+        ),
+        unknown_payment_target=_target(
+            "unknown_payment_target", defaults.unknown_payment_target
+        ),
+        detect_invoice_direction=_bool(
+            "detect_invoice_direction", defaults.detect_invoice_direction
+        ),
+        outgoing_invoices_target=_target(
+            "outgoing_invoices_target", defaults.outgoing_invoices_target
+        ),
+        detect_accounting_reports=_bool(
+            "detect_accounting_reports", defaults.detect_accounting_reports
+        ),
+        accounting_reports_target=_target(
+            "accounting_reports_target", defaults.accounting_reports_target
+        ),
+        mixed_business_private_address_target=_target(
+            "mixed_business_private_address_target",
+            defaults.mixed_business_private_address_target,
+        ),
+    )
+
+
+def classification_policy_ui_texts() -> tuple[str, ...]:
+    return CLASSIFICATION_POLICY_UI_TEXTS
 
 
 @dataclass(frozen=True)
@@ -106,6 +225,7 @@ class SaasProfileSurface:
     review_unclear_folder: str = DEFAULT_SAAS_REVIEW_FOLDER
     default_filename_pattern: str = DEFAULT_SAAS_FILENAME_PATTERN
     notes: str = ""
+    classification_policy: ClassificationPolicy = field(default_factory=ClassificationPolicy)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +236,7 @@ class SaasProfileSurface:
             "review_unclear_folder": self.review_unclear_folder,
             "default_filename_pattern": self.default_filename_pattern,
             "notes": self.notes,
+            "classification_policy": self.classification_policy.to_dict(),
         }
 
 
@@ -173,6 +294,7 @@ def build_blank_saas_profile(
         review_unclear_folder=DEFAULT_SAAS_REVIEW_FOLDER,
         default_filename_pattern=DEFAULT_SAAS_FILENAME_PATTERN,
         notes="",
+        classification_policy=default_classification_policy(),
     )
     violations = find_private_saas_default_violations(surface.to_dict())
     if violations:

@@ -53,6 +53,10 @@ from invoice_tool.recipient_guard import (
     apply_recipient_guard_to_routing,
     evaluate_recipient_guard,
 )
+from invoice_tool.routing_guards import (
+    apply_classification_guards,
+    apply_routing_guards,
+)
 from invoice_tool.routing import (
     apply_final_assignment,
     determine_business_context,
@@ -574,6 +578,11 @@ class InvoiceProcessor:
 
                 extracted = self.extractor.extract(pdf_path, log=self.log)
                 classification = classify_document_type(extracted, self.preset)
+                classification = apply_classification_guards(
+                    extracted,
+                    classification,
+                    profile_data=self.profile_data,
+                )
                 if self.target_routing_config is not None:
                     result = self._process_with_target_routing(
                         pdf_path=pdf_path,
@@ -726,6 +735,7 @@ class InvoiceProcessor:
                     account_decision=account_decision,
                     street_key=street_key,
                     preset=self.preset,
+                    extracted=extracted,
                 )
 
             guard = evaluate_recipient_guard(
@@ -751,6 +761,21 @@ class InvoiceProcessor:
                 routing = supplier_match.routing
                 art = routing.art
                 art_reason = routing.begruendung
+
+            guards_result = apply_routing_guards(
+                routing,
+                extracted=extracted,
+                account_decision=account_decision,
+                payment_decision=payment_decision,
+                preset=self.preset,
+                street_key=street_key,
+            )
+            routing = guards_result.routing
+            if guards_result.applied:
+                art = routing.art
+                art_reason = (
+                    f"{art_reason}; Routing-Guards: {', '.join(guards_result.applied)}"
+                )
 
         filename = build_filename(
             self.preset.filename_schema,
