@@ -388,6 +388,35 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.error or "Speicherfehler", is_error=True)
         _refresh()
 
+    def _export_saas_draft_local(export_path: str) -> None:
+        path = (export_path or "").strip()
+        if not path:
+            _set_feedback("Exportpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _refresh()
+            return
+        result = state.export_saas_draft(path)
+        if result.ok:
+            _set_feedback("Lokal exportiert — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+        else:
+            _set_feedback(result.error or "Export fehlgeschlagen", is_error=True)
+        _refresh()
+
+    def _import_saas_draft_local(import_path: str) -> None:
+        path = (import_path or "").strip()
+        if not path:
+            _set_feedback("Importpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _refresh()
+            return
+        result = state.import_saas_draft(path)
+        if result.ok:
+            label = result.display_name or "Lokaler Entwurf"
+            _set_feedback(
+                f"Lokal importiert „{label}“ — neuer lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+            )
+        else:
+            _set_feedback(result.error or "Import fehlgeschlagen", is_error=True)
+        _refresh()
+
     # Same local SaaS-draft status/list as profiles — not the internal working profile.
     items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
     selected_rename = ""
@@ -404,6 +433,8 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             on_save=_save_saas_draft_local,
             on_rename=_rename_saas_draft_local,
             on_delete=_delete_saas_draft_local,
+            on_export=_export_saas_draft_local,
+            on_import=_import_saas_draft_local,
             rename_value=selected_rename,
         )
     )

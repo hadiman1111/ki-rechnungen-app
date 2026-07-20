@@ -15,6 +15,8 @@ from invoice_tool.ui_v2.saas_profile_store import (
     STATUS_CORRUPTED,
     STATUS_DELETED,
     STATUS_DELETE_NEEDS_CONFIRM,
+    STATUS_EXPORTED,
+    STATUS_IMPORTED,
     STATUS_IO_ERROR,
     STATUS_LOADED,
     STATUS_MISSING_BLANK,
@@ -34,6 +36,8 @@ UX_STATUS_SAVED = "Lokal gespeichert"
 UX_STATUS_LOADED = "Lokal geladen"
 UX_STATUS_RENAMED = "Lokal umbenannt"
 UX_STATUS_DELETED = "Lokal gelöscht"
+UX_STATUS_EXPORTED = "Lokal exportiert"
+UX_STATUS_IMPORTED = "Lokal importiert"
 UX_STATUS_DELETE_CONFIRM = "Löschen bestätigen"
 UX_STATUS_CORRUPTED = "Lokaler Draft beschädigt"
 UX_STATUS_VALIDATION = "Validierungsfehler"
@@ -113,6 +117,8 @@ def map_store_status_to_ux_label(store_status: str | None) -> str:
         STATUS_LOADED: UX_STATUS_LOADED,
         STATUS_RENAMED: UX_STATUS_RENAMED,
         STATUS_DELETED: UX_STATUS_DELETED,
+        STATUS_EXPORTED: UX_STATUS_EXPORTED,
+        STATUS_IMPORTED: UX_STATUS_IMPORTED,
         STATUS_DELETE_NEEDS_CONFIRM: UX_STATUS_DELETE_CONFIRM,
         STATUS_MISSING_BLANK: UX_STATUS_UNSAVED,
         STATUS_CORRUPTED: UX_STATUS_CORRUPTED,
@@ -133,6 +139,8 @@ def map_store_status_to_ux_label(store_status: str | None) -> str:
         UX_STATUS_LOADED,
         UX_STATUS_RENAMED,
         UX_STATUS_DELETED,
+        UX_STATUS_EXPORTED,
+        UX_STATUS_IMPORTED,
         UX_STATUS_DELETE_CONFIRM,
         UX_STATUS_CORRUPTED,
         UX_STATUS_VALIDATION,
@@ -199,7 +207,15 @@ def build_saas_persistence_status_vm(
         else (
             "success"
             if locally_persisted
-            or status_code in {STATUS_SAVED, STATUS_LOADED, STATUS_RENAMED, STATUS_DELETED}
+            or status_code
+            in {
+                STATUS_SAVED,
+                STATUS_LOADED,
+                STATUS_RENAMED,
+                STATUS_DELETED,
+                STATUS_EXPORTED,
+                STATUS_IMPORTED,
+            }
             else "neutral"
         )
     )
@@ -213,7 +229,8 @@ def build_saas_persistence_status_vm(
         error_text=error_text,
         is_error=is_error,
         locally_persisted=locally_persisted
-        or status_code in {STATUS_SAVED, STATUS_LOADED, STATUS_RENAMED},
+        or status_code
+        in {STATUS_SAVED, STATUS_LOADED, STATUS_RENAMED, STATUS_IMPORTED, STATUS_EXPORTED},
         store_status=status_code,
         badge_tone=badge_tone,
     )
@@ -296,6 +313,8 @@ def _infer_status_from_label(label: str) -> str:
         UX_STATUS_LOADED: STATUS_LOADED,
         UX_STATUS_RENAMED: STATUS_RENAMED,
         UX_STATUS_DELETED: STATUS_DELETED,
+        UX_STATUS_EXPORTED: STATUS_EXPORTED,
+        UX_STATUS_IMPORTED: STATUS_IMPORTED,
         UX_STATUS_DELETE_CONFIRM: STATUS_DELETE_NEEDS_CONFIRM,
         UX_STATUS_UNSAVED: STATUS_MISSING_BLANK,
         UX_STATUS_CORRUPTED: STATUS_CORRUPTED,
@@ -315,6 +334,10 @@ def _format_timestamp_text(
 ) -> str:
     if status_code == STATUS_SAVED and last_saved_at:
         return f"Zuletzt lokal gespeichert: {last_saved_at}"
+    if status_code == STATUS_IMPORTED and last_loaded_at:
+        return f"Zuletzt lokal importiert: {last_loaded_at}"
+    if status_code == STATUS_EXPORTED and last_saved_at:
+        return f"Zuletzt lokal exportiert: {last_saved_at}"
     if status_code == STATUS_LOADED and last_loaded_at:
         return f"Zuletzt lokal geladen: {last_loaded_at}"
     if status_code == STATUS_LOADED and last_saved_at and not last_loaded_at:

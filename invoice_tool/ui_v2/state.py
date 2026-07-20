@@ -21,6 +21,8 @@ from invoice_tool.ui_v2.saas_profile_persistence_view import (
 from invoice_tool.ui_v2.saas_profile_store import (
     STATUS_DELETED,
     STATUS_DELETE_NEEDS_CONFIRM,
+    STATUS_EXPORTED,
+    STATUS_IMPORTED,
     STATUS_LOADED,
     STATUS_MISSING_BLANK,
     STATUS_RENAMED,
@@ -297,6 +299,57 @@ class UiV2State:
             self.saas_draft_store.configuration_draft = prior_config
         return result
 
+    def export_saas_draft(
+        self,
+        export_path: Path | str,
+        draft_id: str | None = None,
+    ) -> SaasProfileStoreResult:
+        """Export the selected (or explicit) local SaaS draft to ``export_path``."""
+
+        target_id = (draft_id or self.saas_selected_draft_id or "").strip()
+        target = Path(export_path)
+        if not target_id:
+            result = SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=target,
+                error="Kein lokaler SaaS-Entwurf gewählt.",
+            )
+            self._apply_saas_disk_result(result, operation="export")
+            return result
+        result = self.saas_disk_store.export_draft(target_id, target)
+        self._apply_saas_disk_result(result, operation="export")
+        return result
+
+    def import_saas_draft(
+        self,
+        import_path: Path | str,
+        preferred_display_name: str | None = None,
+    ) -> SaasProfileStoreResult:
+        """Import a local SaaS draft export as a new draft and select it."""
+
+        source = Path(import_path)
+        prior_profile = self.saas_draft_store.profile_draft
+        prior_config = self.saas_draft_store.configuration_draft
+        prior_selected = self.saas_selected_draft_id
+        result = self.saas_disk_store.import_draft(
+            source,
+            preferred_display_name=preferred_display_name,
+        )
+        self._apply_saas_disk_result(result, operation="import")
+        if result.ok and result.draft_id:
+            self.saas_selected_draft_id = result.draft_id
+            self.saas_delete_confirm_pending = False
+            if result.profile_draft is not None:
+                self.saas_draft_store.profile_draft = result.profile_draft
+            self.saas_draft_store.configuration_draft = result.configuration_draft
+        else:
+            # Keep prior selection/drafts unchanged on invalid/corrupt/private import.
+            self.saas_selected_draft_id = prior_selected
+            self.saas_draft_store.profile_draft = prior_profile
+            self.saas_draft_store.configuration_draft = prior_config
+        return result
+
     def _apply_saas_disk_result(self, result: SaasProfileStoreResult, *, operation: str) -> None:
         self.saas_disk_persistence_label = result.persistence_label
         self.saas_disk_last_status = result.status
@@ -308,6 +361,13 @@ class UiV2State:
             self.saas_disk_last_saved_at = stamp
         if result.ok and result.status == STATUS_DELETED and operation == "delete":
             # Deletion is a local disk change; keep timestamp as last successful mutation.
+            self.saas_disk_last_saved_at = stamp
+        if result.ok and result.status == STATUS_IMPORTED and operation == "import":
+            self.saas_disk_last_saved_at = stamp
+            self.saas_disk_last_loaded_at = stamp
+        if result.ok and result.status == STATUS_EXPORTED and operation == "export":
+            # Export writes outside the store; keep local selection timestamps unchanged
+            # but surface a clear success stamp via saved_at for UX feedback.
             self.saas_disk_last_saved_at = stamp
         if result.ok and result.status == STATUS_LOADED and operation == "load":
             self.saas_disk_last_loaded_at = stamp

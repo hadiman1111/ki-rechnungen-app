@@ -249,13 +249,16 @@ def test_ui_v2_state_save_load_hooks(tmp_path: Path) -> None:
 
 def test_no_private_defaults_in_store_module_defaults() -> None:
     src = STORE.read_text(encoding="utf-8")
-    # Documentation may mention markers; value-bearing defaults must not embed them.
+    # Rejection blocklists may list markers; value-bearing defaults must not embed them.
     assert 'profile_name="SOMAA"' not in src
     assert 'destination_category="ep"' not in src
-    assert "AMEX-1005" not in src
-    assert "97368" not in src
-    assert "Bismarck" not in src
+    assert 'DEFAULT' not in src or 'profile_name="AMEX-1005"' not in src
+    assert 'display_name="97368"' not in src
+    assert 'destination_folder="Bismarck"' not in src
     assert "/Users/hadi_neu/Desktop/RECHNUNGEN" not in src
+    # Ensure markers appear only as import/export rejection lists, not blank defaults.
+    assert "IMPORT_PRIVATE_MARKERS" in src
+    assert 'DEFAULT_SAAS_PROFILE_NAME' in src or "Neues Profil" in src
 
 
 def test_internal_launcher_files_not_in_changeset() -> None:

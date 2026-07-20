@@ -36,11 +36,19 @@ ACTION_LOAD = "Entwurf laden"
 ACTION_SAVE = "Entwurf speichern"
 ACTION_RENAME = "Entwurf umbenennen"
 ACTION_DELETE = "Entwurf löschen"
+ACTION_EXPORT = "Exportieren"
+ACTION_IMPORT = "Importieren"
 DELETE_WARN = (
     "Entwurf löschen entfernt nur den gewählten lokalen SaaS-Entwurf. "
     "Aktiver Entwurf: erneutes „Entwurf löschen“ zur Bestätigung. Kein Cloud-Sync."
 )
+IMPORT_EXPORT_HELP = (
+    "Import/Export gilt nur für lokale SaaS-Entwürfe — kein Cloud-Sync, "
+    "ohne Mandanten-Anbindung, nicht das interne Arbeitsprofil."
+)
 RENAME_FIELD_HINT = "Neuer Anzeigename (lokaler SaaS-Entwurf)"
+EXPORT_PATH_HINT = "Lokaler Exportpfad (JSON)"
+IMPORT_PATH_HINT = "Lokaler Importpfad (JSON)"
 
 _PRIVATE_UI_MARKERS: tuple[str, ...] = (
     "SOMAA",
@@ -82,8 +90,13 @@ class SaasDraftListVM:
     action_save: str
     action_rename: str
     action_delete: str
+    action_export: str
+    action_import: str
     delete_warn: str
+    import_export_help: str
     rename_field_hint: str
+    export_path_hint: str
+    import_path_hint: str
     delete_confirm_pending: bool = False
 
     def all_ui_texts(self) -> tuple[str, ...]:
@@ -100,8 +113,13 @@ class SaasDraftListVM:
             self.action_save,
             self.action_rename,
             self.action_delete,
+            self.action_export,
+            self.action_import,
             self.delete_warn,
+            self.import_export_help,
             self.rename_field_hint,
+            self.export_path_hint,
+            self.import_path_hint,
         ]
         for row in self.rows:
             texts.extend(
@@ -154,8 +172,13 @@ def build_saas_draft_list_vm(
         action_save=ACTION_SAVE,
         action_rename=ACTION_RENAME,
         action_delete=ACTION_DELETE,
+        action_export=ACTION_EXPORT,
+        action_import=ACTION_IMPORT,
         delete_warn=DELETE_WARN,
+        import_export_help=IMPORT_EXPORT_HELP,
         rename_field_hint=RENAME_FIELD_HINT,
+        export_path_hint=EXPORT_PATH_HINT,
+        import_path_hint=IMPORT_PATH_HINT,
         delete_confirm_pending=delete_confirm_pending,
     )
     _assert_draft_list_ux_safe(vm)
@@ -171,9 +194,13 @@ def build_saas_draft_list_panel(
     on_save: Callable[[], None] | None = None,
     on_rename: Callable[[str], None] | None = None,
     on_delete: Callable[[], None] | None = None,
+    on_export: Callable[[str], None] | None = None,
+    on_import: Callable[[str], None] | None = None,
     rename_value: str = "",
+    export_path_value: str = "",
+    import_path_value: str = "",
 ) -> Any:
-    """Flet panel: local SaaS draft list with new/load/save/rename/delete actions."""
+    """Flet panel: local SaaS draft list with new/load/save/rename/delete/import/export."""
 
     import flet as ft
 
@@ -271,6 +298,40 @@ def build_saas_draft_list_panel(
         if manage_actions:
             rows.append(ft.Row(manage_actions, spacing=SPACE_SM, wrap=True))
 
+    if on_export is not None or on_import is not None:
+        rows.append(helper_text(vm.import_export_help))
+        export_field: ft.TextField | None = None
+        import_field: ft.TextField | None = None
+        if on_export is not None:
+            export_field = ft.TextField(
+                label=vm.export_path_hint,
+                value=export_path_value,
+                **outlined_field_kwargs(),
+            )
+            rows.append(export_field)
+        if on_import is not None:
+            import_field = ft.TextField(
+                label=vm.import_path_hint,
+                value=import_path_value,
+                **outlined_field_kwargs(),
+            )
+            rows.append(import_field)
+        io_actions: list[ft.Control] = []
+        if on_export is not None and export_field is not None:
+
+            def _export_click(_event: ft.ControlEvent, field: ft.TextField = export_field) -> None:
+                on_export(field.value or "")
+
+            io_actions.append(action_button(vm.action_export, on_click=_export_click))
+        if on_import is not None and import_field is not None:
+
+            def _import_click(_event: ft.ControlEvent, field: ft.TextField = import_field) -> None:
+                on_import(field.value or "")
+
+            io_actions.append(action_button(vm.action_import, on_click=_import_click))
+        if io_actions:
+            rows.append(ft.Row(io_actions, spacing=SPACE_SM, wrap=True))
+
     return ft.Column(rows, spacing=SPACE_XS, tight=True)
 
 
@@ -300,5 +361,8 @@ def _assert_draft_list_ux_safe(vm: SaasDraftListVM) -> None:
     assert DRAFT_LIST_TITLE in joined
     assert SEPARATION_HELP in joined
     assert NO_CLOUD_HELP in joined
+    assert IMPORT_EXPORT_HELP in joined
     assert "interne Arbeitsprofil" in joined
     assert "Cloud-Synchronisierung" in joined
+    assert "ohne Mandanten-Anbindung" in joined
+    assert "kein Cloud-Sync" in joined

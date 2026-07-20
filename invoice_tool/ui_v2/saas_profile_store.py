@@ -30,6 +30,7 @@ from invoice_tool.ui_v2.saas_profile_state import SaasConfigurationDraft, SaasPr
 
 SCHEMA_VERSION = 1
 STORE_KIND = "saas_ui_v2_profile_draft"
+EXPORT_KIND = "saas_profile_draft_export"
 DEFAULT_DRAFT_FILENAME = "saas_profile_draft.json"
 GENERIC_DRAFT_DISPLAY_PREFIX = "Lokaler Entwurf"
 
@@ -47,6 +48,29 @@ STATUS_IO_ERROR = "io_error"
 STATUS_RENAMED = "renamed"
 STATUS_DELETED = "deleted"
 STATUS_DELETE_NEEDS_CONFIRM = "delete_needs_confirm"
+STATUS_EXPORTED = "exported"
+STATUS_IMPORTED = "imported"
+
+# Rejected on import/export validation (broader than product blank defaults).
+IMPORT_PRIVATE_MARKERS: tuple[str, ...] = (
+    "SOMAA",
+    "Hadi",
+    "AMEX-1005",
+    "EP",
+    "Bismarck",
+    "Architektur",
+    "97368",
+    "DE189",
+    "voba",
+)
+
+# Path fragments that must never be imported into a SaaS draft.
+_DANGEROUS_PATH_MARKERS: tuple[str, ...] = (
+    "profile_config.local.json",
+    "Application Support/KI-Rechnungen/",
+    "/Library/Application Support/KI-Rechnungen",
+    "Desktop/RECHNUNGEN",
+)
 
 DRAFT_ITEM_OK = "ok"
 DRAFT_ITEM_CORRUPTED = "corrupted"
@@ -114,6 +138,10 @@ class SaasProfileStoreResult:
             return "Lokal umbenannt"
         if self.status == STATUS_DELETED and self.ok:
             return "Lokal gelöscht"
+        if self.status == STATUS_EXPORTED and self.ok:
+            return "Lokal exportiert"
+        if self.status == STATUS_IMPORTED and self.ok:
+            return "Lokal importiert"
         if self.status == STATUS_DELETE_NEEDS_CONFIRM:
             return "Löschen bestätigen"
         if self.status == STATUS_MISSING_BLANK:
@@ -438,6 +466,284 @@ class SaasProfileDiskStore:
             path=path,
             locally_persisted=False,
             draft_id=normalized,
+        )
+
+    def export_draft(self, draft_id: str, export_path: Path) -> SaasProfileStoreResult:
+        """Export one selected local SaaS draft as a portable JSON envelope.
+
+        Writes only to the explicit ``export_path``. Never touches
+        ``profile_config.local.json`` or Application Support working profiles.
+        """
+
+        try:
+            normalized = _normalize_draft_id(draft_id)
+        except ValueError as exc:
+            path = Path(export_path)
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=path,
+                error=str(exc),
+                draft_id=str(draft_id or ""),
+            )
+
+        loaded = self.load_draft(normalized)
+        if not loaded.ok or loaded.profile_draft is None:
+            self._last_status = loaded.persistence_label
+            return SaasProfileStoreResult(
+                ok=False,
+                status=loaded.status,
+                path=Path(export_path),
+                error=loaded.error or "Export nicht möglich — Draft fehlt oder ist beschädigt.",
+                private_default_violations=loaded.private_default_violations,
+                draft_id=normalized,
+                display_name=loaded.display_name,
+            )
+
+        target = Path(export_path)
+        if target.name in FORBIDDEN_WRITE_BASENAMES:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=target,
+                error=f"Verbotener Exportzielname: {target.name}",
+                draft_id=normalized,
+                display_name=loaded.display_name,
+            )
+
+        draft_payload = _drafts_to_payload(
+            loaded.profile_draft,
+            loaded.configuration_draft,
+            draft_id=normalized,
+            display_name=loaded.display_name or GENERIC_DRAFT_DISPLAY_PREFIX,
+            created_at=self._read_meta_soft(loaded.path).get("created_at") or "",
+            updated_at=self._read_meta_soft(loaded.path).get("updated_at") or "",
+        )
+        # Export must stay generic — never ship private tenant markers.
+        private = _find_import_private_marker_violations(draft_payload)
+        if private:
+            self._last_status = "Private Defaults blockiert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_PRIVATE_DEFAULTS,
+                path=target,
+                error="Export blockiert: private Tenant-Defaults im Draft.",
+                private_default_violations=tuple(private),
+                draft_id=normalized,
+                display_name=loaded.display_name,
+            )
+
+        envelope = {
+            "schema_version": SCHEMA_VERSION,
+            "kind": EXPORT_KIND,
+            "cloud": False,
+            "persistence": "local_export_only",
+            "exported_at": _utc_now_iso(),
+            "draft": {
+                "display_name": draft_payload.get("display_name") or GENERIC_DRAFT_DISPLAY_PREFIX,
+                "profile": draft_payload["profile"],
+                "configuration": draft_payload.get("configuration"),
+                # Source id is informational only; import always creates a new id.
+                "source_draft_id": normalized,
+            },
+        }
+
+        try:
+            if target.parent and not target.parent.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(envelope, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=target,
+                error=f"Export fehlgeschlagen: {exc}",
+                draft_id=normalized,
+                display_name=loaded.display_name,
+            )
+
+        self._last_status = "Lokal exportiert"
+        return SaasProfileStoreResult(
+            ok=True,
+            status=STATUS_EXPORTED,
+            path=target,
+            profile_draft=loaded.profile_draft,
+            configuration_draft=loaded.configuration_draft,
+            locally_persisted=True,
+            draft_id=normalized,
+            display_name=loaded.display_name,
+        )
+
+    def import_draft(
+        self,
+        import_path: Path,
+        preferred_display_name: str | None = None,
+    ) -> SaasProfileStoreResult:
+        """Import a portable SaaS draft export as a new local draft (new id).
+
+        Never overwrites an existing draft silently. Never writes outside
+        ``drafts_root``. Never touches ``profile_config.local.json``.
+        """
+
+        source = Path(import_path)
+        if not source.is_file():
+            self._last_status = "Nicht gespeichert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_MISSING_BLANK,
+                path=source,
+                error=f"Importdatei nicht gefunden: {source}",
+                locally_persisted=False,
+            )
+
+        try:
+            raw_text = source.read_text(encoding="utf-8")
+            data = json.loads(raw_text)
+        except (OSError, UnicodeDecodeError) as exc:
+            self._last_status = "Lokaler Draft beschädigt"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_CORRUPTED,
+                path=source,
+                error=f"Importdatei unlesbar: {exc}",
+            )
+        except json.JSONDecodeError as exc:
+            self._last_status = "Lokaler Draft beschädigt"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_CORRUPTED,
+                path=source,
+                error=f"Ungültiges JSON: {exc.msg}",
+            )
+
+        if not isinstance(data, dict):
+            self._last_status = "Lokaler Draft beschädigt"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_CORRUPTED,
+                path=source,
+                error="Import-Root muss ein JSON-Objekt sein.",
+            )
+
+        envelope_error = _validate_export_envelope(data)
+        if envelope_error:
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=source,
+                error=envelope_error,
+            )
+
+        draft_raw = data["draft"]
+        if not isinstance(draft_raw, Mapping):
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=source,
+                error="Feld 'draft' fehlt oder ist ungültig.",
+            )
+
+        profile_raw = draft_raw.get("profile")
+        if not isinstance(profile_raw, Mapping):
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=source,
+                error="Feld 'draft.profile' fehlt oder ist ungültig.",
+            )
+
+        # Strip absolute / internal working-profile paths before marker checks
+        # so path fragments like usernames never look like private defaults.
+        sanitized_profile = _sanitize_imported_mapping(dict(profile_raw))
+        config_raw = draft_raw.get("configuration")
+        sanitized_config: dict[str, Any] | None = None
+        if isinstance(config_raw, Mapping):
+            sanitized_config = _sanitize_imported_mapping(dict(config_raw))
+
+        display_name_raw = str(draft_raw.get("display_name") or "")
+        private_probe = {
+            "display_name": display_name_raw,
+            "profile": sanitized_profile,
+            "configuration": sanitized_config,
+        }
+        private = _find_import_private_marker_violations(private_probe)
+        if private:
+            self._last_status = "Private Defaults blockiert"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_PRIVATE_DEFAULTS,
+                path=source,
+                error="Import blockiert: private Tenant-Defaults in der Importdatei.",
+                private_default_violations=tuple(private),
+            )
+
+        try:
+            profile_draft = _profile_draft_from_dict(sanitized_profile)
+            configuration_draft = (
+                _configuration_draft_from_dict(sanitized_config)
+                if sanitized_config is not None
+                else None
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            self._last_status = "Validierungsfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_VALIDATION_ERROR,
+                path=source,
+                error=f"Import-Draft-Felder ungültig: {exc}",
+            )
+
+        display_name = _normalize_display_name(
+            preferred_display_name
+            or str(draft_raw.get("display_name") or "")
+            or profile_draft.profile_name
+            or GENERIC_DRAFT_DISPLAY_PREFIX
+        )
+        if not display_name:
+            display_name = self._next_generic_display_name()
+
+        # Always create a new draft id — never overwrite silently.
+        created = self.create_draft(
+            display_name=display_name,
+            profile_draft=profile_draft,
+            configuration_draft=configuration_draft,
+        )
+        if not created.ok:
+            return created
+
+        # Guard: created file must stay inside store directory.
+        path_error = self._assert_path_inside_store(created.path)
+        if path_error:
+            # Best-effort cleanup of the unexpected write target is skipped —
+            # create_draft already writes only inside drafts_root.
+            self._last_status = "Speicherfehler"
+            return SaasProfileStoreResult(
+                ok=False,
+                status=STATUS_IO_ERROR,
+                path=created.path,
+                error=path_error,
+                draft_id=created.draft_id,
+            )
+
+        self._last_status = "Lokal importiert"
+        return SaasProfileStoreResult(
+            ok=True,
+            status=STATUS_IMPORTED,
+            path=created.path,
+            profile_draft=created.profile_draft,
+            configuration_draft=created.configuration_draft,
+            locally_persisted=True,
+            draft_id=created.draft_id,
+            display_name=created.display_name,
         )
 
     def _assert_path_inside_store(self, path: Path) -> str | None:
@@ -949,6 +1255,113 @@ def _validate_envelope(data: Mapping[str, Any]) -> str | None:
     if config is not None and not isinstance(config, Mapping):
         return "Feld 'configuration' muss Objekt oder null sein."
     return None
+
+
+def _validate_export_envelope(data: Mapping[str, Any]) -> str | None:
+    kind = data.get("kind")
+    if kind != EXPORT_KIND:
+        return f"Unerwartetes kind: {kind!r} (erwartet {EXPORT_KIND!r})"
+    version = data.get("schema_version")
+    if version != SCHEMA_VERSION:
+        return f"Unsupported schema_version: {version!r}"
+    if data.get("cloud") is True:
+        return "Cloud-Export wird nicht akzeptiert (cloud muss false sein)."
+    if "draft" not in data or not isinstance(data.get("draft"), Mapping):
+        return "Feld 'draft' fehlt oder ist ungültig."
+    draft = data["draft"]
+    assert isinstance(draft, Mapping)
+    if "profile" not in draft or not isinstance(draft.get("profile"), Mapping):
+        return "Feld 'draft.profile' fehlt oder ist ungültig."
+    config = draft.get("configuration")
+    if config is not None and not isinstance(config, Mapping):
+        return "Feld 'draft.configuration' muss Objekt oder null sein."
+    return None
+
+
+def _find_import_private_marker_violations(payload: Any) -> list[str]:
+    """Scan nested import/export payload for private tenant markers."""
+
+    violations: list[str] = []
+    for text in _iter_payload_strings(payload):
+        for marker in IMPORT_PRIVATE_MARKERS:
+            if marker in text:
+                violations.append(f"private_marker:{marker}")
+    # Also reuse product blank-default guard on profile-shaped slices.
+    if isinstance(payload, Mapping):
+        draft = payload.get("draft") if "draft" in payload else payload
+        if isinstance(draft, Mapping):
+            profile = draft.get("profile") if "profile" in draft else draft
+            if isinstance(profile, Mapping):
+                violations.extend(
+                    find_private_saas_default_violations(_guard_slice({"profile": profile}))
+                )
+                config = draft.get("configuration")
+                if isinstance(config, Mapping):
+                    violations.extend(
+                        find_private_saas_default_violations(
+                            _guard_slice({"profile": profile, "configuration": config})
+                        )
+                    )
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in violations:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _iter_payload_strings(value: Any):
+    if isinstance(value, str):
+        yield value
+        return
+    if isinstance(value, Mapping):
+        for nested in value.values():
+            yield from _iter_payload_strings(nested)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for nested in value:
+            yield from _iter_payload_strings(nested)
+
+
+def _is_dangerous_imported_path(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    if text.startswith("/") or text.startswith("~"):
+        return True
+    lowered = text.lower()
+    if ".." in text:
+        return True
+    for marker in _DANGEROUS_PATH_MARKERS:
+        if marker.lower() in lowered:
+            return True
+    if "ki-rechnungen" in lowered and "saas-ui-v2" not in lowered:
+        return True
+    return False
+
+
+def _sanitize_imported_mapping(raw: dict[str, Any]) -> dict[str, Any]:
+    """Drop dangerous absolute/internal paths; keep generic relative values."""
+
+    path_keys = {
+        "destination_folder",
+        "review_unclear_folder",
+        "destination_category",
+    }
+    cleaned: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key == "configurations" and isinstance(value, list):
+            cleaned[key] = [
+                _sanitize_imported_mapping(dict(item)) if isinstance(item, Mapping) else item
+                for item in value
+            ]
+            continue
+        if key in path_keys and isinstance(value, str) and _is_dangerous_imported_path(value):
+            cleaned[key] = ""
+            continue
+        cleaned[key] = value
+    return cleaned
 
 
 def _guard_slice(payload: Mapping[str, Any]) -> dict[str, Any]:
