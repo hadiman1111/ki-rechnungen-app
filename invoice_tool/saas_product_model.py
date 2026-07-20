@@ -55,6 +55,7 @@ DEFAULT_UNKNOWN_PAYMENT_TARGET = "unklar"
 DEFAULT_OUTGOING_INVOICES_TARGET = "unklar"
 DEFAULT_ACCOUNTING_REPORTS_TARGET = "documents"
 DEFAULT_MIXED_ADDRESS_TARGET = "unklar"
+DEFAULT_UNKNOWN_TOOL_CONTEXT_TARGET = "unklar"
 
 CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "Zahlungsweg-Erkennung",
@@ -73,7 +74,71 @@ CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "DATEV-/Kanzlei-Auswertungen nicht als Eingangsrechnung behandeln",
     "Gemischte geschäftliche/private Adresssignale zur Prüfung",
     "Abweichende private Rechnungsadresse als Unsicherheitsmerkmal",
+    "Software- und AI-Tools erkennen",
+    "Nutzung von AI-, Coding- und Token-basierten Diensten als eigene Regelklasse",
+    "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",
+    "Berufliche Signale erforderlich",
+    "Ohne berufliche Signale: Zur Prüfung",
 )
+
+
+@dataclass(frozen=True)
+class SoftwareAiToolPolicy:
+    """Generic software/AI coding-tool classification policy (no private defaults)."""
+
+    detect_ai_coding_tools: bool = True
+    require_business_signal_for_ai_tool_assignment: bool = True
+    preserve_category_for_refunds: bool = True
+    unknown_tool_context_target: str = DEFAULT_UNKNOWN_TOOL_CONTEXT_TARGET
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "detect_ai_coding_tools": self.detect_ai_coding_tools,
+            "require_business_signal_for_ai_tool_assignment": (
+                self.require_business_signal_for_ai_tool_assignment
+            ),
+            "preserve_category_for_refunds": self.preserve_category_for_refunds,
+            "unknown_tool_context_target": self.unknown_tool_context_target,
+        }
+
+
+def default_software_ai_tool_policy() -> SoftwareAiToolPolicy:
+    return SoftwareAiToolPolicy()
+
+
+def software_ai_tool_policy_from_dict(raw: Mapping[str, Any] | None) -> SoftwareAiToolPolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_software_ai_tool_policy()
+
+    def _bool(key: str, fallback: bool) -> bool:
+        value = data.get(key, fallback)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "ja"}
+        return fallback
+
+    target = str(data.get("unknown_tool_context_target") or defaults.unknown_tool_context_target)
+    target = target.strip().lower()
+    if target in {"document", "documents"}:
+        unknown_target = "documents"
+    elif target in {"unklar", "zur_pruefung", "zur-prüfung"}:
+        unknown_target = "unklar"
+    else:
+        unknown_target = defaults.unknown_tool_context_target
+
+    return SoftwareAiToolPolicy(
+        detect_ai_coding_tools=_bool("detect_ai_coding_tools", defaults.detect_ai_coding_tools),
+        require_business_signal_for_ai_tool_assignment=_bool(
+            "require_business_signal_for_ai_tool_assignment",
+            defaults.require_business_signal_for_ai_tool_assignment,
+        ),
+        preserve_category_for_refunds=_bool(
+            "preserve_category_for_refunds",
+            defaults.preserve_category_for_refunds,
+        ),
+        unknown_tool_context_target=unknown_target,
+    )
 
 
 @dataclass(frozen=True)
@@ -89,6 +154,9 @@ class ClassificationPolicy:
     detect_accounting_reports: bool = True
     accounting_reports_target: str = DEFAULT_ACCOUNTING_REPORTS_TARGET
     mixed_business_private_address_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+    software_ai_tool_policy: SoftwareAiToolPolicy = field(
+        default_factory=default_software_ai_tool_policy
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +169,7 @@ class ClassificationPolicy:
             "detect_accounting_reports": self.detect_accounting_reports,
             "accounting_reports_target": self.accounting_reports_target,
             "mixed_business_private_address_target": self.mixed_business_private_address_target,
+            "software_ai_tool_policy": self.software_ai_tool_policy.to_dict(),
         }
 
 
@@ -130,6 +199,17 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
                 return "unklar" if text != "document" else "documents"
             return text
         return fallback
+
+    nested_tool = data.get("software_ai_tool_policy")
+    if not isinstance(nested_tool, Mapping):
+        nested_tool = {
+            "detect_ai_coding_tools": data.get("detect_ai_coding_tools"),
+            "require_business_signal_for_ai_tool_assignment": data.get(
+                "require_business_signal_for_ai_tool_assignment"
+            ),
+            "preserve_category_for_refunds": data.get("preserve_category_for_refunds"),
+            "unknown_tool_context_target": data.get("unknown_tool_context_target"),
+        }
 
     return ClassificationPolicy(
         require_explicit_payer_payment_evidence=_bool(
@@ -163,6 +243,7 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             "mixed_business_private_address_target",
             defaults.mixed_business_private_address_target,
         ),
+        software_ai_tool_policy=software_ai_tool_policy_from_dict(nested_tool),
     )
 
 

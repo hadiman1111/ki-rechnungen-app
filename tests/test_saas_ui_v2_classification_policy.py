@@ -51,6 +51,11 @@ def test_blank_saas_profile_has_safe_classification_policy_defaults() -> None:
     assert policy.detect_accounting_reports is True
     assert policy.accounting_reports_target in {"unklar", "documents"}
     assert policy.mixed_business_private_address_target == "unklar"
+    tool = policy.software_ai_tool_policy
+    assert tool.detect_ai_coding_tools is True
+    assert tool.require_business_signal_for_ai_tool_assignment is True
+    assert tool.preserve_category_for_refunds is True
+    assert tool.unknown_tool_context_target == "unklar"
 
 
 def test_default_policy_flags() -> None:
@@ -64,6 +69,8 @@ def test_default_policy_flags() -> None:
     assert policy.detect_accounting_reports is True
     assert policy.accounting_reports_target in {"unklar", "documents"}
     assert policy.mixed_business_private_address_target == "unklar"
+    assert policy.software_ai_tool_policy.detect_ai_coding_tools is True
+    assert policy.software_ai_tool_policy.preserve_category_for_refunds is True
 
 
 def test_policy_roundtrip_save_load(tmp_path: Path) -> None:
@@ -152,6 +159,11 @@ def test_ui_viewmodel_texts_contain_required_phrases() -> None:
         "Dokumenttyp-Erkennung",
         "Buchhaltungsauswertungen zur Prüfung",
         "Gemischte geschäftliche/private Adresssignale",
+        "Software- und AI-Tools erkennen",
+        "AI-, Coding- und Token-basierten Diensten",
+        "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",
+        "Berufliche Signale erforderlich",
+        "Ohne berufliche Signale: Zur Prüfung",
     )
     for phrase in required:
         assert phrase in blob, phrase

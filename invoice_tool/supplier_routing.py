@@ -17,6 +17,7 @@ class SupplierRoutingMatch:
     economic_assignment: str | None = None
     payment_reference: str | None = None
     value_not_extracted_from_document: bool = True
+    art_deferred: bool = False
     trace_rule: str | None = None
 
 
@@ -149,10 +150,15 @@ def resolve_supplier_profile_routing(
         else:
             zielordner = preset.routing.zielordner.get("unklar", "unklar")
 
-        art = category or preset.routing.default_art
+        # Payment-only vendor profiles (e.g. cursor-anysphere with payment_field=amex
+        # but no category) must NOT fall back to default_art=private. Art is deferred
+        # to business-context / software-AI-tool refinement in processing.
+        art_deferred = not bool(category)
+        art = category if category else preset.routing.unklar_konto
         exclusive = bool(profile.get("exclusive", True))
         payment_reference = str(profile.get("payment_reference") or "").strip() or None
 
+        defer_note = "; art_deferred=True (no category — not default_art)" if art_deferred else ""
         routing = RoutingDecision(
             art=art,
             zielordner=zielordner,
@@ -163,7 +169,7 @@ def resolve_supplier_profile_routing(
             begruendung=(
                 f"Supplier-Profilregel '{rule_id}' getroffen "
                 f"(hint={matched_hint}, match_source={match_source}, "
-                f"source=profile_rule, exclusive={exclusive})."
+                f"source=profile_rule, exclusive={exclusive}){defer_note}."
             ),
         )
         return SupplierRoutingMatch(
@@ -172,6 +178,7 @@ def resolve_supplier_profile_routing(
             exclusive=exclusive,
             economic_assignment=category or None,
             payment_reference=payment_reference,
+            art_deferred=art_deferred,
             trace_rule=f"{rule_id}_EP_AMEX_1005" if rule_id.startswith("anthropic") else rule_id,
         )
 

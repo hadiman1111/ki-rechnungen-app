@@ -44,6 +44,7 @@ SAAS_SURFACE_UI_LABELS: dict[str, str] = {
     "invoice_direction": "Rechnungsrichtung erkennen",
     "document_type_detection": "Dokumenttyp-Erkennung",
     "mixed_address": "Gemischte geschäftliche/private Adresssignale",
+    "software_ai_tools": "Software- und AI-Tools erkennen",
 }
 
 DEFAULT_SAAS_REVIEW_RULE_LABEL = "Unklar bei Nicht-Treffer"

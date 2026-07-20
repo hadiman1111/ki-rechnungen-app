@@ -42,6 +42,7 @@ from invoice_tool.models import (
     NormalizedInvoice,
     OfficeRules,
     ProcessResult,
+    RoutingDecision,
 )
 from invoice_tool.normalization import (
     NormalizationError,
@@ -65,6 +66,7 @@ from invoice_tool.routing import (
     resolve_account,
     resolve_priority_routing,
 )
+from invoice_tool.software_ai_tools import refine_routing_for_software_ai_tool
 from invoice_tool.supplier_routing import resolve_supplier_profile_routing
 from invoice_tool.state import (
     DirectoryLock,
@@ -720,9 +722,34 @@ class InvoiceProcessor:
                 "payment_reference": supplier_match.payment_reference,
                 "target_folder": routing.zielordner,
                 "value_not_extracted_from_document": supplier_match.value_not_extracted_from_document,
+                "art_deferred": supplier_match.art_deferred,
             }
-            art = routing.art
-            art_reason = routing.begruendung
+            if supplier_match.art_deferred or not supplier_match.economic_assignment:
+                # Payment-only vendor rule (e.g. Cursor/Anysphere → amex without category):
+                # keep payment/folder from profile; refine art via business context +
+                # software-/AI-tool policy. Never apply blind default_art=private.
+                routing = RoutingDecision(
+                    art=art,
+                    zielordner=routing.zielordner,
+                    status=routing.status,
+                    konto=routing.konto,
+                    payment_field=routing.payment_field,
+                    street_key=street_key,
+                    begruendung=routing.begruendung,
+                )
+                routing, art, art_reason = refine_routing_for_software_ai_tool(
+                    routing,
+                    extracted,
+                    art=art,
+                    art_reason=art_reason,
+                    street_key=street_key,
+                    preset=self.preset,
+                )
+                supplier_trace["target_folder"] = routing.zielordner
+                supplier_trace["refined_art"] = art
+            else:
+                art = routing.art
+                art_reason = routing.begruendung
         else:
             priority_routing = resolve_priority_routing(extracted, account_decision, street_key, self.preset)
             if priority_routing is not None:
@@ -758,9 +785,20 @@ class InvoiceProcessor:
                 art_reason = f"{art_reason}; Recipient-Guard: {guard.reason}"
 
             if supplier_match is not None and not supplier_match.exclusive:
-                routing = supplier_match.routing
-                art = routing.art
-                art_reason = routing.begruendung
+                if supplier_match.art_deferred or not supplier_match.economic_assignment:
+                    routing = RoutingDecision(
+                        art=art,
+                        zielordner=supplier_match.routing.zielordner,
+                        status=supplier_match.routing.status,
+                        konto=supplier_match.routing.konto,
+                        payment_field=supplier_match.routing.payment_field,
+                        street_key=street_key,
+                        begruendung=supplier_match.routing.begruendung,
+                    )
+                else:
+                    routing = supplier_match.routing
+                    art = routing.art
+                    art_reason = routing.begruendung
 
             guards_result = apply_routing_guards(
                 routing,
@@ -776,6 +814,15 @@ class InvoiceProcessor:
                 art_reason = (
                     f"{art_reason}; Routing-Guards: {', '.join(guards_result.applied)}"
                 )
+
+            routing, art, art_reason = refine_routing_for_software_ai_tool(
+                routing,
+                extracted,
+                art=art,
+                art_reason=art_reason,
+                street_key=street_key,
+                preset=self.preset,
+            )
 
         filename = build_filename(
             self.preset.filename_schema,
