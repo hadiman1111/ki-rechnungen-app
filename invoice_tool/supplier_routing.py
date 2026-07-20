@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from invoice_tool.matching import normalize_for_matching
 from invoice_tool.models import ExtractedData, ProcessingPreset, RoutingDecision
 from invoice_tool.recipient_guard import _contains_any, _recipient_search_text
+from invoice_tool.routing_guards import (
+    billing_address_for_recipient_match,
+    evaluate_mixed_address_ambiguity,
+)
 
 
 @dataclass(frozen=True)
@@ -133,9 +137,21 @@ def resolve_supplier_profile_routing(
 
         required_recipient_hints = _tuple_hints(profile.get("required_recipient_hints"))
         if required_recipient_hints:
-            recipient_text = _recipient_search_text(extracted)
-            recipient_match = _contains_any(recipient_text, required_recipient_hints)
+            # Prefer Rechnungsadresse/Bill-to over Lieferadresse. Business signals that
+            # appear only in the delivery address must not unlock ai/amex vendor rules.
+            billing_scoped = billing_address_for_recipient_match(extracted)
+            if billing_scoped is not None:
+                recipient_match = _contains_any(billing_scoped, required_recipient_hints)
+            else:
+                recipient_text = _recipient_search_text(extracted)
+                recipient_match = _contains_any(recipient_text, required_recipient_hints)
             if not recipient_match:
+                continue
+
+            mixed = evaluate_mixed_address_ambiguity(extracted)
+            if mixed.private_billing_business_delivery or mixed.business_signal_only_in_delivery:
+                # Private billing + business delivery: do not apply Amazon-style
+                # business/amex supplier shortcuts.
                 continue
 
         category = str(profile.get("category") or profile.get("economic_assignment") or "").strip()

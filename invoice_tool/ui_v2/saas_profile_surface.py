@@ -44,6 +44,7 @@ SAAS_SURFACE_UI_LABELS: dict[str, str] = {
     "invoice_direction": "Rechnungsrichtung erkennen",
     "document_type_detection": "Dokumenttyp-Erkennung",
     "mixed_address": "Gemischte geschäftliche/private Adresssignale",
+    "address_policy": "Rechnungsadresse und Lieferadresse",
     "software_ai_tools": "Software- und AI-Tools erkennen",
 }
 
@@ -250,6 +251,10 @@ def saas_surface_review_hints(surface: SaasProfileSurface | None = None) -> tupl
         "Rechnungsrichtung erkennen: Ausgangsrechnung nicht als Eingangsrechnung.",
         "Dokumenttyp-Erkennung: Buchhaltungsauswertungen zur Prüfung.",
         "Gemischte geschäftliche/private Adresssignale zur Prüfung.",
+        "Rechnungsadresse vor Lieferadresse priorisieren.",
+        "Geschäftliche Lieferadresse allein reicht nicht für geschäftliche Zuordnung.",
+        "Abweichende private Rechnungsadresse zur Prüfung.",
+        "Gemischte Rechnungs-/Lieferadresssignale zur Prüfung.",
         "Verarbeitung wird von dieser Oberfläche nicht gestartet.",
         "Kein Cloud-/Mandantenbetrieb in dieser lokalen Oberfläche.",
     ]

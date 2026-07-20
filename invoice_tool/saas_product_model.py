@@ -74,12 +74,84 @@ CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "DATEV-/Kanzlei-Auswertungen nicht als Eingangsrechnung behandeln",
     "Gemischte geschäftliche/private Adresssignale zur Prüfung",
     "Abweichende private Rechnungsadresse als Unsicherheitsmerkmal",
+    "Rechnungsadresse und Lieferadresse",
+    "Rechnungsadresse vor Lieferadresse priorisieren",
+    "Geschäftliche Lieferadresse allein reicht nicht für geschäftliche Zuordnung",
+    "Abweichende private Rechnungsadresse zur Prüfung",
+    "Gemischte Rechnungs-/Lieferadresssignale zur Prüfung",
     "Software- und AI-Tools erkennen",
     "Nutzung von AI-, Coding- und Token-basierten Diensten als eigene Regelklasse",
     "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",
     "Berufliche Signale erforderlich",
     "Ohne berufliche Signale: Zur Prüfung",
 )
+
+
+@dataclass(frozen=True)
+class AddressPolicy:
+    """Generic billing vs delivery address precedence (no private street/tenant defaults)."""
+
+    billing_address_takes_precedence: bool = True
+    delivery_address_only_is_not_business_evidence: bool = True
+    mixed_billing_delivery_address_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+    private_billing_business_delivery_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "billing_address_takes_precedence": self.billing_address_takes_precedence,
+            "delivery_address_only_is_not_business_evidence": (
+                self.delivery_address_only_is_not_business_evidence
+            ),
+            "mixed_billing_delivery_address_target": self.mixed_billing_delivery_address_target,
+            "private_billing_business_delivery_target": (
+                self.private_billing_business_delivery_target
+            ),
+        }
+
+
+def default_address_policy() -> AddressPolicy:
+    return AddressPolicy()
+
+
+def address_policy_from_dict(raw: Mapping[str, Any] | None) -> AddressPolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_address_policy()
+
+    def _bool(key: str, fallback: bool) -> bool:
+        value = data.get(key, fallback)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "ja"}
+        return fallback
+
+    def _target(key: str, fallback: str) -> str:
+        value = data.get(key, fallback)
+        text = str(value or "").strip().lower()
+        if text in {"unklar", "zur_pruefung", "zur-prüfung"}:
+            return "unklar"
+        if text in {"documents", "document"}:
+            return "documents"
+        return fallback
+
+    return AddressPolicy(
+        billing_address_takes_precedence=_bool(
+            "billing_address_takes_precedence",
+            defaults.billing_address_takes_precedence,
+        ),
+        delivery_address_only_is_not_business_evidence=_bool(
+            "delivery_address_only_is_not_business_evidence",
+            defaults.delivery_address_only_is_not_business_evidence,
+        ),
+        mixed_billing_delivery_address_target=_target(
+            "mixed_billing_delivery_address_target",
+            defaults.mixed_billing_delivery_address_target,
+        ),
+        private_billing_business_delivery_target=_target(
+            "private_billing_business_delivery_target",
+            defaults.private_billing_business_delivery_target,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -154,6 +226,7 @@ class ClassificationPolicy:
     detect_accounting_reports: bool = True
     accounting_reports_target: str = DEFAULT_ACCOUNTING_REPORTS_TARGET
     mixed_business_private_address_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+    address_policy: AddressPolicy = field(default_factory=default_address_policy)
     software_ai_tool_policy: SoftwareAiToolPolicy = field(
         default_factory=default_software_ai_tool_policy
     )
@@ -169,6 +242,7 @@ class ClassificationPolicy:
             "detect_accounting_reports": self.detect_accounting_reports,
             "accounting_reports_target": self.accounting_reports_target,
             "mixed_business_private_address_target": self.mixed_business_private_address_target,
+            "address_policy": self.address_policy.to_dict(),
             "software_ai_tool_policy": self.software_ai_tool_policy.to_dict(),
         }
 
@@ -211,6 +285,25 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             "unknown_tool_context_target": data.get("unknown_tool_context_target"),
         }
 
+    nested_address = data.get("address_policy")
+    if not isinstance(nested_address, Mapping):
+        nested_address = {
+            "billing_address_takes_precedence": data.get(
+                "billing_address_takes_precedence"
+            ),
+            "delivery_address_only_is_not_business_evidence": data.get(
+                "delivery_address_only_is_not_business_evidence"
+            ),
+            "mixed_billing_delivery_address_target": data.get(
+                "mixed_billing_delivery_address_target",
+                data.get("mixed_business_private_address_target"),
+            ),
+            "private_billing_business_delivery_target": data.get(
+                "private_billing_business_delivery_target",
+                data.get("mixed_business_private_address_target"),
+            ),
+        }
+
     return ClassificationPolicy(
         require_explicit_payer_payment_evidence=_bool(
             "require_explicit_payer_payment_evidence",
@@ -243,6 +336,7 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             "mixed_business_private_address_target",
             defaults.mixed_business_private_address_target,
         ),
+        address_policy=address_policy_from_dict(nested_address),
         software_ai_tool_policy=software_ai_tool_policy_from_dict(nested_tool),
     )
 

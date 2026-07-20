@@ -51,6 +51,10 @@ def test_blank_saas_profile_has_safe_classification_policy_defaults() -> None:
     assert policy.detect_accounting_reports is True
     assert policy.accounting_reports_target in {"unklar", "documents"}
     assert policy.mixed_business_private_address_target == "unklar"
+    assert policy.address_policy.billing_address_takes_precedence is True
+    assert policy.address_policy.delivery_address_only_is_not_business_evidence is True
+    assert policy.address_policy.mixed_billing_delivery_address_target == "unklar"
+    assert policy.address_policy.private_billing_business_delivery_target == "unklar"
     tool = policy.software_ai_tool_policy
     assert tool.detect_ai_coding_tools is True
     assert tool.require_business_signal_for_ai_tool_assignment is True
@@ -159,6 +163,9 @@ def test_ui_viewmodel_texts_contain_required_phrases() -> None:
         "Dokumenttyp-Erkennung",
         "Buchhaltungsauswertungen zur Prüfung",
         "Gemischte geschäftliche/private Adresssignale",
+        "Rechnungsadresse vor Lieferadresse priorisieren",
+        "Geschäftliche Lieferadresse allein reicht nicht",
+        "Gemischte Rechnungs-/Lieferadresssignale zur Prüfung",
         "Software- und AI-Tools erkennen",
         "AI-, Coding- und Token-basierten Diensten",
         "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",

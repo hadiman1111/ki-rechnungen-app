@@ -750,6 +750,26 @@ class InvoiceProcessor:
             else:
                 art = routing.art
                 art_reason = routing.begruendung
+
+            # Exclusive vendor shortcuts must still pass mixed-address / payment-evidence
+            # guards (e.g. Amazon private billing + business delivery → unklar).
+            guards_result = apply_routing_guards(
+                routing,
+                extracted=extracted,
+                account_decision=account_decision,
+                payment_decision=payment_decision,
+                preset=self.preset,
+                street_key=street_key,
+            )
+            routing = guards_result.routing
+            if guards_result.applied:
+                art = routing.art
+                art_reason = (
+                    f"{art_reason}; Routing-Guards: {', '.join(guards_result.applied)}"
+                )
+                supplier_trace["routing_guards"] = list(guards_result.applied)
+                supplier_trace["target_folder"] = routing.zielordner
+                supplier_trace["payment_method"] = routing.payment_field
         else:
             priority_routing = resolve_priority_routing(extracted, account_decision, street_key, self.preset)
             if priority_routing is not None:

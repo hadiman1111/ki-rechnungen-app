@@ -119,6 +119,8 @@ class InvoiceDirectionGuardDecision:
 class MixedAddressGuardDecision:
     is_ambiguous: bool
     reason: str
+    private_billing_business_delivery: bool = False
+    business_signal_only_in_delivery: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,16 @@ class RoutingGuardsResult:
     applied: tuple[str, ...] = ()
 
 
+_BILLING_ADDRESS_LABEL = (
+    r"(?:rechnungsadresse|billing\s+address|rechnungsanschrift|"
+    r"invoice\s+address|abweichende\s+rechnungsadresse)"
+)
+_DELIVERY_ADDRESS_LABEL = (
+    r"(?:lieferadresse|lieferanschrift|shipping\s+address|"
+    r"delivery\s+address|ship\s+to|versandadresse)"
+)
+
+
 def _search_text(extracted: ExtractedData) -> str:
     return normalize_for_matching(
         " ".join(
@@ -151,6 +163,61 @@ def _search_text(extracted: ExtractedData) -> str:
             if part
         )
     )
+
+
+def _section_after_label(
+    raw_text: str,
+    label_pattern: str,
+    *,
+    stop_patterns: tuple[str, ...],
+    max_chars: int = 320,
+) -> str:
+    if not raw_text:
+        return ""
+    match = re.search(label_pattern, raw_text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    rest = raw_text[match.end() : match.end() + max_chars]
+    earliest = len(rest)
+    for stop in stop_patterns:
+        stop_match = re.search(stop, rest, flags=re.IGNORECASE)
+        if stop_match:
+            earliest = min(earliest, stop_match.start())
+    return normalize_for_matching(rest[:earliest])
+
+
+def extract_billing_and_delivery_sections(extracted: ExtractedData) -> tuple[str, str]:
+    """Return normalized (billing_section, delivery_section) from labeled address blocks."""
+
+    raw = extracted.raw_text or ""
+    billing = _section_after_label(
+        raw,
+        _BILLING_ADDRESS_LABEL,
+        stop_patterns=(_DELIVERY_ADDRESS_LABEL, r"\b(?:artikel|zahlungsreferenz|payment\s+reference)\b"),
+    )
+    delivery = _section_after_label(
+        raw,
+        _DELIVERY_ADDRESS_LABEL,
+        stop_patterns=(_BILLING_ADDRESS_LABEL, r"\b(?:artikel|zahlungsreferenz|payment\s+reference)\b"),
+    )
+    return billing, delivery
+
+
+def billing_address_for_recipient_match(extracted: ExtractedData) -> str | None:
+    """Billing-scoped recipient text when a Rechnungsadresse/Bill-to block exists.
+
+    Returns None when no labeled billing block is present (caller may fall back).
+    """
+
+    billing, _delivery = extract_billing_and_delivery_sections(extracted)
+    if billing:
+        return billing
+    # Soft fallback: labeled billing marker present but section empty — still signal
+    # that delivery-only matching must not be used alone.
+    raw_norm = normalize_for_matching(extracted.raw_text or "")
+    if re.search(_BILLING_ADDRESS_LABEL, raw_norm):
+        return billing or ""
+    return None
 
 
 def _contains_any(text: str, markers: tuple[str, ...]) -> str | None:
@@ -226,10 +293,36 @@ def evaluate_mixed_address_ambiguity(
     street_key: str | None = None,
 ) -> MixedAddressGuardDecision:
     text = _search_text(extracted)
+    billing_section, delivery_section = extract_billing_and_delivery_sections(extracted)
     business_hit = _contains_any(text, _BUSINESS_ADDRESS_MARKERS)
     private_hit = _contains_any(text, _PRIVATE_ADDRESS_MARKERS)
     if street_key == "roete" and business_hit:
         private_hit = private_hit or "roete"
+
+    billing_private = bool(_contains_any(billing_section, _PRIVATE_ADDRESS_MARKERS))
+    billing_business = bool(_contains_any(billing_section, _BUSINESS_ADDRESS_MARKERS))
+    delivery_business = bool(_contains_any(delivery_section, _BUSINESS_ADDRESS_MARKERS))
+    business_only_in_delivery = bool(
+        delivery_business and not billing_business and (billing_section or billing_private)
+    )
+    private_billing_business_delivery = bool(
+        billing_private and delivery_business and not billing_business
+    )
+
+    # Strongest mixed signal: private Rechnungsadresse + business Lieferadresse.
+    if private_billing_business_delivery or (
+        business_only_in_delivery and (billing_private or street_key == "roete")
+    ):
+        return MixedAddressGuardDecision(
+            is_ambiguous=True,
+            reason=(
+                "Private Rechnungsadresse + geschäftliche Lieferadresse = "
+                "gemischte Adresssignale; Lieferadresse allein ist kein "
+                "beruflicher Rechnungsnachweis."
+            ),
+            private_billing_business_delivery=True,
+            business_signal_only_in_delivery=True,
+        )
 
     # Billing address divergence: Rechnungsadresse/abweichend + private street.
     billing_divergence = bool(
@@ -246,11 +339,15 @@ def evaluate_mixed_address_ambiguity(
                 "Gemischte geschäftliche/private Adresssignale "
                 f"(business={business_hit}, private={private_hit})."
             ),
+            private_billing_business_delivery=private_billing_business_delivery,
+            business_signal_only_in_delivery=business_only_in_delivery,
         )
     if billing_divergence and business_hit:
         return MixedAddressGuardDecision(
             is_ambiguous=True,
             reason="Abweichende private Rechnungsadresse bei geschäftlicher Hauptadresse.",
+            private_billing_business_delivery=True,
+            business_signal_only_in_delivery=business_only_in_delivery,
         )
     return MixedAddressGuardDecision(is_ambiguous=False, reason="Keine gemischte Adresslage.")
 
@@ -464,16 +561,28 @@ def apply_mixed_address_guard(
     decision = evaluate_mixed_address_ambiguity(extracted, street_key=street_key)
     if not decision.is_ambiguous:
         return routing, decision
-    # Only force review when payment is not already a trusted non-voba field with evidence,
-    # or when currently auto-assigned to business payment folders.
-    if routing.payment_field not in _UNSAFE_AUTO_PAYMENT_FIELDS and routing.zielordner not in {
-        preset.routing.zielordner.get("ai", "ai"),
-        preset.routing.zielordner.get("ep", "ep"),
-        "ai",
-        "ep",
-    }:
-        if routing.payment_field in {"amex", "amex-1005", "private", "bar"}:
-            return routing, decision
+
+    # Private billing + business-only delivery must always go to review — including
+    # exclusive vendor shortcuts (e.g. amazon-ai-amex) that set payment_field=amex
+    # without document payment proof. Delivery-address SOMAA alone is not enough.
+    force_review = (
+        decision.private_billing_business_delivery
+        or decision.business_signal_only_in_delivery
+    )
+
+    # Otherwise only force review when payment is unsafe auto-assignment or
+    # currently auto-assigned to business payment folders.
+    if not force_review:
+        if routing.payment_field not in _UNSAFE_AUTO_PAYMENT_FIELDS and routing.zielordner not in {
+            preset.routing.zielordner.get("ai", "ai"),
+            preset.routing.zielordner.get("ep", "ep"),
+            "ai",
+            "ep",
+            "amex",
+            preset.routing.zielordner.get("amex", "amex"),
+        }:
+            if routing.payment_field in {"amex", "amex-1005", "private", "bar"}:
+                return routing, decision
 
     unklar_folder = preset.routing.zielordner.get("unklar", "unklar")
     return (
