@@ -671,3 +671,94 @@ def apply_classification_guards(
         )
 
     return classification
+
+
+_ORDER_CONFIRMATION_MARKERS = (
+    "bestellbestätigung",
+    "bestellbestaetigung",
+    "order confirmation",
+    "bestätigen wir den eingang ihrer bestellung",
+    "bestaetigen wir den eingang ihrer bestellung",
+    "hiermit bestätigen wir den eingang",
+    "hiermit bestaetigen wir den eingang",
+    "bestellte artikel",
+    "ihre bestellung",
+)
+
+
+@dataclass(frozen=True)
+class BusinessNonInvoiceDocumentDecision:
+    is_business_non_invoice: bool
+    subtype: str | None
+    reason: str
+    has_business_billing_signal: bool = False
+    order_confirmation_marker: str | None = None
+
+
+def has_business_billing_address_signal(extracted: ExtractedData) -> bool:
+    """True when Rechnungsadresse/Bill-to (or whole text fallback) has business markers."""
+
+    billing, _delivery = extract_billing_and_delivery_sections(extracted)
+    if billing:
+        return bool(_contains_any(billing, _BUSINESS_ADDRESS_MARKERS))
+    text = _search_text(extracted)
+    # Without labeled blocks, only count business markers outside an exclusive delivery block.
+    delivery = _section_after_label(
+        extracted.raw_text or "",
+        _DELIVERY_ADDRESS_LABEL,
+        stop_patterns=(_BILLING_ADDRESS_LABEL,),
+    )
+    if delivery and _contains_any(delivery, _BUSINESS_ADDRESS_MARKERS):
+        # Business only in Lieferadresse is not billing evidence.
+        remainder = text.replace(delivery, " ")
+        return bool(_contains_any(remainder, _BUSINESS_ADDRESS_MARKERS))
+    return bool(_contains_any(text, _BUSINESS_ADDRESS_MARKERS))
+
+
+def evaluate_business_non_invoice_document(
+    extracted: ExtractedData,
+    classification: ClassificationDecision | None = None,
+) -> BusinessNonInvoiceDocumentDecision:
+    """Detect order confirmations / purchase docs that are not bookable invoices.
+
+    Keeps document_type separate from economic assignment (art/payment).
+    """
+
+    if classification is not None and classification.dokumenttyp == "invoice":
+        return BusinessNonInvoiceDocumentDecision(
+            is_business_non_invoice=False,
+            subtype=None,
+            reason="Als Rechnung klassifiziert — kein Non-Invoice-Guard.",
+        )
+
+    text = _search_text(extracted)
+    marker = _contains_any(text, _ORDER_CONFIRMATION_MARKERS)
+    if not marker:
+        return BusinessNonInvoiceDocumentDecision(
+            is_business_non_invoice=False,
+            subtype=None,
+            reason="Keine Bestellbestätigungs-/Kaufdokument-Signale.",
+        )
+
+    # Do not reclassify clear invoices that somehow still carry order wording.
+    if extracted.invoice_number_raw and re.search(
+        r"(?<![a-z])(?:rechnung|invoice)(?![a-z])", text
+    ):
+        if not re.search(r"bestellbestätigung|bestellbestaetigung|order confirmation", text):
+            return BusinessNonInvoiceDocumentDecision(
+                is_business_non_invoice=False,
+                subtype=None,
+                reason="Echte Rechnung mit Rechnungsnummer — Guard greift nicht.",
+            )
+
+    business_billing = has_business_billing_address_signal(extracted)
+    return BusinessNonInvoiceDocumentDecision(
+        is_business_non_invoice=True,
+        subtype="order_confirmation",
+        reason=(
+            f"Geschäftliches Nicht-Rechnungsdokument erkannt "
+            f"(marker={marker}, business_billing={business_billing})."
+        ),
+        has_business_billing_signal=business_billing,
+        order_confirmation_marker=marker,
+    )

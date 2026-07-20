@@ -57,6 +57,7 @@ from invoice_tool.recipient_guard import (
 from invoice_tool.routing_guards import (
     apply_classification_guards,
     apply_routing_guards,
+    evaluate_business_non_invoice_document,
 )
 from invoice_tool.routing import (
     apply_final_assignment,
@@ -618,13 +619,26 @@ class InvoiceProcessor:
                             match_meta=match_meta,
                         )
                     else:
-                        result = self._process_document(
-                            pdf_path=pdf_path,
-                            fingerprint=fingerprint,
-                            extracted=extracted,
-                            classification=classification,
-                            historical_match=historical_match,
+                        business_doc = evaluate_business_non_invoice_document(
+                            extracted, classification
                         )
+                        if business_doc.is_business_non_invoice:
+                            result = self._process_business_non_invoice_document(
+                                pdf_path=pdf_path,
+                                fingerprint=fingerprint,
+                                extracted=extracted,
+                                classification=classification,
+                                historical_match=historical_match,
+                                business_doc=business_doc,
+                            )
+                        else:
+                            result = self._process_document(
+                                pdf_path=pdf_path,
+                                fingerprint=fingerprint,
+                                extracted=extracted,
+                                classification=classification,
+                                historical_match=historical_match,
+                            )
                 return result
         except Exception as exc:  # noqa: BLE001
             self._log_file_event(
@@ -1148,6 +1162,199 @@ class InvoiceProcessor:
                 "normalization_warnings": [],
                 "conflicts": [],
                 "routing_decision": classification.begruendung,
+            },
+        )
+
+    def _business_non_invoice_descriptive_name(
+        self,
+        extracted,
+        *,
+        subtype: str | None,
+    ) -> str:
+        if extracted.document_name_raw:
+            try:
+                return sanitize_document_name(
+                    extracted.document_name_raw,
+                    max_words=self.preset.dokumente.max_woerter,
+                )
+            except NormalizationError:
+                pass
+
+        supplier_slug = ""
+        if extracted.supplier_raw:
+            try:
+                from invoice_tool.normalization import (
+                    clean_supplier_text,
+                    normalize_supplier_name,
+                )
+
+                cleaned = clean_supplier_text(
+                    extracted.supplier_raw, self.preset.supplier_cleaning
+                )
+                supplier_slug = normalize_supplier_name(cleaned)
+            except Exception:  # noqa: BLE001
+                try:
+                    supplier_slug = sanitize_document_name(
+                        extracted.supplier_raw,
+                        max_words=3,
+                    )
+                except NormalizationError:
+                    supplier_slug = ""
+
+        prefix = "bestellbestaetigung" if subtype == "order_confirmation" else "geschaeftsdokument"
+        if supplier_slug:
+            return f"{prefix}-{supplier_slug}"
+        return prefix
+
+    def _process_business_non_invoice_document(
+        self,
+        *,
+        pdf_path: Path,
+        fingerprint: str,
+        extracted,
+        classification: ClassificationDecision,
+        historical_match: dict | None,
+        business_doc,
+    ) -> ProcessResult:
+        """Order confirmations / purchase docs: keep non-invoice type, preserve art/payment."""
+
+        normalized: NormalizedInvoice | None = None
+        normalization_warnings: list[str] = []
+        try:
+            normalized, normalization_warnings = normalize_invoice_with_fallbacks(
+                extracted,
+                self.preset.invoice_fallbacks,
+                self.preset.supplier_cleaning,
+            )
+        except Exception:  # noqa: BLE001
+            normalized = None
+
+        account_decision = resolve_account(extracted, self.preset)
+        street_key = detect_street(extracted, self.preset)
+        art, art_reason = determine_business_context(
+            extracted, account_decision, self.preset, street_key
+        )
+        payment_decision = detect_payment_method(extracted, self.preset)
+
+        # Business billing (SOMAA/Bismarck in Rechnungsadresse) may set art=ai.
+        # Delivery-only business signals must not invent ai.
+        if business_doc.has_business_billing_signal and art in {"ai", "ep"}:
+            final_art = art
+        elif business_doc.has_business_billing_signal:
+            final_art = "ai"
+            art_reason = f"{art_reason}; Business-Billing-Signal für Non-Invoice-Dokument."
+        else:
+            final_art = "unklar"
+            art_reason = (
+                f"{art_reason}; Kein berufliches Rechnungsadress-Signal "
+                "für Non-Invoice-Dokument."
+            )
+
+        # Preserve explicit payment methods (e.g. PayPal) without booking as invoice.
+        if payment_decision.explicit and payment_decision.payment_method not in {
+            "",
+            "unknown",
+            "unbekannt",
+        }:
+            payment_field = payment_decision.payment_method
+        else:
+            payment_field = self.preset.routing.unklar_konto or "unklar"
+
+        unklar_folder = self.preset.routing.zielordner.get("unklar", "unklar")
+        target_folder = self._resolve_routing_target_folder(unklar_folder)
+        document_date = self._document_date(
+            getattr(normalized, "invoice_date", None) or extracted.invoice_date_raw
+        )
+        amount = (
+            getattr(normalized, "amount", None)
+            or extracted.amount_raw
+            or self.preset.invoice_fallbacks.amount
+            or "unknown-amount"
+        )
+        descriptive_name = self._business_non_invoice_descriptive_name(
+            extracted, subtype=business_doc.subtype
+        )
+        prefix = self.preset.dokumente.prefix or "d"
+        filename = (
+            f"{document_date}_{prefix}_{final_art}_{descriptive_name}_"
+            f"{amount}_{payment_field}.pdf"
+        )
+
+        subtype = business_doc.subtype or "business_purchase_document"
+        routing = RoutingDecision(
+            art=final_art,
+            zielordner=unklar_folder,
+            status="unklar",
+            konto=None,
+            payment_field=payment_field,
+            street_key=street_key,
+            begruendung=(
+                f"{classification.begruendung}; Business-Non-Invoice-Guard: "
+                f"{business_doc.reason}; Art={art_reason}; "
+                f"Payment={payment_decision.begruendung}; "
+                "booking_status=review (Bestellbestätigung nicht buchbar)."
+            ),
+        )
+        routing_decision = routing.begruendung
+
+        return self._publish_and_archive(
+            pdf_path=pdf_path,
+            fingerprint=fingerprint,
+            target_folder=target_folder,
+            filename=filename,
+            routing_status="unklar",
+            dokumenttyp=subtype,
+            extracted=extracted,
+            normalized=normalized,
+            routing=routing,
+            street_key=street_key,
+            normalization_warnings=normalization_warnings,
+            historical_match=historical_match,
+            trace_kwargs={
+                "run_id": self.run_logger.run_id,
+                "original_filename": pdf_path.name,
+                "final_filename": sanitize_final_filename(filename),
+                "source_path": str(pdf_path),
+                "target_path": str(target_folder / sanitize_final_filename(filename)),
+                "archive_path": None,
+                "document_type": subtype,
+                "classification_reason": mask_sensitive(routing_decision),
+                "extracted_invoice_date": document_date,
+                "extracted_supplier": mask_sensitive(extracted.supplier_raw),
+                "extracted_amount": mask_sensitive(extracted.amount_raw),
+                "extraction_method": extracted.source_method,
+                "fallback_used": bool(extracted.fallback_used),
+                "detected_street_key": street_key,
+                "business_context_art": final_art,
+                "business_context_reason": mask_sensitive(art_reason),
+                "account_konto": None,
+                "account_payment_field": payment_field,
+                "account_match_source": None,
+                "account_match_reason": None,
+                "account_matched_rule": None,
+                "detected_payment_method": payment_decision.payment_method,
+                "payment_rule_name": _extract_rule_name(payment_decision.begruendung),
+                "payment_explicit": payment_decision.explicit,
+                "payment_signals": _extract_signals(payment_decision.begruendung),
+                "priority_rule_name": None,
+                "final_assignment_rule_name": "business_non_invoice_document_guard",
+                "final_art": final_art,
+                "final_konto": None,
+                "final_payment_field": payment_field,
+                "final_status": "unklar",
+                "output_route_rule_name": "non_invoice_business_to_unklar",
+                "final_output_folder": unklar_folder,
+                "filename_fields_used": [
+                    "invoice_date",
+                    "document_prefix",
+                    "art",
+                    "document_name",
+                    "amount",
+                    "payment_field",
+                ],
+                "normalization_warnings": normalization_warnings,
+                "conflicts": [],
+                "routing_decision": routing_decision,
             },
         )
 

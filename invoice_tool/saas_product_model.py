@@ -79,6 +79,12 @@ CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "Geschäftliche Lieferadresse allein reicht nicht für geschäftliche Zuordnung",
     "Abweichende private Rechnungsadresse zur Prüfung",
     "Gemischte Rechnungs-/Lieferadresssignale zur Prüfung",
+    "Geschäftliche Nicht-Rechnungs-Belege",
+    "Bestellbestätigungen von Rechnungen unterscheiden",
+    "Geschäftliche Bestelldokumente fachlich zuordnen",
+    "Rechnungsadresse kann AI/Business-Kontext setzen",
+    "Nicht buchbare Geschäftsdokumente zur Prüfung",
+    "Zahlungsmethode auch bei Nicht-Rechnungen erkennen",
     "Software- und AI-Tools erkennen",
     "Nutzung von AI-, Coding- und Token-basierten Diensten als eigene Regelklasse",
     "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",
@@ -111,6 +117,78 @@ class AddressPolicy:
 
 def default_address_policy() -> AddressPolicy:
     return AddressPolicy()
+
+
+@dataclass(frozen=True)
+class BusinessDocumentPolicy:
+    """Generic policy for business non-invoice documents (order confirmations, etc.)."""
+
+    classify_order_confirmations: bool = True
+    order_confirmation_is_not_invoice: bool = True
+    preserve_business_assignment_for_non_invoice_documents: bool = True
+    preserve_payment_method_for_non_invoice_documents: bool = True
+    non_invoice_business_document_target: str = DEFAULT_MIXED_ADDRESS_TARGET
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "classify_order_confirmations": self.classify_order_confirmations,
+            "order_confirmation_is_not_invoice": self.order_confirmation_is_not_invoice,
+            "preserve_business_assignment_for_non_invoice_documents": (
+                self.preserve_business_assignment_for_non_invoice_documents
+            ),
+            "preserve_payment_method_for_non_invoice_documents": (
+                self.preserve_payment_method_for_non_invoice_documents
+            ),
+            "non_invoice_business_document_target": self.non_invoice_business_document_target,
+        }
+
+
+def default_business_document_policy() -> BusinessDocumentPolicy:
+    return BusinessDocumentPolicy()
+
+
+def business_document_policy_from_dict(raw: Mapping[str, Any] | None) -> BusinessDocumentPolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_business_document_policy()
+
+    def _bool(key: str, fallback: bool) -> bool:
+        value = data.get(key, fallback)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "ja"}
+        return fallback
+
+    def _target(key: str, fallback: str) -> str:
+        value = data.get(key, fallback)
+        text = str(value or "").strip().lower()
+        if text in {"unklar", "zur_pruefung", "zur-prüfung", "review"}:
+            return "unklar"
+        if text in {"documents", "document"}:
+            return "documents"
+        return fallback
+
+    return BusinessDocumentPolicy(
+        classify_order_confirmations=_bool(
+            "classify_order_confirmations", defaults.classify_order_confirmations
+        ),
+        order_confirmation_is_not_invoice=_bool(
+            "order_confirmation_is_not_invoice",
+            defaults.order_confirmation_is_not_invoice,
+        ),
+        preserve_business_assignment_for_non_invoice_documents=_bool(
+            "preserve_business_assignment_for_non_invoice_documents",
+            defaults.preserve_business_assignment_for_non_invoice_documents,
+        ),
+        preserve_payment_method_for_non_invoice_documents=_bool(
+            "preserve_payment_method_for_non_invoice_documents",
+            defaults.preserve_payment_method_for_non_invoice_documents,
+        ),
+        non_invoice_business_document_target=_target(
+            "non_invoice_business_document_target",
+            defaults.non_invoice_business_document_target,
+        ),
+    )
 
 
 def address_policy_from_dict(raw: Mapping[str, Any] | None) -> AddressPolicy:
@@ -227,6 +305,9 @@ class ClassificationPolicy:
     accounting_reports_target: str = DEFAULT_ACCOUNTING_REPORTS_TARGET
     mixed_business_private_address_target: str = DEFAULT_MIXED_ADDRESS_TARGET
     address_policy: AddressPolicy = field(default_factory=default_address_policy)
+    business_document_policy: BusinessDocumentPolicy = field(
+        default_factory=default_business_document_policy
+    )
     software_ai_tool_policy: SoftwareAiToolPolicy = field(
         default_factory=default_software_ai_tool_policy
     )
@@ -243,6 +324,7 @@ class ClassificationPolicy:
             "accounting_reports_target": self.accounting_reports_target,
             "mixed_business_private_address_target": self.mixed_business_private_address_target,
             "address_policy": self.address_policy.to_dict(),
+            "business_document_policy": self.business_document_policy.to_dict(),
             "software_ai_tool_policy": self.software_ai_tool_policy.to_dict(),
         }
 
@@ -304,6 +386,24 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             ),
         }
 
+    nested_business_doc = data.get("business_document_policy")
+    if not isinstance(nested_business_doc, Mapping):
+        nested_business_doc = {
+            "classify_order_confirmations": data.get("classify_order_confirmations"),
+            "order_confirmation_is_not_invoice": data.get(
+                "order_confirmation_is_not_invoice"
+            ),
+            "preserve_business_assignment_for_non_invoice_documents": data.get(
+                "preserve_business_assignment_for_non_invoice_documents"
+            ),
+            "preserve_payment_method_for_non_invoice_documents": data.get(
+                "preserve_payment_method_for_non_invoice_documents"
+            ),
+            "non_invoice_business_document_target": data.get(
+                "non_invoice_business_document_target"
+            ),
+        }
+
     return ClassificationPolicy(
         require_explicit_payer_payment_evidence=_bool(
             "require_explicit_payer_payment_evidence",
@@ -337,6 +437,7 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             defaults.mixed_business_private_address_target,
         ),
         address_policy=address_policy_from_dict(nested_address),
+        business_document_policy=business_document_policy_from_dict(nested_business_doc),
         software_ai_tool_policy=software_ai_tool_policy_from_dict(nested_tool),
     )
 
