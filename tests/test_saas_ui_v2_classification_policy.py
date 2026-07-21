@@ -68,6 +68,8 @@ def test_blank_saas_profile_has_safe_classification_policy_defaults() -> None:
     assert pep.generic_credit_card_without_identifier_target == "unklar"
     assert pep.card_payment_requires_known_reference is True
     assert pep.supplier_bank_details_are_not_payer_evidence is True
+    assert pep.explicit_document_payment_method_takes_precedence is True
+    assert pep.weak_vendor_amex_does_not_override_explicit_payment is True
     bap = policy.business_assignment_policy
     assert bap.business_billing_address_assigns_business_context is True
     assert bap.ambiguous_items_do_not_override_business_billing_address is True
@@ -186,6 +188,8 @@ def test_ui_viewmodel_texts_contain_required_phrases() -> None:
         "Bestellbestätigungen von Rechnungen unterscheiden",
         "Geschäftliche Bestelldokumente fachlich zuordnen",
         "Zahlungsmethode auch bei Nicht-Rechnungen erkennen",
+        "Explizite Zahlungsangabe im Belegtext hat Vorrang",
+        "Schwache Vendor-/Tool-AMEX-Signale überschreiben keine explizite Zahlungsart",
         "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen",
         "Format-Verfügbarkeitshinweise sind kein Dokumenttyp",
         "Dateiname ist keine Beweisquelle",

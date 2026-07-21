@@ -8,6 +8,7 @@ from invoice_tool.models import (
     AccountDecision,
     ExtractedData,
     PaymentDecision,
+    PaymentDetectionRule,
     PriorityRouteRule,
     ProcessingPreset,
     RoutingDecision,
@@ -254,8 +255,73 @@ def determine_business_context(
     return preset.routing.default_art, f"Kein Business-Kontext erkannt, Default={preset.routing.default_art}."
 
 
-def detect_payment_method(extracted: ExtractedData, preset: ProcessingPreset) -> PaymentDecision:
-    search_text = _normalize_search_text(extracted)
+_STRONG_AMEX_BODY_MARKERS = (
+    "american express",
+    "abbuchung von amex",
+    "american express business",
+    "american express monatsabrechnung",
+)
+
+# Labeled / clearly stated payment methods in visible document body text.
+# Vendor noise (e.g. "Adobe Reader") must not outrank these.
+_LABELED_DOCUMENT_PAYMENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"zahlungsmethode\s*:?\s*paypal"), "paypal"),
+    (re.compile(r"payment\s*method\s*:?\s*paypal"), "paypal"),
+    (re.compile(r"zahlung(?:\s+erfolgte)?\s+(?:ueber|uber|via|per)\s+paypal"), "paypal"),
+    (re.compile(r"bezahlt\s+(?:mit|via|per|ueber|uber)\s+paypal"), "paypal"),
+    (re.compile(r"zahlungsmethode\s*:?\s*(?:american\s+express|amex)"), "amex"),
+    (re.compile(r"payment\s*method\s*:?\s*(?:american\s+express|amex)"), "amex"),
+    (re.compile(r"payment\s+history\s+american\s+express"), "amex"),
+    (re.compile(r"abbuchung\s+von\s+amex"), "amex"),
+)
+
+
+def _document_body_text(extracted: ExtractedData) -> str:
+    """Visible document body only — excludes provider/filename/metadata noise fields."""
+
+    return normalize_for_matching(extracted.raw_text or "")
+
+
+def labeled_document_payment_methods(extracted: ExtractedData) -> list[str]:
+    """Return payment methods that are explicitly labeled in the document body."""
+
+    body = _document_body_text(extracted)
+    if not body:
+        return []
+    found: list[str] = []
+    for pattern, method in _LABELED_DOCUMENT_PAYMENT_PATTERNS:
+        if pattern.search(body) and method not in found:
+            found.append(method)
+    return found
+
+
+def has_strong_amex_body_evidence(extracted: ExtractedData) -> bool:
+    """True only when the visible document body contains strong AMEX payment evidence."""
+
+    body = _document_body_text(extracted)
+    if not body:
+        return False
+    return any(_contains_payment_hint(body, marker) for marker in _STRONG_AMEX_BODY_MARKERS)
+
+
+def _payment_decision_from_rule(
+    rule: PaymentDetectionRule, matched_signals: list[str], *, note: str = ""
+) -> PaymentDecision:
+    signal_text = ", ".join(dict.fromkeys(matched_signals)) if matched_signals else "keine"
+    suffix = f" {note}" if note else ""
+    return PaymentDecision(
+        payment_method=rule.payment_method,
+        explicit=rule.explicit,
+        begruendung=(
+            f"Payment-Regel '{rule.name}' getroffen. Signale: {signal_text}.{suffix}"
+        ),
+    )
+
+
+def _collect_payment_rule_matches(
+    search_text: str, preset: ProcessingPreset
+) -> list[tuple[PaymentDetectionRule, list[str]]]:
+    matches: list[tuple[PaymentDetectionRule, list[str]]] = []
     for rule in preset.routing.payment_detection_rules:
         matched_signals: list[str] = []
         if rule.text_all:
@@ -268,17 +334,102 @@ def detect_payment_method(extracted: ExtractedData, preset: ProcessingPreset) ->
             if not any_hits:
                 continue
             matched_signals.extend(any_hits)
-        signal_text = ", ".join(dict.fromkeys(matched_signals)) if matched_signals else "keine"
+        if not rule.text_all and not rule.text_any:
+            continue
+        matches.append((rule, matched_signals))
+    return matches
+
+
+def detect_payment_method(extracted: ExtractedData, preset: ProcessingPreset) -> PaymentDecision:
+    """Detect payment method with explicit document-body evidence precedence.
+
+    Profile vendor rules are prepended and would otherwise first-match weak
+    signals (e.g. footer \"Adobe Reader\" → adobe-creative → amex) over an
+    explicit \"Zahlungsmethode: PayPal\" line. Explicit labeled body evidence
+    wins; strong AMEX body evidence is preserved for Cursor/Anysphere cases.
+    """
+
+    search_text = _normalize_search_text(extracted)
+    matches = _collect_payment_rule_matches(search_text, preset)
+    if not matches:
         return PaymentDecision(
-            payment_method=rule.payment_method,
-            explicit=rule.explicit,
-            begruendung=f"Payment-Regel '{rule.name}' getroffen. Signale: {signal_text}.",
+            payment_method=preset.routing.default_payment_method,
+            explicit=False,
+            begruendung="Keine explizite Payment-Regel getroffen. Signale: keine.",
         )
-    return PaymentDecision(
-        payment_method=preset.routing.default_payment_method,
-        explicit=False,
-        begruendung="Keine explizite Payment-Regel getroffen. Signale: keine.",
-    )
+
+    labeled = labeled_document_payment_methods(extracted)
+    strong_amex = has_strong_amex_body_evidence(extracted)
+
+    # Genuine conflict in the visible body → do not silently force amex/paypal.
+    if "paypal" in labeled and strong_amex and "amex" in labeled:
+        return PaymentDecision(
+            payment_method=preset.routing.default_payment_method or "unknown",
+            explicit=False,
+            begruendung=(
+                "Konflikt: explizite PayPal- und AMEX-Angaben im Dokumenttext. "
+                "Signale: paypal, american express."
+            ),
+        )
+    if "paypal" in labeled and strong_amex:
+        return PaymentDecision(
+            payment_method=preset.routing.default_payment_method or "unknown",
+            explicit=False,
+            begruendung=(
+                "Konflikt: explizites PayPal und starke AMEX-Evidenz im Dokumenttext. "
+                "Signale: paypal, american express."
+            ),
+        )
+
+    # Explicit labeled document payment method beats vendor/provider noise.
+    for method in labeled:
+        for rule, signals in matches:
+            if rule.payment_method == method:
+                return _payment_decision_from_rule(
+                    rule,
+                    signals,
+                    note=(
+                        "Explizite Dokument-Zahlungsangabe hat Vorrang vor "
+                        "Vendor-/Rauschsignalen."
+                    ),
+                )
+        # Labeled body evidence remains authoritative even if no rule listed it.
+        return PaymentDecision(
+            payment_method=method,
+            explicit=True,
+            begruendung=(
+                f"Explizite Dokument-Zahlungsangabe '{method}' im Belegtext. "
+                "Signale: document-body-label."
+            ),
+        )
+
+    # Strong AMEX body evidence may select an amex rule even if a weaker
+    # earlier vendor rule matched something else (should be rare).
+    if strong_amex:
+        for rule, signals in matches:
+            if rule.payment_method == "amex":
+                return _payment_decision_from_rule(
+                    rule,
+                    signals,
+                    note="Starke AMEX-Dokumentevidenz priorisiert.",
+                )
+
+    # Weak vendor AMEX (no American Express body evidence) must not beat an
+    # explicit competing payment rule that also matched (e.g. paypal).
+    first_rule, first_signals = matches[0]
+    if first_rule.payment_method == "amex" and not strong_amex:
+        for rule, signals in matches[1:]:
+            if rule.payment_method in {"paypal", "bar"} and rule.explicit:
+                return _payment_decision_from_rule(
+                    rule,
+                    signals,
+                    note=(
+                        "Schwaches Vendor-AMEX ohne Dokumentevidenz weicht "
+                        f"expliziter Zahlungsregel '{rule.name}'."
+                    ),
+                )
+
+    return _payment_decision_from_rule(first_rule, first_signals)
 
 
 def apply_final_assignment(

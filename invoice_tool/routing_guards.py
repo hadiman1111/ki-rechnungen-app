@@ -813,3 +813,49 @@ def evaluate_business_non_invoice_document(
         has_business_billing_signal=business_billing,
         order_confirmation_marker=marker,
     )
+
+
+@dataclass(frozen=True)
+class PaymentEvidencePrecedenceDecision:
+    """Result of explicit document payment evidence vs weak vendor AMEX noise."""
+
+    payment_decision: PaymentDecision
+    labeled_methods: tuple[str, ...]
+    strong_amex_body_evidence: bool
+    weak_amex_overridden: bool
+    reason: str
+
+
+def evaluate_payment_evidence_precedence(
+    extracted: ExtractedData,
+    preset: ProcessingPreset,
+) -> PaymentEvidencePrecedenceDecision:
+    """Apply generic payment evidence precedence (document body over vendor noise).
+
+    Concrete failure mode: footer \"Adobe Reader\" matched vendor adobe-creative → amex
+    while \"Zahlungsmethode: PayPal\" was present. Explicit body labels win; strong
+    AMEX body evidence (e.g. Payment history American Express) remains valid.
+    """
+
+    from invoice_tool.routing import (
+        detect_payment_method,
+        has_strong_amex_body_evidence,
+        labeled_document_payment_methods,
+    )
+
+    labeled = tuple(labeled_document_payment_methods(extracted))
+    strong_amex = has_strong_amex_body_evidence(extracted)
+    decision = detect_payment_method(extracted, preset)
+    weak_overridden = bool(
+        labeled
+        and decision.payment_method in labeled
+        and not strong_amex
+        and "Vorrang" in (decision.begruendung or "")
+    )
+    return PaymentEvidencePrecedenceDecision(
+        payment_decision=decision,
+        labeled_methods=labeled,
+        strong_amex_body_evidence=strong_amex,
+        weak_amex_overridden=weak_overridden,
+        reason=decision.begruendung,
+    )

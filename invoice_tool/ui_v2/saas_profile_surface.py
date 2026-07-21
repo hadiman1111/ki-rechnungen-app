@@ -264,6 +264,8 @@ def saas_surface_review_hints(surface: SaasProfileSurface | None = None) -> tupl
         "Rechnungsadresse kann AI/Business-Kontext setzen.",
         "Nicht buchbare Geschäftsdokumente zur Prüfung.",
         "Zahlungsmethode auch bei Nicht-Rechnungen erkennen.",
+        "Explizite Zahlungsangabe im Belegtext hat Vorrang.",
+        "Schwache Vendor-/Tool-AMEX-Signale überschreiben keine explizite Zahlungsart.",
         "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen.",
         "Format-Verfügbarkeitshinweise sind kein Dokumenttyp.",
         "Dateiname ist keine Beweisquelle.",

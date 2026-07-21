@@ -85,6 +85,8 @@ CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "Rechnungsadresse kann AI/Business-Kontext setzen",
     "Nicht buchbare Geschäftsdokumente zur Prüfung",
     "Zahlungsmethode auch bei Nicht-Rechnungen erkennen",
+    "Explizite Zahlungsangabe im Belegtext hat Vorrang",
+    "Schwache Vendor-/Tool-AMEX-Signale überschreiben keine explizite Zahlungsart",
     "Rechnungs-Erkennung",
     "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen",
     "Format-Verfügbarkeitshinweise sind kein Dokumenttyp",
@@ -159,6 +161,8 @@ class PaymentEvidencePolicy:
     generic_credit_card_without_identifier_target: str = DEFAULT_UNKNOWN_PAYMENT_TARGET
     card_payment_requires_known_reference: bool = True
     supplier_bank_details_are_not_payer_evidence: bool = True
+    explicit_document_payment_method_takes_precedence: bool = True
+    weak_vendor_amex_does_not_override_explicit_payment: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +174,12 @@ class PaymentEvidencePolicy:
             ),
             "supplier_bank_details_are_not_payer_evidence": (
                 self.supplier_bank_details_are_not_payer_evidence
+            ),
+            "explicit_document_payment_method_takes_precedence": (
+                self.explicit_document_payment_method_takes_precedence
+            ),
+            "weak_vendor_amex_does_not_override_explicit_payment": (
+                self.weak_vendor_amex_does_not_override_explicit_payment
             ),
         }
 
@@ -263,6 +273,16 @@ def payment_evidence_policy_from_dict(raw: Mapping[str, Any] | None) -> PaymentE
             data,
             "supplier_bank_details_are_not_payer_evidence",
             defaults.supplier_bank_details_are_not_payer_evidence,
+        ),
+        explicit_document_payment_method_takes_precedence=_policy_bool(
+            data,
+            "explicit_document_payment_method_takes_precedence",
+            defaults.explicit_document_payment_method_takes_precedence,
+        ),
+        weak_vendor_amex_does_not_override_explicit_payment=_policy_bool(
+            data,
+            "weak_vendor_amex_does_not_override_explicit_payment",
+            defaults.weak_vendor_amex_does_not_override_explicit_payment,
         ),
     )
 
