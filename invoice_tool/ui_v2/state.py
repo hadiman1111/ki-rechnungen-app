@@ -33,6 +33,11 @@ from invoice_tool.ui_v2.saas_profile_store import (
     SaasProfileStoreResult,
     new_saas_profile_disk_store,
 )
+from invoice_tool.ui_v2.processing_contract import (
+    ProcessingServiceProtocol,
+    default_processing_service,
+)
+from invoice_tool.ui_v2.processing_state import ProcessingRunState, idle_processing_state
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
 
 
@@ -76,6 +81,10 @@ class UiV2State:
     workspace_input_folder_override: str | None = None
     workspace_expanded_results: set[str] = field(default_factory=set)
     workspace_rename_drafts: dict[str, str] = field(default_factory=dict)
+
+    # Bounded UI-v2 processing contract (default: not connected — no PDF IO).
+    processing_service: ProcessingServiceProtocol = field(default_factory=default_processing_service)
+    processing_run_state: ProcessingRunState = field(default_factory=idle_processing_state)
 
     page: Any = None
     refresh: Callable[[], None] | None = None

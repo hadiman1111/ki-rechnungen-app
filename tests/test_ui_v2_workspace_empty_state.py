@@ -11,14 +11,17 @@ import sys
 from pathlib import Path
 
 from invoice_tool.ui_v2.pages.workspace import (
+    ADAPTER_NOT_CONNECTED_HINT,
     EMPTY_NO_RESULTS_TITLE,
     EMPTY_NO_RUN_DETAIL,
     EMPTY_NO_RUN_STATUS,
     EMPTY_NO_RUN_TITLE,
+    START_CTA_LABEL,
     _display_mappings,
     _display_results,
     workspace_honesty_copy,
 )
+from invoice_tool.ui_v2.processing_state import idle_processing_state
 from invoice_tool.ui_v2.view_models import ResultSummaryVM
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +73,10 @@ def test_workspace_empty_helpers_return_no_fake_rows() -> None:
 
 
 def test_workspace_empty_state_says_no_run_occurred() -> None:
-    copy = workspace_honesty_copy(has_real_results=False)
+    copy = workspace_honesty_copy(
+        has_real_results=False,
+        processing_state=idle_processing_state(),
+    )
     assert copy.has_real_results is False
     assert copy.status_line is not None
     assert EMPTY_NO_RUN_STATUS in copy.status_line
@@ -81,6 +87,8 @@ def test_workspace_empty_state_says_no_run_occurred() -> None:
     assert "echten Lauf" in (copy.results_detail or "")
     assert "Lauf-Adapter" in (copy.results_detail or "")
     assert "Prüfbereich" in (copy.results_detail or "")
+    assert copy.start_cta_label == START_CTA_LABEL
+    assert copy.adapter_hint == ADAPTER_NOT_CONNECTED_HINT
     blob = " ".join(filter(None, (copy.status_line, copy.results_title, copy.results_detail)))
     for marker in ("AMEX", "Privat", "SOMAA", "Hadi", "Bismarck", "voba", "/Users/"):
         assert marker not in blob, marker

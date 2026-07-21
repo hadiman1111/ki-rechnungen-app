@@ -773,6 +773,9 @@ def make_workspace_run_panel(
     ok_count: int | None,
     fail_count: int | None,
     mappings: tuple[tuple[str, str], ...],
+    on_start: Callable[[ft.ControlEvent], None] | None = None,
+    start_label: str = "Verarbeitung starten",
+    start_disabled: bool = False,
 ) -> ft.Container:
     """Figma workspace run panel — folder toolbar + Eingangs/Ergebnis mapping list."""
     header_left: list[ft.Control]
@@ -800,6 +803,14 @@ def make_workspace_run_panel(
         header_actions.append(secondary_button("Ändern", on_click=on_change_folder))
     elif on_pick_folder is not None:
         header_actions.append(secondary_button("Ordner auswählen", on_click=on_pick_folder))
+    if on_start is not None:
+        header_actions.append(
+            make_accent_cta_button(
+                start_label,
+                on_click=on_start,
+                disabled=start_disabled,
+            )
+        )
     if folder_path and on_restart is not None:
         header_actions.append(make_accent_cta_button("Neu starten", on_click=on_restart))
 

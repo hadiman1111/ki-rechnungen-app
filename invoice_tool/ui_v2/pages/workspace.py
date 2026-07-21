@@ -1,7 +1,8 @@
 """Arbeitsbereich — Figma Make port (single run panel + Ergebnisliste).
 
 Honest empty state: no preview/mock invoice rows, no private/local demo data.
-Results appear only after a real UI-v2 run payload exists.
+Results appear only after a real workspace.results payload or injected contract results.
+Processing starts only via the bounded UI-v2 contract (default: not connected).
 """
 
 from __future__ import annotations
@@ -28,6 +29,18 @@ from invoice_tool.ui_v2.components import (
     summary_alert,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
+from invoice_tool.ui_v2.processing_contract import (
+    SOURCE_EXPLICIT_USER_SELECTION,
+    SOURCE_UNSET,
+    ProcessingRunRequest,
+)
+from invoice_tool.ui_v2.processing_state import (
+    MSG_BLOCKED_ADAPTER,
+    MSG_IDLE,
+    MSG_NOT_CONFIGURED,
+    ProcessingRunState,
+    ProcessingStatus,
+)
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.view_models import ResultSummaryVM, UiV2ReadOnlySnapshot
 
@@ -44,6 +57,8 @@ EMPTY_NO_RUN_DETAIL = (
 EMPTY_NO_RESULTS_TITLE = "Keine Ergebnisse vorhanden"
 EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
 EMPTY_NO_RUN_STATUS = "Kein Lauf gestartet"
+START_CTA_LABEL = "Verarbeitung starten"
+ADAPTER_NOT_CONNECTED_HINT = MSG_BLOCKED_ADAPTER
 
 
 @dataclass(frozen=True)
@@ -109,6 +124,35 @@ def _has_real_run_results(workspace_results: tuple[ResultSummaryVM, ...]) -> boo
     return bool(workspace_results)
 
 
+def build_processing_run_request(
+    state: UiV2State,
+    *,
+    profile_id: str | None = None,
+    configuration_id: str | None = None,
+) -> ProcessingRunRequest:
+    """Build a contract request from explicit UI-v2 selection only (no private defaults)."""
+
+    folder = (state.workspace_input_folder_override or "").strip() or None
+    source = SOURCE_EXPLICIT_USER_SELECTION if folder else SOURCE_UNSET
+    return ProcessingRunRequest(
+        input_folder=folder,
+        output_folder=None,
+        profile_id=(profile_id or "").strip() or None,
+        configuration_id=(configuration_id or "").strip() or None,
+        dry_run=True,
+        source=source,
+    )
+
+
+def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -> ProcessingRunState:
+    """Invoke the bounded processing service — never imports processing-core."""
+
+    request = build_processing_run_request(state, profile_id=profile_id)
+    result = state.processing_service.start_run(request)
+    state.processing_run_state = result
+    return result
+
+
 @dataclass(frozen=True)
 class WorkspaceHonestyCopy:
     """Pure empty-state copy for the workspace (no Flet / no processing)."""
@@ -117,22 +161,62 @@ class WorkspaceHonestyCopy:
     status_line: str | None
     results_title: str | None
     results_detail: str | None
+    processing_status: ProcessingStatus = "idle"
+    start_cta_label: str = START_CTA_LABEL
+    start_cta_disabled: bool = True
+    adapter_hint: str | None = ADAPTER_NOT_CONNECTED_HINT
 
 
-def workspace_honesty_copy(*, has_real_results: bool) -> WorkspaceHonestyCopy:
+def workspace_honesty_copy(
+    *,
+    has_real_results: bool,
+    processing_state: ProcessingRunState | None = None,
+) -> WorkspaceHonestyCopy:
     """Return honest empty-state copy when no real UI-v2 run results exist."""
+    proc = processing_state or ProcessingRunState()
+    status = proc.status
+
     if has_real_results:
         return WorkspaceHonestyCopy(
             has_real_results=True,
             status_line=None,
             results_title=None,
             results_detail=None,
+            processing_status=status,
+            start_cta_label=START_CTA_LABEL,
+            start_cta_disabled=False,
+            adapter_hint=None,
         )
+
+    if status == "blocked":
+        status_line = f"{ADAPTER_NOT_CONNECTED_HINT} {EMPTY_NO_RUN_STATUS}."
+        detail = (
+            f"{ADAPTER_NOT_CONNECTED_HINT} "
+            "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen angebundenen Adapter. "
+            "Unklare Dokumente werden später im Prüfbereich angezeigt."
+        )
+    elif status == "not_configured":
+        status_line = f"{MSG_NOT_CONFIGURED} {EMPTY_NO_RUN_STATUS}."
+        detail = (
+            f"{MSG_NOT_CONFIGURED} "
+            f"{EMPTY_NO_RUN_DETAIL}"
+        )
+    else:
+        status_line = f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}."
+        if proc.message and proc.message not in {MSG_IDLE, ""}:
+            status_line = f"{proc.message} {EMPTY_NO_RESULTS_TITLE}."
+        detail = EMPTY_NO_RUN_DETAIL
+
     return WorkspaceHonestyCopy(
         has_real_results=False,
-        status_line=f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}.",
+        status_line=status_line,
         results_title=EMPTY_NO_RUN_TITLE,
-        results_detail=EMPTY_NO_RUN_DETAIL,
+        results_detail=detail,
+        processing_status=status,
+        start_cta_label=START_CTA_LABEL,
+        # Clickable so the contract handler can return an honest blocked/not_configured state.
+        start_cta_disabled=False,
+        adapter_hint=ADAPTER_NOT_CONNECTED_HINT,
     )
 
 
@@ -147,6 +231,19 @@ def _schedule_folder_picker(state: UiV2State, refresh: Callable[[], None]) -> Ca
         page = state.page
         if page is not None and hasattr(page, "run_task"):
             page.run_task(_pick_folder, event)
+
+    return _handler
+
+
+def _schedule_start_processing(
+    state: UiV2State,
+    refresh: Callable[[], None],
+    *,
+    profile_id: str | None,
+) -> Callable[[ft.ControlEvent], None]:
+    def _handler(_event: ft.ControlEvent) -> None:
+        apply_start_processing(state, profile_id=profile_id)
+        refresh()
 
     return _handler
 
@@ -178,7 +275,10 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     folder_override = state.workspace_input_folder_override
     display_results = _display_results(workspace.results)
     has_real_results = _has_real_run_results(workspace.results)
-    honesty = workspace_honesty_copy(has_real_results=has_real_results)
+    honesty = workspace_honesty_copy(
+        has_real_results=has_real_results,
+        processing_state=state.processing_run_state,
+    )
     input_configured = bool(folder_override) or (
         workspace.input_folder_state == "configured" and bool(workspace.input_folder_summary.strip())
     )
@@ -190,6 +290,11 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         input_path = None
 
     pick_folder = _schedule_folder_picker(state, _refresh)
+    start_processing = _schedule_start_processing(
+        state,
+        _refresh,
+        profile_id=snapshot.profile.profile_id,
+    )
     mappings = _display_mappings(display_results) if has_real_results else tuple()
     fail_count = sum(1 for result in display_results if result.failed) if has_real_results else 0
     ok_count = (len(display_results) - fail_count) if has_real_results else None
@@ -199,6 +304,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         folder_path=input_path,
         on_change_folder=pick_folder if input_path else None,
         on_pick_folder=pick_folder if not input_path else None,
+        on_start=start_processing,
+        start_label=honesty.start_cta_label,
+        start_disabled=honesty.start_cta_disabled,
         on_restart=(lambda _e: _refresh()) if (input_path and has_real_results) else None,
         on_details=(lambda _e: _set_tab("ergebnisse")) if has_real_results else None,
         ok_count=ok_count if input_path else None,
@@ -306,6 +414,14 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ]
     if honesty.status_line:
         items.append(inline_warning(honesty.status_line))
+    if (
+        not has_real_results
+        and state.processing_run_state.status in {"blocked", "not_configured"}
+        and state.processing_run_state.message
+    ):
+        # Surface contract feedback after CTA without inventing result rows.
+        if state.processing_run_state.message not in (honesty.status_line or ""):
+            items.append(inline_warning(state.processing_run_state.message))
     items.extend(
         [
             run_panel,
