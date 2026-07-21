@@ -8,7 +8,7 @@ import flet as ft
 
 from invoice_tool.scan_models import ScanModel, matching_features
 from invoice_tool.ui_v2.components import inline_error, make_value_tag_pill, secondary_button
-from invoice_tool.ui_v2.edit_components import compact_input_shell, helper_text, outlined_field_kwargs, section_label
+from invoice_tool.ui_v2.edit_components import full_width_field, helper_text, outlined_dropdown_kwargs, outlined_field_kwargs, section_label
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
     COLOR_MUTED_LIGHT,
@@ -78,9 +78,9 @@ def build_rule_builder_field(
         value=feature_key or None,
         options=[ft.dropdown.Option(f.key, f.label) for f in matching_features(scan_model)],
         hint_text="— Feld wählen —",
-        text_size=12,
         on_select=lambda e: on_field_change(str(e.control.value or "")),
-        **outlined_field_kwargs(),
+        expand=True,
+        **outlined_dropdown_kwargs(),
     )
 
     body = ft.Column(
@@ -89,7 +89,6 @@ def build_rule_builder_field(
             ft.Container(
                 border=ft.Border.all(1, COLOR_BORDER),
                 border_radius=8,
-                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 content=ft.Column(
                     [
                         ft.Container(
@@ -99,9 +98,9 @@ def build_rule_builder_field(
                             content=ft.Column(
                                 [
                                     _field_caption("Feld"),
-                                    compact_input_shell(feature_dd),
+                                    full_width_field(feature_dd),
                                 ],
-                                spacing=5,
+                                spacing=6,
                                 tight=True,
                             ),
                         ),
@@ -113,8 +112,12 @@ def build_rule_builder_field(
                                     ft.Row(tag_row, spacing=5, wrap=True) if tag_row else ft.Container(),
                                     ft.Row(
                                         [
-                                            compact_input_shell(value_input),
-                                            secondary_button("+ Hinzufügen", on_click=_add_value),
+                                            full_width_field(value_input),
+                                            secondary_button(
+                                                "+ Hinzufügen",
+                                                on_click=_add_value,
+                                                height=INPUT_CONTROL_HEIGHT,
+                                            ),
                                         ],
                                         spacing=5,
                                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -175,7 +178,7 @@ def build_folder_picker_field(
         [
             section_label("Zielordner"),
             ft.Row(
-                [compact_input_shell(path_field), pick_btn],
+                [full_width_field(path_field), pick_btn],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),

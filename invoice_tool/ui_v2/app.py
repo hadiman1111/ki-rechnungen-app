@@ -88,6 +88,13 @@ def build_ui_v2(page: ft.Page) -> None:
 
     state.refresh = lambda: refresh_view()
 
+    def on_page_resize(_event: ft.ControlEvent | None = None) -> None:
+        # Re-render so panels that size themselves off page.height
+        # (see resolve_list_detail_height) pick up the new window size.
+        refresh_view()
+
+    page.on_resize = on_page_resize
+
     def do_navigate(nav_id: str) -> None:
         shell = handles[0]
         if shell is None:

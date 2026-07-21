@@ -12,6 +12,8 @@ from invoice_tool.configuration_model import (
     UnmatchedConfiguration,
     pattern_to_template,
     preview_filename,
+    repair_filename_pattern,
+    validate_filename_pattern_tokens,
     validate_profile_bundle,
 )
 from invoice_tool.profile_store import list_canonical_profile_ids, load_profile_bundle
@@ -69,6 +71,8 @@ def validate_filename_pattern(pattern: FilenamePattern, scan_model: ScanModel) -
     errors: list[str] = []
     if not pattern.components:
         return ["Dateinamenmuster darf nicht leer sein."]
+    repaired = repair_filename_pattern(pattern, scan_model=scan_model)
+    errors.extend(validate_filename_pattern_tokens(repaired, scan_model))
     feature_keys = set(scan_model.feature_keys())
     has_content = False
     for component in pattern.components:

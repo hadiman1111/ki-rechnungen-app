@@ -97,7 +97,10 @@ LIST_PANEL_MIN_WIDTH = 296
 LIST_DETAIL_GAP = 12
 LIST_DETAIL_MIN_HEIGHT = 372
 LIST_DETAIL_EDIT_HEIGHT = 520
-INPUT_CONTROL_HEIGHT = 34
+LIST_DETAIL_MAX_HEIGHT = 960
+# 40px gives dense TextField/Dropdown controls enough room to render without
+# overflowing their shell (34px was too tight and bled into the label above).
+INPUT_CONTROL_HEIGHT = 40
 WORKFLOW_PANEL_MIN_HEIGHT = 148
 COMPACT_CARD_MIN_WIDTH = 200
 
