@@ -5,9 +5,10 @@ Alle Farben als Hex-Strings, Abstände als int (px), Radien als int (px).
 """
 
 # ── Farben: Neutrale Töne ────────────────────────────────────────────────────
+BG        = "#ecece8"   # Warmer Desktop-Hintergrund hinter dem App-Shell
 SURFACE   = "#ffffff"   # Karten / Panels
 SURFACE_2 = "#faf9f6"   # sanfter Inset / Sidebars
-CANVAS    = "#f6f5f2"   # App-Fläche
+CANVAS    = "#f6f5f2"   # App-Fläche / Shell-Hintergrund
 LINE      = "#e6e4df"   # Rahmen / Trennlinien
 LINE_2    = "#efede8"   # feinere Trennlinie
 
@@ -46,6 +47,13 @@ SP_10 = 10
 SP_12 = 12
 SP_16 = 16
 SP_24 = 24
+SP_32 = 32
+
+# ── Layout (sichere feste Maße) ───────────────────────────────────────────────
+FOLDER_CARD_HEIGHT = 300
+FOLDER_CARD_RADIUS = 14
+APP_SHELL_WIDTH    = 1280   # Standard-/Mindest-Fensterbreite
+CENTER_COL_WIDTH   = 196    # Mittelachse: genug Platz für „Verarbeitung starten“
 
 # ── Border-Radien (in px) ─────────────────────────────────────────────────────
 RADIUS_CHIP  = 5
