@@ -12,6 +12,7 @@ from invoice_tool.ui_v2.pages.workspace import (
     START_CTA_LABEL,
     apply_start_processing,
     build_processing_run_request,
+    resolve_workspace_policy_bridge,
     workspace_honesty_copy,
 )
 from invoice_tool.ui_v2.processing_contract import (
@@ -99,15 +100,32 @@ def test_request_builder_uses_explicit_selection_only() -> None:
     empty = build_processing_run_request(state)
     assert empty.input_folder is None
     assert empty.source != SOURCE_EXPLICIT_USER_SELECTION
+    assert empty.policy_bridge_result is not None
+    assert empty.policy_bridge_result.status == "ready"
 
     state.workspace_input_folder_override = "user-selected-folder"
     filled = build_processing_run_request(state, profile_id="local")
     assert filled.input_folder == "user-selected-folder"
     assert filled.source == SOURCE_EXPLICIT_USER_SELECTION
     assert filled.dry_run is True
+    assert filled.policy_intent is not None
+    assert filled.policy_intent.filename_policy["filename_is_source_of_truth"] is False
     for marker in PRIVATE_MARKERS:
         assert marker not in (filled.input_folder or "")
         assert marker not in (filled.output_folder or "")
+
+
+def test_workspace_policy_bridge_ready_hint_is_optional() -> None:
+    state = UiV2State()
+    bridge = resolve_workspace_policy_bridge(state)
+    assert bridge.status == "ready"
+    copy = workspace_honesty_copy(
+        has_real_results=False,
+        processing_state=idle_processing_state(),
+        policy_bridge=bridge,
+    )
+    assert copy.policy_intent_status == "ready"
+    assert copy.policy_intent_hint is None
 
 
 def test_default_state_idle_has_no_fake_results() -> None:

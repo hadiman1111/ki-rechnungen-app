@@ -7,6 +7,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from invoice_tool.saas_product_model import default_classification_policy
+from invoice_tool.ui_v2.policy_runtime_bridge import build_runtime_policy_intent
 from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
     FutureProcessingAdapter,
@@ -24,6 +26,16 @@ from invoice_tool.ui_v2.processing_state import (
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "invoice_tool" / "ui_v2" / "processing_contract.py"
 STATE_MOD = ROOT / "invoice_tool" / "ui_v2" / "processing_state.py"
+BRIDGE = ROOT / "invoice_tool" / "ui_v2" / "policy_runtime_bridge.py"
+
+
+def _ready_policy_request(**kwargs) -> ProcessingRunRequest:
+    bridge = build_runtime_policy_intent(default_classification_policy())
+    return ProcessingRunRequest(
+        policy_intent=bridge.intent,
+        policy_bridge_result=bridge,
+        **kwargs,
+    )
 
 PRIVATE_MARKERS = (
     "AMEX",
@@ -66,7 +78,7 @@ def _imported_modules(path: Path) -> list[str]:
 
 def test_null_service_never_emits_fake_results() -> None:
     service = NullProcessingService()
-    request = ProcessingRunRequest(
+    request = _ready_policy_request(
         input_folder="/tmp/example-inbox",
         source=SOURCE_EXPLICIT_USER_SELECTION,
         dry_run=True,
@@ -112,8 +124,18 @@ def test_service_returns_honest_not_connected_state() -> None:
     assert missing.status == "not_configured"
     assert missing.results == tuple()
 
-    with_folder = service.validate_request(
+    with_folder_no_policy = service.validate_request(
         ProcessingRunRequest(
+            input_folder="selected-inbox",
+            source=SOURCE_EXPLICIT_USER_SELECTION,
+        )
+    )
+    assert with_folder_no_policy.status == "not_configured"
+    assert "Verarbeitungsregeln" in with_folder_no_policy.message
+    assert with_folder_no_policy.results == tuple()
+
+    with_folder = service.validate_request(
+        _ready_policy_request(
             input_folder="selected-inbox",
             source=SOURCE_EXPLICIT_USER_SELECTION,
         )
@@ -131,7 +153,7 @@ def test_null_service_does_not_process_files(tmp_path: Path) -> None:
     before = pdf.read_bytes()
     service = NullProcessingService()
     state = service.start_run(
-        ProcessingRunRequest(
+        _ready_policy_request(
             input_folder=str(inbox),
             source=SOURCE_EXPLICIT_USER_SELECTION,
         )
@@ -145,13 +167,26 @@ def test_null_service_does_not_process_files(tmp_path: Path) -> None:
 def test_future_adapter_stub_is_also_safe() -> None:
     adapter = FutureProcessingAdapter()
     state = adapter.start_run(
-        ProcessingRunRequest(
+        _ready_policy_request(
             input_folder="selected-inbox",
             source=SOURCE_EXPLICIT_USER_SELECTION,
         )
     )
     assert state.status == "blocked"
     assert state.results == tuple()
+
+
+def test_request_can_carry_optional_policy_intent() -> None:
+    bridge = build_runtime_policy_intent(default_classification_policy())
+    request = ProcessingRunRequest(
+        input_folder="selected-inbox",
+        source=SOURCE_EXPLICIT_USER_SELECTION,
+        policy_intent=bridge.intent,
+        policy_bridge_result=bridge,
+    )
+    assert request.policy_intent is not None
+    assert request.policy_bridge_result is not None
+    assert request.policy_bridge_result.status == "ready"
 
 
 def test_idle_state_is_empty() -> None:
@@ -163,7 +198,7 @@ def test_idle_state_is_empty() -> None:
 
 
 def test_contract_modules_do_not_import_track_a_or_processing_core() -> None:
-    for path in (CONTRACT, STATE_MOD):
+    for path in (CONTRACT, STATE_MOD, BRIDGE):
         for name in _imported_modules(path):
             assert not any(
                 name == prefix or name.startswith(prefix + ".") for prefix in FORBIDDEN_IMPORT_PREFIXES
@@ -177,6 +212,7 @@ def test_contract_import_does_not_load_processing_core() -> None:
     before = {name for name in sys.modules if name.startswith("invoice_tool.")}
     importlib.import_module("invoice_tool.ui_v2.processing_contract")
     importlib.import_module("invoice_tool.ui_v2.processing_state")
+    importlib.import_module("invoice_tool.ui_v2.policy_runtime_bridge")
     after = {name for name in sys.modules if name.startswith("invoice_tool.")}
     newly = after - before
     for forbidden in (

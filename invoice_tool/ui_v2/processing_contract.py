@@ -12,10 +12,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from invoice_tool.ui_v2.policy_runtime_bridge import (
+    MSG_POLICY_INCOMPLETE,
+    MSG_UNKNOWN_EVIDENCE_REVIEW,
+    RuntimePolicyBridgeResult,
+    RuntimePolicyIntent,
+)
 from invoice_tool.ui_v2.processing_state import (
     MSG_BLOCKED_ADAPTER,
     MSG_IDLE,
     MSG_NOT_CONFIGURED,
+    MSG_POLICY_BLOCKED,
+    MSG_POLICY_NOT_READY,
     ProcessingRunState,
     blocked_processing_state,
     idle_processing_state,
@@ -39,6 +47,8 @@ class ProcessingRunRequest:
     configuration_id: str | None = None
     dry_run: bool = True
     source: str = SOURCE_UNSET
+    policy_intent: RuntimePolicyIntent | None = None
+    policy_bridge_result: RuntimePolicyBridgeResult | None = None
 
     def normalized_input_folder(self) -> str | None:
         value = (self.input_folder or "").strip()
@@ -51,6 +61,13 @@ class ProcessingRunRequest:
     def has_explicit_user_source(self) -> bool:
         return self.source in ALLOWED_REQUEST_SOURCES
 
+    def effective_policy_bridge_result(self) -> RuntimePolicyBridgeResult | None:
+        if self.policy_bridge_result is not None:
+            return self.policy_bridge_result
+        if self.policy_intent is not None:
+            return RuntimePolicyBridgeResult(status="ready", intent=self.policy_intent)
+        return None
+
 
 def empty_processing_request() -> ProcessingRunRequest:
     """Safe blank request — no private/local path defaults."""
@@ -62,6 +79,8 @@ def empty_processing_request() -> ProcessingRunRequest:
         configuration_id=None,
         dry_run=True,
         source=SOURCE_UNSET,
+        policy_intent=None,
+        policy_bridge_result=None,
     )
 
 
@@ -88,12 +107,24 @@ class NotYetConnectedProcessingService:
     def validate_request(self, request: ProcessingRunRequest) -> ProcessingRunState:
         if not request.has_explicit_user_source() or request.normalized_input_folder() is None:
             return not_configured_processing_state(MSG_NOT_CONFIGURED)
-        # Even with folders selected, productive adapter is not connected.
+
+        policy = request.effective_policy_bridge_result()
+        if policy is None or policy.status == "incomplete":
+            return not_configured_processing_state(
+                f"{MSG_POLICY_NOT_READY} {MSG_POLICY_INCOMPLETE} {MSG_UNKNOWN_EVIDENCE_REVIEW}"
+            )
+        if policy.status == "blocked":
+            detail = "; ".join(policy.warnings) if policy.warnings else MSG_POLICY_BLOCKED
+            return blocked_processing_state(f"{MSG_POLICY_BLOCKED} {detail}")
+
+        # Policy intent may be ready, but productive adapter is still not connected.
         return blocked_processing_state(MSG_BLOCKED_ADAPTER)
 
     def start_run(self, request: ProcessingRunRequest) -> ProcessingRunState:
         validated = self.validate_request(request)
         if validated.status == "not_configured":
+            return validated
+        if validated.status == "blocked" and MSG_POLICY_BLOCKED in validated.message:
             return validated
         # Never process files — honest blocked state only.
         return blocked_processing_state(
@@ -127,8 +158,10 @@ NullProcessingService = NotYetConnectedProcessingService
 class FutureProcessingAdapter:
     """Reserved slot for a future local/runtime bridge.
 
+    A later bounded LocalProcessingAdapter may consume RuntimePolicyIntent from
+    ProcessingRunRequest (policy_intent / policy_bridge_result) under PO gate.
     Must not import processing.py / run.py here. Wiring a real bounded adapter
-    is a separate next task under PO gate (policy-to-runtime + processing adapter).
+    is a separate next task.
     """
 
     def __init__(self) -> None:

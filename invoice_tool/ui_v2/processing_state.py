@@ -25,6 +25,8 @@ MSG_NOT_CONFIGURED = (
     "Profil, Konfiguration und Ordner müssen später explizit gewählt werden."
 )
 MSG_BLOCKED_ADAPTER = "Lauf-Adapter noch nicht angebunden."
+MSG_POLICY_NOT_READY = "Verarbeitungsregeln sind noch nicht vollständig konfiguriert."
+MSG_POLICY_BLOCKED = "Verarbeitungsregeln blockieren den Lauf-Intent."
 MSG_READY = "Anfrage ist vorbereitet; produktive Verarbeitung ist noch nicht angebunden."
 MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
 MSG_COMPLETED = "Lauf abgeschlossen."

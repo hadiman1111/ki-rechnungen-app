@@ -29,6 +29,13 @@ from invoice_tool.ui_v2.components import (
     summary_alert,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
+from invoice_tool.saas_product_model import default_classification_policy
+from invoice_tool.ui_v2.policy_runtime_bridge import (
+    MSG_POLICY_INCOMPLETE,
+    MSG_UNKNOWN_EVIDENCE_REVIEW,
+    RuntimePolicyBridgeResult,
+    build_runtime_policy_intent,
+)
 from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
     SOURCE_UNSET,
@@ -38,6 +45,7 @@ from invoice_tool.ui_v2.processing_state import (
     MSG_BLOCKED_ADAPTER,
     MSG_IDLE,
     MSG_NOT_CONFIGURED,
+    MSG_POLICY_NOT_READY,
     ProcessingRunState,
     ProcessingStatus,
 )
@@ -124,6 +132,16 @@ def _has_real_run_results(workspace_results: tuple[ResultSummaryVM, ...]) -> boo
     return bool(workspace_results)
 
 
+def resolve_workspace_policy_bridge(state: UiV2State) -> RuntimePolicyBridgeResult:
+    """Map active SaaS draft policy (or safe blank defaults) into runtime intent."""
+
+    draft = state.saas_draft_store.profile_draft
+    if draft is not None and getattr(draft, "classification_policy", None) is not None:
+        return build_runtime_policy_intent(draft)
+    # Honest safe defaults — no private tenant policy, still structured intent.
+    return build_runtime_policy_intent(default_classification_policy())
+
+
 def build_processing_run_request(
     state: UiV2State,
     *,
@@ -134,6 +152,7 @@ def build_processing_run_request(
 
     folder = (state.workspace_input_folder_override or "").strip() or None
     source = SOURCE_EXPLICIT_USER_SELECTION if folder else SOURCE_UNSET
+    policy_bridge = resolve_workspace_policy_bridge(state)
     return ProcessingRunRequest(
         input_folder=folder,
         output_folder=None,
@@ -141,6 +160,8 @@ def build_processing_run_request(
         configuration_id=(configuration_id or "").strip() or None,
         dry_run=True,
         source=source,
+        policy_intent=policy_bridge.intent,
+        policy_bridge_result=policy_bridge,
     )
 
 
@@ -165,16 +186,25 @@ class WorkspaceHonestyCopy:
     start_cta_label: str = START_CTA_LABEL
     start_cta_disabled: bool = True
     adapter_hint: str | None = ADAPTER_NOT_CONNECTED_HINT
+    policy_intent_status: str | None = None
+    policy_intent_hint: str | None = None
 
 
 def workspace_honesty_copy(
     *,
     has_real_results: bool,
     processing_state: ProcessingRunState | None = None,
+    policy_bridge: RuntimePolicyBridgeResult | None = None,
 ) -> WorkspaceHonestyCopy:
     """Return honest empty-state copy when no real UI-v2 run results exist."""
     proc = processing_state or ProcessingRunState()
     status = proc.status
+    policy_status = policy_bridge.status if policy_bridge is not None else None
+    policy_hint = None
+    if policy_bridge is not None and policy_bridge.status in {"incomplete", "blocked"}:
+        policy_hint = f"{MSG_POLICY_NOT_READY} {MSG_UNKNOWN_EVIDENCE_REVIEW}"
+        if policy_bridge.status == "incomplete":
+            policy_hint = f"{MSG_POLICY_INCOMPLETE} {MSG_UNKNOWN_EVIDENCE_REVIEW}"
 
     if has_real_results:
         return WorkspaceHonestyCopy(
@@ -186,26 +216,43 @@ def workspace_honesty_copy(
             start_cta_label=START_CTA_LABEL,
             start_cta_disabled=False,
             adapter_hint=None,
+            policy_intent_status=policy_status,
+            policy_intent_hint=policy_hint,
         )
 
     if status == "blocked":
         status_line = f"{ADAPTER_NOT_CONNECTED_HINT} {EMPTY_NO_RUN_STATUS}."
+        if policy_hint and MSG_POLICY_NOT_READY in (proc.message or ""):
+            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
+        elif policy_hint and "blockieren" in (proc.message or "").lower():
+            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
         detail = (
             f"{ADAPTER_NOT_CONNECTED_HINT} "
             "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen angebundenen Adapter. "
             "Unklare Dokumente werden später im Prüfbereich angezeigt."
         )
+        if policy_hint:
+            detail = f"{policy_hint} {detail}"
     elif status == "not_configured":
         status_line = f"{MSG_NOT_CONFIGURED} {EMPTY_NO_RUN_STATUS}."
+        if policy_hint and (
+            MSG_POLICY_INCOMPLETE in (proc.message or "")
+            or MSG_POLICY_NOT_READY in (proc.message or "")
+        ):
+            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
         detail = (
             f"{MSG_NOT_CONFIGURED} "
             f"{EMPTY_NO_RUN_DETAIL}"
         )
+        if policy_hint:
+            detail = f"{policy_hint} {detail}"
     else:
         status_line = f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}."
         if proc.message and proc.message not in {MSG_IDLE, ""}:
             status_line = f"{proc.message} {EMPTY_NO_RESULTS_TITLE}."
         detail = EMPTY_NO_RUN_DETAIL
+        if policy_hint:
+            detail = f"{policy_hint} {detail}"
 
     return WorkspaceHonestyCopy(
         has_real_results=False,
@@ -217,6 +264,8 @@ def workspace_honesty_copy(
         # Clickable so the contract handler can return an honest blocked/not_configured state.
         start_cta_disabled=False,
         adapter_hint=ADAPTER_NOT_CONNECTED_HINT,
+        policy_intent_status=policy_status,
+        policy_intent_hint=policy_hint,
     )
 
 
@@ -275,9 +324,11 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     folder_override = state.workspace_input_folder_override
     display_results = _display_results(workspace.results)
     has_real_results = _has_real_run_results(workspace.results)
+    policy_bridge = resolve_workspace_policy_bridge(state)
     honesty = workspace_honesty_copy(
         has_real_results=has_real_results,
         processing_state=state.processing_run_state,
+        policy_bridge=policy_bridge,
     )
     input_configured = bool(folder_override) or (
         workspace.input_folder_state == "configured" and bool(workspace.input_folder_summary.strip())
@@ -414,6 +465,13 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ]
     if honesty.status_line:
         items.append(inline_warning(honesty.status_line))
+    if (
+        not has_real_results
+        and honesty.policy_intent_hint
+        and honesty.policy_intent_hint not in (honesty.status_line or "")
+        and honesty.policy_intent_status in {"incomplete", "blocked"}
+    ):
+        items.append(inline_warning(honesty.policy_intent_hint))
     if (
         not has_real_results
         and state.processing_run_state.status in {"blocked", "not_configured"}
