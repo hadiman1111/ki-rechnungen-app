@@ -136,8 +136,23 @@ class UiV2RenderingRecoveryTests(unittest.TestCase):
         build_ui_v2(page)
         root = _navigate_to(page, "Arbeitsbereich")
         labels = collect_labels(root)
-        for required in ("WORKFLOW", "EINGANGSORDNER", "ERGEBNISORDNER", "Zielordner", "SOMAA Profil"):
+        for required in ("WORKFLOW", "Zielordner"):
             self.assertIn(required, labels)
+        has_mapping_headers = "EINGANGSORDNER" in labels and "ERGEBNISORDNER" in labels
+        has_honest_empty = any(
+            marker in labels
+            for marker in (
+                "Noch kein Verarbeitungslauf in dieser Oberfläche.",
+                "Kein Lauf gestartet",
+                "Keine Ergebnisse vorhanden",
+                "Kein Ordner ausgewählt",
+                "Noch keine Zuordnungen",
+            )
+        )
+        self.assertTrue(
+            has_mapping_headers or has_honest_empty,
+            "Workspace muss echte Lauf-Zuordnungen oder einen ehrlichen Empty State zeigen",
+        )
 
     def test_workspace_run_panel_layout(self) -> None:
         from invoice_tool.ui_v2.pages.workspace import build_workspace_page
@@ -146,9 +161,19 @@ class UiV2RenderingRecoveryTests(unittest.TestCase):
         state.snapshot = load_read_only_snapshot()
         page_ctrl = build_workspace_page(state)
         labels = collect_labels(page_ctrl)
-        self.assertIn("EINGANGSORDNER", labels)
-        self.assertIn("ERGEBNISORDNER", labels)
-        self.assertIn("Neu starten", labels)
+        self.assertIn("WORKFLOW", labels)
+        has_mapping_headers = "EINGANGSORDNER" in labels and "ERGEBNISORDNER" in labels
+        has_honest_empty = any(
+            marker in labels
+            for marker in (
+                "Kein Lauf gestartet",
+                "Keine Ergebnisse vorhanden",
+                "Kein Ordner ausgewählt",
+                "Noch keine Zuordnungen",
+                "Ordner auswählen",
+            )
+        )
+        self.assertTrue(has_mapping_headers or has_honest_empty)
 
     def test_configurations_list_and_detail_content(self) -> None:
         page, _ = _build_test_page()

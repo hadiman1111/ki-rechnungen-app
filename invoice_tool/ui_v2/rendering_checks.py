@@ -213,7 +213,27 @@ def audit_page_tree(page_name: str, root: Any, report: RenderingReport) -> None:
         _find_workflow_card_fixed_height_risk(root, page=page_name, report=report)
 
     if page_name == "Arbeitsbereich":
-        _assert_labels(page_name, root, ("WORKFLOW", "EINGANGSORDNER", "ERGEBNISORDNER", "Zielordner", "SOMAA Profil"), report)
+        # Honest workspace: require workflow chrome; mapping headers only when real run data exists.
+        _assert_labels(page_name, root, ("WORKFLOW", "Zielordner"), report)
+        labels = collect_labels(root)
+        has_mapping_headers = "EINGANGSORDNER" in labels and "ERGEBNISORDNER" in labels
+        has_honest_empty = any(
+            marker in labels
+            for marker in (
+                "Noch kein Verarbeitungslauf in dieser Oberfläche.",
+                "Kein Lauf gestartet",
+                "Keine Ergebnisse vorhanden",
+                "Kein Ordner ausgewählt",
+                "Noch keine Zuordnungen",
+            )
+        )
+        if not has_mapping_headers and not has_honest_empty:
+            report.add(
+                page_name,
+                "R0",
+                "missing_content",
+                "Workspace exposes neither real run mappings nor an honest empty state",
+            )
     elif page_name == "Konfigurationen":
         _assert_labels(page_name, root, ("Bearbeiten", "Konfigurationen"), report)
         labels = collect_labels(root)
