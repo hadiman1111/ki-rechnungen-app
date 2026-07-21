@@ -12,7 +12,7 @@ dependencies = [
   "openai>=1.70.0",
   "PyMuPDF>=1.25.0",
   "pytesseract>=0.3.10",
-  "flet",
+  "flet==0.85.3",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +27,53 @@ ki-rechnungen-ui = "invoice_tool.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.flet]
+product = "KI-Rechnungen"
+org = "de.kirechnungen"
+company = "KI-Rechnungen"
+copyright = "Copyright (c) 2026 KI-Rechnungen"
+build_number = 1
+
+[tool.flet.app]
+module = "app_main"
+exclude = [
+  ".venv",
+  ".git",
+  ".pytest_cache",
+  ".pycache",
+  "__pycache__",
+  "tests",
+  "testing",
+  "docs",
+  "scripts",
+  "logs",
+  "runtime",
+  "tmp_verification_round2",
+  "ki-rechnungen-output-260430",
+  "260425_archiv Rechnungen",
+  "TESTRECHNUNGEN",
+  "SONSTIGES - NICHT PROGRAMMRELEVANT!!!",
+  "build",
+  "dist",
+  "ki_rechnungen_app.egg-info",
+  ".cursor",
+  "resources",
+  "profile_config.local.json",
+  "profile_config.local.example.json",
+  "package-lock.json",
+  "node_modules",
+]
+
+[tool.flet.cleanup]
+app_files = [
+  "**/__pycache__/**",
+  "**/*.pyc",
+  ".pycache/**",
+]
+
+[tool.flet.macos]
+bundle_id = "de.kirechnungen.app"
 
 [tool.setuptools.packages.find]
 include = ["invoice_tool*"]
