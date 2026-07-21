@@ -60,6 +60,18 @@ def test_blank_saas_profile_has_safe_classification_policy_defaults() -> None:
     assert (
         policy.business_document_policy.non_invoice_business_document_target == "unklar"
     )
+    idp = policy.invoice_detection_policy
+    assert idp.invoice_indicators_override_format_notes is True
+    assert idp.format_availability_notes_are_not_document_type is True
+    assert idp.filename_is_not_source_of_truth is True
+    pep = policy.payment_evidence_policy
+    assert pep.generic_credit_card_without_identifier_target == "unklar"
+    assert pep.card_payment_requires_known_reference is True
+    assert pep.supplier_bank_details_are_not_payer_evidence is True
+    bap = policy.business_assignment_policy
+    assert bap.business_billing_address_assigns_business_context is True
+    assert bap.ambiguous_items_do_not_override_business_billing_address is True
+    assert bap.organization_identifiers_are_profile_configured is True
     tool = policy.software_ai_tool_policy
     assert tool.detect_ai_coding_tools is True
     assert tool.require_business_signal_for_ai_tool_assignment is True
@@ -174,6 +186,13 @@ def test_ui_viewmodel_texts_contain_required_phrases() -> None:
         "Bestellbestätigungen von Rechnungen unterscheiden",
         "Geschäftliche Bestelldokumente fachlich zuordnen",
         "Zahlungsmethode auch bei Nicht-Rechnungen erkennen",
+        "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen",
+        "Format-Verfügbarkeitshinweise sind kein Dokumenttyp",
+        "Dateiname ist keine Beweisquelle",
+        "Unspezifische Kreditkarte ohne Kennung zur Prüfung",
+        "Kartenzahlung erfordert bekannte Referenz",
+        "Geschäftliche Rechnungsadresse setzt Business-Kontext",
+        "Organisationskennungen sind profilkonfiguriert",
         "Software- und AI-Tools erkennen",
         "AI-, Coding- und Token-basierten Diensten",
         "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",

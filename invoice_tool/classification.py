@@ -28,6 +28,151 @@ _INVOICE_LIKE_NEGATIVE_PATTERNS: list[str] = [
     r"\b(?:werbung|newsletter|katalog|prospekt|advertisement)\b",
 ]
 
+# Hard document keywords: never overridden by invoice indicators.
+_HARD_DOCUMENT_KEYWORD_MARKERS: tuple[str, ...] = (
+    "bestellbestätigung",
+    "bestellbestaetigung",
+    "order confirmation",
+    "bestellte artikel",
+    "spendenbescheinigung",
+    "donation confirmation",
+    "donation receipt",
+    "contribution statement",
+    "tax certificate",
+    "transfer proof",
+    "payment confirmation",
+    "bescheid",
+    "steuerbescheid",
+    "jahreskonto",
+    "kanzlei-rechnungswesen",
+    "ungeklärte posten",
+    "ungeklaerte posten",
+    "auswertung entspricht dem derzeitigen stand der buchführung",
+    "auswertung entspricht dem derzeitigen stand der buchfuehrung",
+)
+
+# Soft/format phrases that must not dominate clear invoices.
+_WEAK_DOCUMENT_OVERRIDE_MARKERS: tuple[str, ...] = (
+    "lieferschein",
+    "delivery note",
+    "packing slip",
+    "packing list",
+    "zugferd",
+    "xrechnung",
+    "x-rechnung",
+)
+
+_FORMAT_AVAILABILITY_NOISE_PATTERNS: tuple[str, ...] = (
+    r"\bzugferd\b(?:\s+\w+){0,6}\b(?:available|verfuegbar|verfügbar|on\s+request|auf\s+anfrage)\b",
+    r"\bx[\s-]?rechnung\b(?:\s+\w+){0,6}\b(?:available|verfuegbar|verfügbar|on\s+request|auf\s+anfrage)\b",
+    r"\brechnungs\s*lieferscheindatum\b",
+    r"\brechnungs\s*/\s*lieferscheindatum\b",
+)
+
+_STRONG_INVOICE_TITLE = re.compile(
+    r"(?<![a-z0-9])(?:rechnung|invoice)(?![a-z0-9])",
+)
+_STRONG_INVOICE_NUMBER = re.compile(
+    r"(?:rechnung(?:s)?\s*(?:nr|nummer)|invoice\s*(?:no|number|nr))"
+    r"\s*[:.]?\s*[a-z0-9][\w./-]{2,}",
+)
+
+
+def _keyword_matches(keyword: str, text: str) -> bool:
+    """Match a normalized keyword on token boundaries (not as substring of a longer token)."""
+
+    normalized = normalize_for_matching(keyword)
+    if not normalized or not text:
+        return False
+    tokens = normalized.split()
+    if not tokens:
+        return False
+    pattern = r"(?<![a-z0-9])" + r"\s+".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])"
+    return re.search(pattern, text) is not None
+
+
+def _invoice_keyword_matches(keyword: str, text: str) -> bool:
+    """Match invoice keywords including German compounds (rechnung → rechnungsadresse)."""
+
+    if _keyword_matches(keyword, text):
+        return True
+    normalized = normalize_for_matching(keyword)
+    if not normalized or not text:
+        return False
+    tokens = normalized.split()
+    # Single-token stems may head longer compounds (Rechnung/Rechnungsadresse).
+    if len(tokens) == 1 and len(tokens[0]) >= 4:
+        pattern = r"(?<![a-z0-9])" + re.escape(tokens[0]) + r"[a-z0-9]+"
+        return re.search(pattern, text) is not None
+    return False
+
+
+def _strip_format_availability_noise(text: str) -> str:
+    cleaned = text
+    for pattern in _FORMAT_AVAILABILITY_NOISE_PATTERNS:
+        cleaned = re.sub(pattern, " ", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _count_strong_invoice_indicators(
+    extracted: ExtractedData,
+    search_text: str,
+) -> tuple[int, list[str]]:
+    """Count clear invoice-identity signals that should beat weak document phrases."""
+
+    matched: list[str] = []
+    if extracted.invoice_number_raw and str(extracted.invoice_number_raw).strip():
+        matched.append("invoice-number-field")
+    if _STRONG_INVOICE_NUMBER.search(search_text):
+        matched.append("invoice-number-phrase")
+    if _STRONG_INVOICE_TITLE.search(search_text):
+        matched.append("invoice-title")
+    if extracted.invoice_date_raw and str(extracted.invoice_date_raw).strip():
+        matched.append("invoice-date")
+    if re.search(
+        r"\b(?:rechnungsanschrift|rechnungsadresse|billing\s+address|invoice\s+address)\b",
+        search_text,
+    ):
+        matched.append("billing-address")
+    if re.search(r"\b(?:mwst|mehrwertsteuer|umsatzsteuer|ust\.?|vat)\b", search_text):
+        matched.append("vat")
+    if extracted.amount_raw and str(extracted.amount_raw).strip():
+        matched.append("amount")
+    if re.search(
+        r"\b(?:gesamtwert|gesamtbetrag|endbetrag|bruttobetrag|total\s+amount)\b",
+        search_text,
+    ):
+        matched.append("total-amount")
+    if re.search(
+        r"\b(?:positionen|line\s*items|artikelliste?|leistungsposition)\b",
+        search_text,
+    ):
+        matched.append("line-items")
+    if re.search(
+        r"\b(?:zahlungsbedingungen|payment\s+terms|zahlbar|zahlung\s+per)\b",
+        search_text,
+    ):
+        matched.append("payment-terms")
+    return len(matched), matched
+
+
+def _is_hard_document_keyword(keyword: str) -> bool:
+    normalized = normalize_for_matching(keyword)
+    return any(
+        normalize_for_matching(marker) == normalized
+        or normalize_for_matching(marker) in normalized
+        for marker in _HARD_DOCUMENT_KEYWORD_MARKERS
+    )
+
+
+def _is_weak_document_keyword(keyword: str) -> bool:
+    normalized = normalize_for_matching(keyword)
+    return any(
+        normalize_for_matching(marker) == normalized
+        or normalized == normalize_for_matching(marker)
+        for marker in _WEAK_DOCUMENT_OVERRIDE_MARKERS
+    )
+
 
 def _score_invoice_likeness(
     extracted: ExtractedData,
@@ -47,9 +192,14 @@ def _score_invoice_likeness(
         )
     )
 
-    # Negative signals veto any positive scoring
+    # Negative signals veto any positive scoring — but only as whole tokens.
+    # "Prospekthüllen" must not veto; standalone "Lieferschein" may.
     for pattern in _INVOICE_LIKE_NEGATIVE_PATTERNS:
         if re.search(pattern, text):
+            # Do not veto when strong invoice identity is already present.
+            strong_count, _ = _count_strong_invoice_indicators(extracted, text)
+            if strong_count >= 3:
+                break
             return 0, []
 
     matched: list[str] = []
@@ -59,8 +209,7 @@ def _score_invoice_likeness(
 
     # Extra indicators from preset config
     for indicator in extra_indicators:
-        normalized_indicator = normalize_for_matching(indicator)
-        if normalized_indicator and normalized_indicator in text:
+        if _keyword_matches(indicator, text):
             matched.append(f"config:{indicator}")
 
     # Bonus: extracted card/apple-pay endings signal a payment document
@@ -94,18 +243,48 @@ def classify_document_type(extracted: ExtractedData, preset: ProcessingPreset) -
             if part
         )
     )
+    # Format-availability / compound date labels are not document-type evidence.
+    document_search_text = _strip_format_availability_noise(search_text)
 
-    if any(
-        normalize_for_matching(keyword) in search_text
+    strong_count, strong_labels = _count_strong_invoice_indicators(extracted, search_text)
+    document_hits = [
+        keyword
         for keyword in preset.classification.document_keywords
-    ):
-        return ClassificationDecision(
-            dokumenttyp="document",
-            begruendung="Dokument-Indikator aus Preset-Regeln erkannt.",
+        if _keyword_matches(keyword, document_search_text)
+    ]
+
+    if document_hits:
+        hard_hits = [kw for kw in document_hits if _is_hard_document_keyword(kw)]
+        weak_only = bool(document_hits) and not hard_hits and all(
+            _is_weak_document_keyword(kw) for kw in document_hits
         )
+        # Strong invoice identity beats weak document/format/delivery-note phrases.
+        if strong_count >= 3 and (weak_only or (not hard_hits and strong_count >= 4)):
+            return ClassificationDecision(
+                dokumenttyp="invoice",
+                begruendung=(
+                    "Starke Rechnungsindikatoren überschreiben schwache "
+                    f"Dokument-/Formatphrasen ({', '.join(strong_labels[:4])})."
+                ),
+            )
+        if hard_hits or not (strong_count >= 3 and weak_only):
+            # Keep intentional non-invoice documents (order confirmation, DATEV, …).
+            if hard_hits or strong_count < 3:
+                return ClassificationDecision(
+                    dokumenttyp="document",
+                    begruendung="Dokument-Indikator aus Preset-Regeln erkannt.",
+                )
+            # Soft document keyword + enough invoice identity → invoice.
+            return ClassificationDecision(
+                dokumenttyp="invoice",
+                begruendung=(
+                    "Starke Rechnungsindikatoren überschreiben Dokument-Keyword "
+                    f"({', '.join(strong_labels[:4])})."
+                ),
+            )
 
     if any(
-        normalize_for_matching(keyword) in search_text
+        _invoice_keyword_matches(keyword, search_text)
         for keyword in preset.classification.internal_invoice_keywords
     ):
         return ClassificationDecision(
@@ -114,7 +293,7 @@ def classify_document_type(extracted: ExtractedData, preset: ProcessingPreset) -
         )
 
     if any(
-        normalize_for_matching(keyword) in search_text
+        _invoice_keyword_matches(keyword, search_text)
         for keyword in preset.classification.invoice_keywords
     ):
         return ClassificationDecision(

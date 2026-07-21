@@ -46,6 +46,9 @@ SAAS_SURFACE_UI_LABELS: dict[str, str] = {
     "mixed_address": "Gemischte geschäftliche/private Adresssignale",
     "address_policy": "Rechnungsadresse und Lieferadresse",
     "business_document_policy": "Geschäftliche Nicht-Rechnungs-Belege",
+    "invoice_detection_policy": "Rechnungs-Erkennung",
+    "payment_evidence_policy": "Zahlungsweg-Erkennung",
+    "business_assignment_policy": "Geschäftliche Zuordnung",
     "software_ai_tools": "Software- und AI-Tools erkennen",
 }
 
@@ -261,6 +264,14 @@ def saas_surface_review_hints(surface: SaasProfileSurface | None = None) -> tupl
         "Rechnungsadresse kann AI/Business-Kontext setzen.",
         "Nicht buchbare Geschäftsdokumente zur Prüfung.",
         "Zahlungsmethode auch bei Nicht-Rechnungen erkennen.",
+        "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen.",
+        "Format-Verfügbarkeitshinweise sind kein Dokumenttyp.",
+        "Dateiname ist keine Beweisquelle.",
+        "Unspezifische Kreditkarte ohne Kennung zur Prüfung.",
+        "Kartenzahlung erfordert bekannte Referenz.",
+        "Geschäftliche Rechnungsadresse setzt Business-Kontext.",
+        "Mehrdeutige Positionen überschreiben keine Rechnungsadresse.",
+        "Organisationskennungen sind profilkonfiguriert.",
         "Verarbeitung wird von dieser Oberfläche nicht gestartet.",
         "Kein Cloud-/Mandantenbetrieb in dieser lokalen Oberfläche.",
     ]

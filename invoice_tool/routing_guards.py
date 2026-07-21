@@ -28,6 +28,22 @@ _APPLE_PAY_MARKERS = (
     "bezahlt mit apple pay",
 )
 
+_GENERIC_CREDIT_CARD_MARKERS = (
+    "zahlung per kreditkarte",
+    "bezahlt per kreditkarte",
+    "zahlung mit kreditkarte",
+    "kreditkarte",
+    "kartenzahlung",
+    "card payment",
+    "paid by card",
+    "credit card",
+)
+
+# Payment fields that must not be inferred from bare credit-card wording.
+_GENERIC_CARD_UNSAFE_PAYMENT_FIELDS = frozenset(
+    {"amex", "amex-1005", "vobaai", "vobaep", "private", "card"}
+)
+
 _PAYER_DEBIT_MARKERS = (
     "prenotification",
     "von ihrem konto abgebucht",
@@ -235,6 +251,19 @@ def apple_pay_without_known_card_reference(extracted: ExtractedData) -> bool:
     return not bool(extracted.apple_pay_endings)
 
 
+def has_generic_credit_card_wording_without_known_reference(
+    extracted: ExtractedData,
+) -> bool:
+    """True when only generic card wording exists (no known card/account ending)."""
+
+    text = _search_text(extracted)
+    if not _contains_any(text, _GENERIC_CREDIT_CARD_MARKERS):
+        return False
+    if extracted.card_endings or extracted.apple_pay_endings:
+        return False
+    return True
+
+
 def has_secure_payer_payment_evidence(
     extracted: ExtractedData,
     account_decision: AccountDecision,
@@ -248,6 +277,22 @@ def has_secure_payer_payment_evidence(
             reason="Apple Pay ohne bekannte Karten-/Konto-Endung.",
             apple_pay_without_card_reference=True,
         )
+
+    if has_generic_credit_card_wording_without_known_reference(extracted):
+        text = _search_text(extracted)
+        has_amex_text = bool(_contains_any(text, ("american express",)))
+        if not (
+            payment_decision.payment_method == "amex"
+            and payment_decision.explicit
+            and has_amex_text
+        ):
+            return PaymentEvidenceGuardDecision(
+                has_secure_evidence=False,
+                reason=(
+                    "Unspezifische Kreditkartenangabe ohne bekannte "
+                    "Karten-/Konto-Referenz."
+                ),
+            )
 
     account_reason = normalize_for_matching(account_decision.begruendung or "")
     if (
@@ -517,9 +562,15 @@ def apply_payment_evidence_guard(
     evidence = has_secure_payer_payment_evidence(
         extracted, account_decision, payment_decision
     )
-    if routing.payment_field not in _UNSAFE_AUTO_PAYMENT_FIELDS:
+    payment_field = routing.payment_field or ""
+    force_unknown_card = (
+        has_generic_credit_card_wording_without_known_reference(extracted)
+        and payment_field in _GENERIC_CARD_UNSAFE_PAYMENT_FIELDS
+        and not evidence.has_secure_evidence
+    )
+    if payment_field not in _UNSAFE_AUTO_PAYMENT_FIELDS and not force_unknown_card:
         return routing, evidence
-    if evidence.has_secure_evidence:
+    if evidence.has_secure_evidence and not force_unknown_card:
         return routing, evidence
 
     from invoice_tool.routing import resolve_output_route
@@ -531,7 +582,7 @@ def apply_payment_evidence_guard(
         payment_field=unklar_field,
         preset=preset,
     )
-    if routing.art in {"ai", "ep"}:
+    if routing.art in {"ai", "ep"} or force_unknown_card:
         # Prefer explicit unklar folder over ai/ep keep-folder fallbacks.
         zielordner = preset.routing.zielordner.get("unklar", zielordner or "unklar")
         status = "unklar"

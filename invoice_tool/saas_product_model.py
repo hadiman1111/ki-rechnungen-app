@@ -85,6 +85,15 @@ CLASSIFICATION_POLICY_UI_TEXTS: tuple[str, ...] = (
     "Rechnungsadresse kann AI/Business-Kontext setzen",
     "Nicht buchbare Geschäftsdokumente zur Prüfung",
     "Zahlungsmethode auch bei Nicht-Rechnungen erkennen",
+    "Rechnungs-Erkennung",
+    "Starke Rechnungsindikatoren vor Format-/Dokumentphrasen",
+    "Format-Verfügbarkeitshinweise sind kein Dokumenttyp",
+    "Dateiname ist keine Beweisquelle",
+    "Unspezifische Kreditkarte ohne Kennung zur Prüfung",
+    "Kartenzahlung erfordert bekannte Referenz",
+    "Geschäftliche Rechnungsadresse setzt Business-Kontext",
+    "Mehrdeutige Positionen überschreiben keine Rechnungsadresse",
+    "Organisationskennungen sind profilkonfiguriert",
     "Software- und AI-Tools erkennen",
     "Nutzung von AI-, Coding- und Token-basierten Diensten als eigene Regelklasse",
     "Gutschriften/Refunds behalten die wirtschaftliche Kategorie",
@@ -117,6 +126,169 @@ class AddressPolicy:
 
 def default_address_policy() -> AddressPolicy:
     return AddressPolicy()
+
+
+@dataclass(frozen=True)
+class InvoiceDetectionPolicy:
+    """Generic invoice-vs-document priority (no private tenant defaults)."""
+
+    invoice_indicators_override_format_notes: bool = True
+    format_availability_notes_are_not_document_type: bool = True
+    filename_is_not_source_of_truth: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "invoice_indicators_override_format_notes": (
+                self.invoice_indicators_override_format_notes
+            ),
+            "format_availability_notes_are_not_document_type": (
+                self.format_availability_notes_are_not_document_type
+            ),
+            "filename_is_not_source_of_truth": self.filename_is_not_source_of_truth,
+        }
+
+
+def default_invoice_detection_policy() -> InvoiceDetectionPolicy:
+    return InvoiceDetectionPolicy()
+
+
+@dataclass(frozen=True)
+class PaymentEvidencePolicy:
+    """Generic payer-side payment evidence rules (no private card defaults)."""
+
+    generic_credit_card_without_identifier_target: str = DEFAULT_UNKNOWN_PAYMENT_TARGET
+    card_payment_requires_known_reference: bool = True
+    supplier_bank_details_are_not_payer_evidence: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generic_credit_card_without_identifier_target": (
+                self.generic_credit_card_without_identifier_target
+            ),
+            "card_payment_requires_known_reference": (
+                self.card_payment_requires_known_reference
+            ),
+            "supplier_bank_details_are_not_payer_evidence": (
+                self.supplier_bank_details_are_not_payer_evidence
+            ),
+        }
+
+
+def default_payment_evidence_policy() -> PaymentEvidencePolicy:
+    return PaymentEvidencePolicy()
+
+
+@dataclass(frozen=True)
+class BusinessAssignmentPolicy:
+    """Generic business-context assignment from billing address / org identifiers."""
+
+    business_billing_address_assigns_business_context: bool = True
+    ambiguous_items_do_not_override_business_billing_address: bool = True
+    organization_identifiers_are_profile_configured: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "business_billing_address_assigns_business_context": (
+                self.business_billing_address_assigns_business_context
+            ),
+            "ambiguous_items_do_not_override_business_billing_address": (
+                self.ambiguous_items_do_not_override_business_billing_address
+            ),
+            "organization_identifiers_are_profile_configured": (
+                self.organization_identifiers_are_profile_configured
+            ),
+        }
+
+
+def default_business_assignment_policy() -> BusinessAssignmentPolicy:
+    return BusinessAssignmentPolicy()
+
+
+def _policy_bool(data: Mapping[str, Any], key: str, fallback: bool) -> bool:
+    value = data.get(key, fallback)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "ja"}
+    return fallback
+
+
+def _policy_target(data: Mapping[str, Any], key: str, fallback: str) -> str:
+    value = data.get(key, fallback)
+    text = str(value or "").strip().lower()
+    if text in {"unklar", "zur_pruefung", "zur-prüfung", "review"}:
+        return "unklar"
+    if text in {"documents", "document"}:
+        return "documents"
+    return fallback
+
+
+def invoice_detection_policy_from_dict(raw: Mapping[str, Any] | None) -> InvoiceDetectionPolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_invoice_detection_policy()
+    return InvoiceDetectionPolicy(
+        invoice_indicators_override_format_notes=_policy_bool(
+            data,
+            "invoice_indicators_override_format_notes",
+            defaults.invoice_indicators_override_format_notes,
+        ),
+        format_availability_notes_are_not_document_type=_policy_bool(
+            data,
+            "format_availability_notes_are_not_document_type",
+            defaults.format_availability_notes_are_not_document_type,
+        ),
+        filename_is_not_source_of_truth=_policy_bool(
+            data,
+            "filename_is_not_source_of_truth",
+            defaults.filename_is_not_source_of_truth,
+        ),
+    )
+
+
+def payment_evidence_policy_from_dict(raw: Mapping[str, Any] | None) -> PaymentEvidencePolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_payment_evidence_policy()
+    return PaymentEvidencePolicy(
+        generic_credit_card_without_identifier_target=_policy_target(
+            data,
+            "generic_credit_card_without_identifier_target",
+            defaults.generic_credit_card_without_identifier_target,
+        ),
+        card_payment_requires_known_reference=_policy_bool(
+            data,
+            "card_payment_requires_known_reference",
+            defaults.card_payment_requires_known_reference,
+        ),
+        supplier_bank_details_are_not_payer_evidence=_policy_bool(
+            data,
+            "supplier_bank_details_are_not_payer_evidence",
+            defaults.supplier_bank_details_are_not_payer_evidence,
+        ),
+    )
+
+
+def business_assignment_policy_from_dict(
+    raw: Mapping[str, Any] | None,
+) -> BusinessAssignmentPolicy:
+    data = dict(raw) if isinstance(raw, Mapping) else {}
+    defaults = default_business_assignment_policy()
+    return BusinessAssignmentPolicy(
+        business_billing_address_assigns_business_context=_policy_bool(
+            data,
+            "business_billing_address_assigns_business_context",
+            defaults.business_billing_address_assigns_business_context,
+        ),
+        ambiguous_items_do_not_override_business_billing_address=_policy_bool(
+            data,
+            "ambiguous_items_do_not_override_business_billing_address",
+            defaults.ambiguous_items_do_not_override_business_billing_address,
+        ),
+        organization_identifiers_are_profile_configured=_policy_bool(
+            data,
+            "organization_identifiers_are_profile_configured",
+            defaults.organization_identifiers_are_profile_configured,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -311,6 +483,15 @@ class ClassificationPolicy:
     software_ai_tool_policy: SoftwareAiToolPolicy = field(
         default_factory=default_software_ai_tool_policy
     )
+    invoice_detection_policy: InvoiceDetectionPolicy = field(
+        default_factory=default_invoice_detection_policy
+    )
+    payment_evidence_policy: PaymentEvidencePolicy = field(
+        default_factory=default_payment_evidence_policy
+    )
+    business_assignment_policy: BusinessAssignmentPolicy = field(
+        default_factory=default_business_assignment_policy
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -326,6 +507,9 @@ class ClassificationPolicy:
             "address_policy": self.address_policy.to_dict(),
             "business_document_policy": self.business_document_policy.to_dict(),
             "software_ai_tool_policy": self.software_ai_tool_policy.to_dict(),
+            "invoice_detection_policy": self.invoice_detection_policy.to_dict(),
+            "payment_evidence_policy": self.payment_evidence_policy.to_dict(),
+            "business_assignment_policy": self.business_assignment_policy.to_dict(),
         }
 
 
@@ -404,6 +588,48 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
             ),
         }
 
+    nested_invoice_detection = data.get("invoice_detection_policy")
+    if not isinstance(nested_invoice_detection, Mapping):
+        nested_invoice_detection = {
+            "invoice_indicators_override_format_notes": data.get(
+                "invoice_indicators_override_format_notes"
+            ),
+            "format_availability_notes_are_not_document_type": data.get(
+                "format_availability_notes_are_not_document_type"
+            ),
+            "filename_is_not_source_of_truth": data.get(
+                "filename_is_not_source_of_truth"
+            ),
+        }
+
+    nested_payment_evidence = data.get("payment_evidence_policy")
+    if not isinstance(nested_payment_evidence, Mapping):
+        nested_payment_evidence = {
+            "generic_credit_card_without_identifier_target": data.get(
+                "generic_credit_card_without_identifier_target"
+            ),
+            "card_payment_requires_known_reference": data.get(
+                "card_payment_requires_known_reference"
+            ),
+            "supplier_bank_details_are_not_payer_evidence": data.get(
+                "supplier_bank_details_are_not_payer_evidence"
+            ),
+        }
+
+    nested_business_assignment = data.get("business_assignment_policy")
+    if not isinstance(nested_business_assignment, Mapping):
+        nested_business_assignment = {
+            "business_billing_address_assigns_business_context": data.get(
+                "business_billing_address_assigns_business_context"
+            ),
+            "ambiguous_items_do_not_override_business_billing_address": data.get(
+                "ambiguous_items_do_not_override_business_billing_address"
+            ),
+            "organization_identifiers_are_profile_configured": data.get(
+                "organization_identifiers_are_profile_configured"
+            ),
+        }
+
     return ClassificationPolicy(
         require_explicit_payer_payment_evidence=_bool(
             "require_explicit_payer_payment_evidence",
@@ -439,6 +665,15 @@ def classification_policy_from_dict(raw: Mapping[str, Any] | None) -> Classifica
         address_policy=address_policy_from_dict(nested_address),
         business_document_policy=business_document_policy_from_dict(nested_business_doc),
         software_ai_tool_policy=software_ai_tool_policy_from_dict(nested_tool),
+        invoice_detection_policy=invoice_detection_policy_from_dict(
+            nested_invoice_detection
+        ),
+        payment_evidence_policy=payment_evidence_policy_from_dict(
+            nested_payment_evidence
+        ),
+        business_assignment_policy=business_assignment_policy_from_dict(
+            nested_business_assignment
+        ),
     )
 
 
