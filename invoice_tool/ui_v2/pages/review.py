@@ -40,6 +40,9 @@ class ReviewPageVM:
     empty_title: str | None
     empty_detail: str | None
     items: tuple[ProcessingReviewItem, ...]
+    # Errors stay on the workspace shell — never mixed into the review queue.
+    error_count: int = 0
+    result_count: int = 0
 
 
 def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
@@ -47,6 +50,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
 
     run_state: ProcessingRunState = state.processing_run_state or ProcessingRunState()
     items = tuple(run_state.review_items or ())
+    error_count = len(tuple(run_state.errors or ()))
+    result_count = len(tuple(run_state.results or ()))
     if not items:
         return ReviewPageVM(
             title="Zur Prüfung",
@@ -55,6 +60,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
             empty_title=EMPTY_REVIEW_TITLE,
             empty_detail=EMPTY_REVIEW_DETAIL,
             items=(),
+            error_count=error_count,
+            result_count=result_count,
         )
     return ReviewPageVM(
         title="Zur Prüfung",
@@ -63,6 +70,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         empty_title=None,
         empty_detail=None,
         items=items,
+        error_count=error_count,
+        result_count=result_count,
     )
 
 

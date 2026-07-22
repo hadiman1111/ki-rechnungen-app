@@ -85,12 +85,15 @@ def test_review_page_accepts_processing_run_state_items() -> None:
                     status_label="unklar",
                 ),
             ),
+            errors=("Separater Fehler",),
         )
     )
     vm = build_review_page_vm(state)
     assert vm.empty is False
     assert len(vm.items) == 1
     assert vm.items[0].document_name == "beispiel.pdf"
+    assert vm.error_count == 1
+    assert all("Separater Fehler" not in item.reason for item in vm.items)
 
 
 def test_review_page_has_no_processing_core_import() -> None:

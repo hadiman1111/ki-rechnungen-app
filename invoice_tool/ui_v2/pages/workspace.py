@@ -53,8 +53,19 @@ from invoice_tool.ui_v2.processing_state import (
     MSG_NOT_CONFIGURED,
     MSG_POLICY_NOT_READY,
     MSG_PRODUCTIVE_NOT_RELEASED,
+    ProcessingResultSummary,
     ProcessingRunState,
     ProcessingStatus,
+)
+from invoice_tool.ui_v2.run_result_display import (
+    MSG_ERROR_SUMMARY_SECTION,
+    MSG_PRODUCTIVE_HOLD,
+    MSG_RESULTS_SECTION,
+    MSG_REVIEW_DETAILS_HINT,
+    MSG_REVIEW_SUMMARY_SECTION,
+    MSG_RUN_SUMMARY_SECTION,
+    RunResultDisplayShellVM,
+    build_run_result_display_shell,
 )
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.view_models import ResultSummaryVM, UiV2ReadOnlySnapshot
@@ -130,6 +141,29 @@ def _result_from_vm(index: int, result: ResultSummaryVM) -> _WorkspaceResultDisp
     )
 
 
+def _result_from_processing_summary(
+    index: int, result: ProcessingResultSummary
+) -> _WorkspaceResultDisplay:
+    """Map contract result rows only — never invent payment/account/business values."""
+
+    target = (result.target_hint or "").strip() or result.document_name
+    failed = (
+        "fehl" in result.status_label.lower()
+        or "error" in result.status_label.lower()
+        or "fail" in result.classification_status.lower()
+    )
+    configuration_label = (result.document_type or "").strip() or "—"
+    return _WorkspaceResultDisplay(
+        result_id=f"contract-run-{index}",
+        source_filename=result.document_name,
+        target_filename=target,
+        configuration_label=configuration_label,
+        destination_summary=result.target_hint or "—",
+        failed=failed,
+        reason=result.status_label if failed else None,
+    )
+
+
 def _display_results(workspace_results: tuple[ResultSummaryVM, ...]) -> tuple[_WorkspaceResultDisplay, ...]:
     """Only real run results — never invent preview/mock rows."""
     if not workspace_results:
@@ -137,13 +171,36 @@ def _display_results(workspace_results: tuple[ResultSummaryVM, ...]) -> tuple[_W
     return tuple(_result_from_vm(index, item) for index, item in enumerate(workspace_results[:16]))
 
 
+def _display_processing_results(
+    contract_results: tuple[ProcessingResultSummary, ...],
+) -> tuple[_WorkspaceResultDisplay, ...]:
+    """Display only ProcessingResultSummary items provided by real run state."""
+
+    if not contract_results:
+        return tuple()
+    return tuple(
+        _result_from_processing_summary(index, item)
+        for index, item in enumerate(contract_results[:16])
+    )
+
+
 def _display_mappings(results: tuple[_WorkspaceResultDisplay, ...]) -> tuple[tuple[str, str], ...]:
     """Map only successful real results; never invent filename-based preview mappings."""
     return tuple((item.source_filename, item.target_filename) for item in results if not item.failed)
 
 
-def _has_real_run_results(workspace_results: tuple[ResultSummaryVM, ...]) -> bool:
-    return bool(workspace_results)
+def _has_real_run_results(
+    workspace_results: tuple[ResultSummaryVM, ...],
+    *,
+    processing_results: tuple[ProcessingResultSummary, ...] = (),
+) -> bool:
+    return bool(workspace_results) or bool(processing_results)
+
+
+def build_workspace_run_result_shell(state: UiV2State) -> RunResultDisplayShellVM:
+    """Pure workspace run-result shell from ProcessingRunState — no GUI / no FS."""
+
+    return build_run_result_display_shell(state.processing_run_state)
 
 
 def resolve_workspace_policy_bridge(state: UiV2State) -> RuntimePolicyBridgeResult:
@@ -362,10 +419,20 @@ def workspace_honesty_copy(
         status_line = f"{MSG_DRY_RUN_UNAVAILABLE} {EMPTY_NO_RUN_STATUS}."
         detail = (
             f"{MSG_DRY_RUN_UNAVAILABLE} "
+            f"{MSG_PRODUCTIVE_HOLD} "
             f"{MSG_PRODUCTIVE_NOT_RELEASED} "
             "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen "
             "angebundenen Adapter. Unklare Dokumente werden später im Prüfbereich angezeigt."
         )
+    elif status == "blocked" and (
+        proc.execution_gate in {"productive_blocked", "unsupported_without_core_change"}
+        or MSG_PRODUCTIVE_NOT_RELEASED in (proc.message or "")
+    ):
+        # Honest productive hold — never implies a completed run or fake results.
+        if MSG_PRODUCTIVE_HOLD not in (status_line or ""):
+            status_line = f"{MSG_PRODUCTIVE_HOLD} {EMPTY_NO_RUN_STATUS}."
+        if MSG_PRODUCTIVE_HOLD not in detail:
+            detail = f"{MSG_PRODUCTIVE_HOLD} {detail}"
 
     return WorkspaceHonestyCopy(
         has_real_results=False,
@@ -450,8 +517,16 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         _refresh()
 
     folder_selection = build_workspace_folder_selection_vm(state)
-    display_results = _display_results(workspace.results)
-    has_real_results = _has_real_run_results(workspace.results)
+    run_shell = build_workspace_run_result_shell(state)
+    contract_results = tuple(state.processing_run_state.results or ())
+    snapshot_display = _display_results(workspace.results)
+    contract_display = _display_processing_results(contract_results)
+    # Prefer explicit contract results when present; otherwise keep snapshot payload.
+    display_results = contract_display or snapshot_display
+    has_real_results = _has_real_run_results(
+        workspace.results,
+        processing_results=contract_results,
+    )
     policy_bridge = resolve_workspace_policy_bridge(state)
     honesty = workspace_honesty_copy(
         has_real_results=has_real_results,
@@ -600,10 +675,18 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         make_context_strip(("Profil", profile_name), ("Erkennungsmodell", scan_model)),
         make_section_label(FOLDER_SELECTION_SECTION_LABEL),
         folder_selection_panel,
+        make_section_label(MSG_RUN_SUMMARY_SECTION),
+        make_context_strip(
+            ("Status", run_shell.status_label),
+            ("Meldung", run_shell.message or EMPTY_NO_RUN_STATUS),
+        ),
         make_section_label("Workflow"),
     ]
     if honesty.status_line:
         items.append(inline_warning(honesty.status_line))
+    for hint in run_shell.blocked_hints:
+        if hint and hint not in (honesty.status_line or ""):
+            items.append(inline_warning(hint))
     if (
         not has_real_results
         and honesty.policy_intent_hint
@@ -619,6 +702,22 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         # Surface contract feedback after CTA without inventing result rows.
         if state.processing_run_state.message not in (honesty.status_line or ""):
             items.append(inline_warning(state.processing_run_state.message))
+    if run_shell.review.has_items:
+        items.append(
+            summary_alert(
+                f"{MSG_REVIEW_SUMMARY_SECTION}: {run_shell.review.count}. "
+                f"{MSG_REVIEW_DETAILS_HINT}"
+            )
+        )
+    if run_shell.errors.has_items:
+        items.append(
+            summary_alert(
+                f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count} "
+                "(getrennt von Prüffällen)."
+            )
+        )
+    if has_real_results and contract_display:
+        items.append(make_section_label(MSG_RESULTS_SECTION))
     items.extend(
         [
             run_panel,
