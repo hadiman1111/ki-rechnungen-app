@@ -12,10 +12,12 @@ from dataclasses import dataclass
 import flet as ft
 
 from invoice_tool.ui_v2.components import (
-    make_info_banner,
-    make_metadata_row,
+    compact_capability_matrix,
+    compact_hint_block,
+    compact_info_row,
+    compact_status_banner,
+    dense_card,
     make_section_label,
-    make_settings_panel,
     page_header,
     page_scaffold,
 )
@@ -33,6 +35,7 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_SANDBOX_COPIED_RUN,
 )
 from invoice_tool.ui_v2.onboarding import (
+    COMPACT_PILOT_STATUS_ITEMS,
     MSG_EXPORT_PREVIEW_NOT_DATEV,
     MSG_LOCAL_PILOT_SANDBOX,
     MSG_ORIGINAL_FOLDERS_PROTECTED,
@@ -46,7 +49,7 @@ from invoice_tool.ui_v2.onboarding import (
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
-SETTINGS_SUBTITLE = "Allgemeine Programmeinstellungen und Readiness-Hinweise."
+SETTINGS_SUBTITLE = "Allgemeine Programmeinstellungen und kompakte Readiness-Hinweise."
 PRODUCTIVE_EXECUTION_NOTICE = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 DRY_RUN_UNAVAILABLE_NOTICE = MSG_DRY_RUN_UNAVAILABLE
 PRODUCT_NEUTRAL_NOTICE = (
@@ -135,6 +138,8 @@ class SettingsPageVM:
     pilot_readiness: LocalPilotReadinessViewModel
     saas_ready: bool
     datev_productive_export_ready: bool
+    compact_status_items: tuple[str, ...]
+    uses_compact_status_ui: bool
 
 
 def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
@@ -178,6 +183,8 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
         pilot_readiness=pilot,
         saas_ready=False,
         datev_productive_export_ready=False,
+        compact_status_items=COMPACT_PILOT_STATUS_ITEMS,
+        uses_compact_status_ui=True,
     )
 
 
@@ -185,17 +192,24 @@ def build_settings_page(state: UiV2State) -> ft.Control:
     vm = build_settings_page_vm(state)
     controls: list[ft.Control] = [
         page_header(vm.title, subtitle=vm.subtitle),
-        make_info_banner(vm.banner),
+        compact_status_banner(
+            "Lokale Pilotversion",
+            vm.compact_status_items,
+            detail=MSG_SAAS_NOT_INCLUDED,
+        ),
         make_section_label("Status"),
-        make_settings_panel(
-            make_metadata_row("Produktive Ausführung", "Deaktiviert"),
-            make_metadata_row("Hinweis", vm.productive_execution_notice),
-            make_metadata_row("Dry-Run", "Nicht verfügbar"),
-            make_metadata_row("Dry-Run-Hinweis", vm.dry_run_notice),
-            make_metadata_row("Standardwerte", NO_PRIVATE_DEFAULTS),
-            make_metadata_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
-            make_metadata_row("Produktneutral", vm.product_neutral_notice),
-            make_metadata_row("Persistenz", "Keine Speicherung in diesem Schritt"),
+        dense_card(
+            compact_info_row("Produktive Ausführung", "Deaktiviert"),
+            compact_info_row("Dry-Run", "Nicht verfügbar"),
+            compact_info_row("Standardwerte", NO_PRIVATE_DEFAULTS),
+            compact_info_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
+            compact_info_row("Persistenz", "Keine Speicherung in diesem Schritt"),
+        ),
+        compact_hint_block(
+            vm.productive_execution_notice,
+            vm.dry_run_notice,
+            vm.product_neutral_notice,
+            title="Status-Hinweise",
         ),
     ]
 
@@ -203,43 +217,46 @@ def build_settings_page(state: UiV2State) -> ft.Control:
         controls.append(make_section_label(section.title))
         if section.title == "Produktstatus":
             controls.append(
-                make_settings_panel(
-                    make_metadata_row("Produktstufe", MSG_STAGE_LOCAL_PILOT),
-                    make_metadata_row("Dry-Run", "Nicht verfügbar bis Core-Grenze existiert"),
-                    make_metadata_row("Hinweis", vm.dry_run_notice),
-                    make_metadata_row("Produktive Ausführung", "Nicht freigegeben"),
-                    make_metadata_row("Hinweis", vm.productive_execution_notice),
-                    make_metadata_row("SaaS", MSG_SAAS_NOT_INCLUDED),
-                    make_metadata_row("Export", MSG_EXPORT_PREVIEW_NOT_DATEV),
-                    make_metadata_row("Originalordner", MSG_ORIGINAL_FOLDERS_PROTECTED),
-                    make_metadata_row("Standardwerte", NO_PRIVATE_DEFAULTS),
-                    make_metadata_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
-                    make_metadata_row("Hinweis", vm.product_neutral_notice),
-                    make_metadata_row("Modus", section.status),
-                    *(
-                        make_metadata_row(item.label, item.status_label)
-                        for item in vm.capability_matrix
-                    ),
+                dense_card(
+                    compact_info_row("Produktstufe", MSG_STAGE_LOCAL_PILOT),
+                    compact_info_row("Produktive Ausführung", "Nicht freigegeben"),
+                    compact_info_row("Export", MSG_EXPORT_PREVIEW_NOT_DATEV),
+                    compact_info_row("Originalordner", MSG_ORIGINAL_FOLDERS_PROTECTED),
+                    compact_info_row("Modus", section.status),
+                )
+            )
+            controls.append(
+                compact_capability_matrix(
+                    tuple((item.label, item.status_label) for item in vm.capability_matrix),
+                    title="Fähigkeiten / Grenzen",
+                )
+            )
+            controls.append(
+                compact_hint_block(
+                    MSG_SAAS_NOT_INCLUDED,
+                    NO_PRIVATE_DEFAULTS,
+                    NO_AUTOMATIC_FOLDER_SCAN,
+                    title="Produktgrenzen",
                 )
             )
         elif section.title == "Export":
             controls.append(
-                make_settings_panel(
-                    make_metadata_row("Status", "Arbeitsbereich — lokaler Laufbericht"),
-                    make_metadata_row("Hinweis", section.detail),
-                    make_metadata_row("Modus", SECTION_STATUS_READINESS),
-                    make_metadata_row("Cloud-Sync", "Nein"),
-                    make_metadata_row("Originalmutation", "Nein"),
+                dense_card(
+                    compact_info_row("Status", "Arbeitsbereich — lokaler Laufbericht"),
+                    compact_info_row("Cloud-Sync", "Nein"),
+                    compact_info_row("Originalmutation", "Nein"),
+                    compact_info_row("Modus", SECTION_STATUS_READINESS),
                 )
             )
+            controls.append(compact_hint_block(section.detail, title="Export"))
         else:
             controls.append(
-                make_settings_panel(
-                    make_metadata_row("Status", SECTION_STATUS_DISABLED),
-                    make_metadata_row("Hinweis", section.detail),
-                    make_metadata_row("Modus", section.status),
+                dense_card(
+                    compact_info_row("Status", SECTION_STATUS_DISABLED),
+                    compact_info_row("Modus", section.status),
                 )
             )
+            controls.append(compact_hint_block(section.detail, title=section.title))
 
     controls.extend(build_policy_editor_controls_panel(vm.policy_editor))
     return page_scaffold(*controls)

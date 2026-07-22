@@ -19,7 +19,10 @@ from invoice_tool.ui_v2.adapters.configuration_write_adapter import (
 )
 from invoice_tool.ui_v2.adapters.folder_picker_adapter import choose_target_folder
 from invoice_tool.ui_v2.components import (
+    compact_hint_block,
+    compact_info_row,
     compact_list_item,
+    dense_card,
     display_path_value,
     divider,
     empty_state,
@@ -39,7 +42,6 @@ from invoice_tool.ui_v2.components import (
     make_panel_footer_end,
     make_panel_footer_start,
     make_section_label,
-    make_settings_panel,
     make_split_detail_panel,
     make_status_toggle_pill,
     page_header,
@@ -352,14 +354,17 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         ),
         make_info_banner(config_policy_panel.banner),
         make_section_label("Konfiguration ↔ Profil-Policy"),
-        make_settings_panel(
-            make_metadata_row("Hinweis", MSG_CONFIGS_APPLY_RULES),
-            make_metadata_row("Hinweis", MSG_UNCLEAR_NOT_AUTO),
-            make_metadata_row("Hinweis", MSG_TARGETS_AFTER_SAFE_CONFIG),
-            make_metadata_row("Profil", config_policy_panel.linked_profile_label),
-            make_metadata_row("Policy", config_policy_panel.linked_policy_status),
-            make_metadata_row("Unklar", config_policy_panel.unmatched_concept_label),
-            make_metadata_row(
+        compact_hint_block(
+            MSG_CONFIGS_APPLY_RULES,
+            MSG_UNCLEAR_NOT_AUTO,
+            MSG_TARGETS_AFTER_SAFE_CONFIG,
+            title="Konfigurations-Hinweise",
+        ),
+        dense_card(
+            compact_info_row("Profil", config_policy_panel.linked_profile_label),
+            compact_info_row("Policy", config_policy_panel.linked_policy_status),
+            compact_info_row("Unklar", config_policy_panel.unmatched_concept_label),
+            compact_info_row(
                 "Ausführung",
                 "Kein produktiver Lauf — Zielorte erst nach sicherer Konfiguration.",
             ),

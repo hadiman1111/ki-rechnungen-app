@@ -18,7 +18,10 @@ from invoice_tool.ui_v2.adapters.profile_write_adapter import (
     save_profile_changes,
 )
 from invoice_tool.ui_v2.components import (
+    compact_hint_block,
+    compact_info_row,
     compact_list_item,
+    dense_card,
     divider,
     empty_state,
     form_field_group,
@@ -34,7 +37,6 @@ from invoice_tool.ui_v2.components import (
     make_panel_footer_end,
     make_panel_footer_profile,
     make_section_label,
-    make_settings_panel,
     make_split_detail_panel,
     page_header,
     page_scaffold,
@@ -319,14 +321,17 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         ),
         make_info_banner(policy_panel.banner),
         make_section_label("Profil-Policy Readiness"),
-        make_settings_panel(
-            make_metadata_row("Hinweis", MSG_PROFILES_CONTAIN_RULES),
-            make_metadata_row("Hinweis", MSG_PAYMENT_BUSINESS_PER_PROFILE),
-            make_metadata_row("Hinweis", MSG_WITHOUT_EVIDENCE_REVIEW),
-            make_metadata_row("Regeln", policy_panel.rules_profile_specific_label),
-            make_metadata_row("Readiness", policy_panel.selected_readiness_label),
-            make_metadata_row("Defaults", policy_panel.no_private_default_label),
-            make_metadata_row("Aktionen", policy_panel.actions_label),
+        compact_hint_block(
+            MSG_PROFILES_CONTAIN_RULES,
+            MSG_PAYMENT_BUSINESS_PER_PROFILE,
+            MSG_WITHOUT_EVIDENCE_REVIEW,
+            title="Profil-Hinweise",
+        ),
+        dense_card(
+            compact_info_row("Regeln", policy_panel.rules_profile_specific_label),
+            compact_info_row("Readiness", policy_panel.selected_readiness_label),
+            compact_info_row("Defaults", policy_panel.no_private_default_label),
+            compact_info_row("Aktionen", policy_panel.actions_label),
         ),
     ]
 

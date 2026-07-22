@@ -234,7 +234,10 @@ def test_ui_texts_separate_saas_from_internal_and_no_cloud() -> None:
     assert SEPARATION_HELP in texts
     assert "nicht das interne Arbeitsprofil" in texts
     assert NO_CLOUD_HELP in texts
-    assert "Cloud-Synchronisierung" in texts
+    assert "Nicht Cloud-synchronisiert" in texts
+    assert "Lokale Profilentwürfe" in texts
+    assert "SaaS-Profilentwurf" not in texts
+    assert "Lokale SaaS-Entwürfe" not in texts
     assert "Cloud-Sync aktiv" not in texts
     assert "Mandantenbackend" not in texts
     assert LOCALITY_LABEL in texts
@@ -271,7 +274,10 @@ def test_pages_wire_draft_list() -> None:
         encoding="utf-8"
     )
     assert "build_saas_draft_list_panel" in profiles
-    assert "Lokale SaaS-Entwürfe" in LIST_VIEW.read_text(encoding="utf-8")
+    list_src = LIST_VIEW.read_text(encoding="utf-8")
+    assert 'DRAFT_LIST_TITLE = "Lokale Profilentwürfe"' in list_src
+    assert 'DRAFT_LIST_TITLE = "Lokale SaaS-Entwürfe"' not in list_src
+    assert 'DRAFT_LIST_SCOPE = "SaaS-Profilentwürfe (lokal)"' not in list_src
     assert "create_saas_draft" in profiles
     assert "build_saas_draft_list_panel" in configs
 

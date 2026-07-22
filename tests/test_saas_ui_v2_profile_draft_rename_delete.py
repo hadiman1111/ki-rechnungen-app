@@ -268,7 +268,9 @@ def test_ui_texts_separate_saas_and_no_cloud() -> None:
     assert SEPARATION_HELP in texts
     assert "nicht das interne Arbeitsprofil" in texts
     assert NO_CLOUD_HELP in texts
-    assert "Cloud-Synchronisierung" in texts
+    assert "Nicht Cloud-synchronisiert" in texts
+    assert "SaaS-Profilentwurf" not in texts
+    assert "Lokale SaaS-Entwürfe" not in texts
     assert "Cloud-Sync aktiv" not in texts
     assert "Mandantenbackend" not in texts
     for marker in PRIVATE_MARKERS:

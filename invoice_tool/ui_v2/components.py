@@ -505,6 +505,201 @@ def make_info_banner(message: str) -> ft.Container:
     )
 
 
+def compact_status_banner(
+    title: str,
+    items: tuple[str, ...] | list[str],
+    *,
+    detail: str | None = None,
+) -> ft.Container:
+    """One dense status banner with chip-like items — avoids tall status tables."""
+
+    chips: list[ft.Control] = [
+        ft.Container(
+            bgcolor=COLOR_PRIMARY_SUBTLE,
+            border_radius=10,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+            content=ft.Text(
+                item,
+                size=FONT_SIZE_HELPER,
+                color=COLOR_PRIMARY,
+                weight=ft.FontWeight.W_600,
+            ),
+        )
+        for item in items
+        if str(item or "").strip()
+    ]
+    body: list[ft.Control] = [
+        ft.Text(
+            title,
+            size=FONT_SIZE_METADATA,
+            weight=ft.FontWeight.W_700,
+            color=COLOR_TEXT_PRIMARY,
+        ),
+    ]
+    if chips:
+        body.append(ft.Row(chips, spacing=6, wrap=True, tight=True))
+    if detail:
+        body.append(
+            ft.Text(detail, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED, max_lines=3)
+        )
+    return ft.Container(
+        margin=ft.Margin.only(bottom=8),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        bgcolor=COLOR_SURFACE_ALT,
+        content=ft.Column(body, spacing=6, tight=True),
+    )
+
+
+def compact_info_row(label: str, value: str) -> ft.Container:
+    """Dense label/value row with reduced padding — no large table chrome."""
+
+    return ft.Container(
+        padding=ft.Padding.symmetric(vertical=4),
+        content=ft.Row(
+            [
+                ft.Container(
+                    width=140,
+                    content=ft.Text(
+                        label,
+                        size=FONT_SIZE_HELPER,
+                        color=COLOR_TEXT_MUTED,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                ),
+                ft.Text(
+                    value,
+                    size=FONT_SIZE_HELPER,
+                    color=COLOR_TEXT_SECONDARY,
+                    expand=True,
+                    selectable=True,
+                    max_lines=3,
+                ),
+            ],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        ),
+    )
+
+
+def compact_hint_block(*hints: str, title: str = "Hinweise") -> ft.Container:
+    """Single compact hint card instead of many repeated Hinweis table rows."""
+
+    cleaned = [str(hint).strip() for hint in hints if str(hint or "").strip()]
+    lines: list[ft.Control] = [
+        ft.Text(
+            title,
+            size=FONT_SIZE_HELPER,
+            weight=ft.FontWeight.W_700,
+            color=COLOR_TEXT_MUTED,
+        ),
+    ]
+    for hint in cleaned:
+        lines.append(
+            ft.Text(f"· {hint}", size=FONT_SIZE_HELPER, color=COLOR_TEXT_SECONDARY)
+        )
+    return ft.Container(
+        margin=ft.Margin.only(bottom=8),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        bgcolor=COLOR_SURFACE,
+        content=ft.Column(lines, spacing=3, tight=True),
+    )
+
+
+def compact_checklist_block(
+    items: tuple[tuple[bool, str], ...] | list[tuple[bool, str]],
+    *,
+    title: str = "Checkliste",
+) -> ft.Container:
+    """Dense checklist without one metadata row per item."""
+
+    rows: list[ft.Control] = [
+        ft.Text(
+            title,
+            size=FONT_SIZE_HELPER,
+            weight=ft.FontWeight.W_700,
+            color=COLOR_TEXT_MUTED,
+        ),
+    ]
+    for done, label in items:
+        mark = "☑" if done else "☐"
+        rows.append(
+            ft.Text(
+                f"{mark} {label}",
+                size=FONT_SIZE_HELPER,
+                color=COLOR_TEXT_SECONDARY,
+            )
+        )
+    return ft.Container(
+        margin=ft.Margin.only(bottom=8),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        bgcolor=COLOR_SURFACE,
+        content=ft.Column(rows, spacing=2, tight=True),
+    )
+
+
+def compact_capability_matrix(
+    items: tuple[tuple[str, str], ...] | list[tuple[str, str]],
+    *,
+    title: str = "Fähigkeiten",
+) -> ft.Container:
+    """Compact capability matrix as wrapped chips — no tall readiness table."""
+
+    chips: list[ft.Control] = [
+        ft.Container(
+            border=ft.Border.all(1, COLOR_BORDER),
+            border_radius=10,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+            bgcolor=COLOR_SURFACE_ALT,
+            content=ft.Text(
+                f"{label}: {status}",
+                size=FONT_SIZE_HELPER,
+                color=COLOR_TEXT_SECONDARY,
+            ),
+        )
+        for label, status in items
+        if str(label or "").strip()
+    ]
+    return ft.Container(
+        margin=ft.Margin.only(bottom=8),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        bgcolor=COLOR_SURFACE,
+        content=ft.Column(
+            [
+                ft.Text(
+                    title,
+                    size=FONT_SIZE_HELPER,
+                    weight=ft.FontWeight.W_700,
+                    color=COLOR_TEXT_MUTED,
+                ),
+                ft.Row(chips, spacing=6, wrap=True, tight=True),
+            ],
+            spacing=6,
+            tight=True,
+        ),
+    )
+
+
+def dense_card(*controls: ft.Control, margin_bottom: int = 8) -> ft.Container:
+    """Smaller card shell for repeated status / readiness blocks."""
+
+    return ft.Container(
+        margin=ft.Margin.only(bottom=margin_bottom),
+        bgcolor=COLOR_SURFACE,
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+        content=ft.Column(list(controls), spacing=2, tight=True),
+    )
+
+
 def make_value_tag_pill(
     label: str,
     *,

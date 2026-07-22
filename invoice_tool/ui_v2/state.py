@@ -239,7 +239,7 @@ class UiV2State:
                 ok=False,
                 status=STATUS_VALIDATION_ERROR,
                 path=self.saas_disk_store.store_path,
-                error="Kein lokaler SaaS-Entwurf gewählt.",
+                error="Kein lokaler Entwurf gewählt.",
             )
             self._apply_saas_disk_result(result, operation="rename")
             return result
@@ -264,7 +264,7 @@ class UiV2State:
                 ok=False,
                 status=STATUS_VALIDATION_ERROR,
                 path=self.saas_disk_store.store_path,
-                error="Kein lokaler SaaS-Entwurf gewählt.",
+                error="Kein lokaler Entwurf gewählt.",
             )
             self._apply_saas_disk_result(result, operation="delete")
             return result
@@ -281,8 +281,8 @@ class UiV2State:
                 status=STATUS_DELETE_NEEDS_CONFIRM,
                 path=path,
                 error=(
-                    "Aktiven lokalen SaaS-Entwurf löschen? Erneut „Entwurf löschen“ bestätigen. "
-                    "Kein Cloud-Sync — nur lokale Datei."
+                    "Aktiven lokalen Entwurf löschen? Erneut „Entwurf löschen“ bestätigen. "
+                    "Nicht Cloud-synchronisiert — nur lokale Datei."
                 ),
                 draft_id=target_id,
             )
@@ -376,7 +376,7 @@ class UiV2State:
                 ok=False,
                 status=STATUS_VALIDATION_ERROR,
                 path=target,
-                error="Kein lokaler SaaS-Entwurf gewählt.",
+                error="Kein lokaler Entwurf gewählt.",
             )
             self._apply_saas_disk_result(result, operation="export")
             return result

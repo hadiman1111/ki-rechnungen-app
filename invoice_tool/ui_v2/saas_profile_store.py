@@ -262,7 +262,7 @@ class SaasProfileDiskStore:
                 ok=False,
                 status=STATUS_MISSING_BLANK,
                 path=path,
-                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                error=f"Lokaler Entwurf nicht gefunden: {normalized}",
                 draft_id=normalized,
                 locally_persisted=False,
             )
@@ -356,7 +356,7 @@ class SaasProfileDiskStore:
                 ok=False,
                 status=STATUS_MISSING_BLANK,
                 path=path,
-                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                error=f"Lokaler Entwurf nicht gefunden: {normalized}",
                 draft_id=normalized,
             )
 
@@ -444,7 +444,7 @@ class SaasProfileDiskStore:
                 ok=False,
                 status=STATUS_MISSING_BLANK,
                 path=path,
-                error=f"Lokaler SaaS-Entwurf nicht gefunden: {normalized}",
+                error=f"Lokaler Entwurf nicht gefunden: {normalized}",
                 draft_id=normalized,
                 locally_persisted=False,
             )

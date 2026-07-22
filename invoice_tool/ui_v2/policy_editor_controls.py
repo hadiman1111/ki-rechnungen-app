@@ -12,10 +12,11 @@ from dataclasses import dataclass
 import flet as ft
 
 from invoice_tool.ui_v2.components import (
+    compact_hint_block,
+    compact_info_row,
+    dense_card,
     make_info_banner,
-    make_metadata_row,
     make_section_label,
-    make_settings_panel,
 )
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_FILENAME_NOT_SOURCE_OF_TRUTH,
@@ -159,14 +160,17 @@ def build_policy_editor_controls_panel(
     controls: list[ft.Control] = [
         make_section_label(model.section_title),
         make_info_banner(model.banner),
-        make_settings_panel(
-            make_metadata_row("Hinweis", MSG_FILENAME_NOT_TRUTH),
-            make_metadata_row("Hinweis", MSG_UNCLEAR_STAYS_REVIEW),
-            make_metadata_row("Hinweis", MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT),
-            make_metadata_row("Hinweis", MSG_CARD_HINT_WITHOUT_REF_UNCLEAR),
-            make_metadata_row("Hinweis", MSG_RULES_PROFILE_CONFIGURABLE),
-            make_metadata_row("Status", MSG_PRODUCTIVE_NOT_RELEASED),
-            make_metadata_row(
+        compact_hint_block(
+            MSG_FILENAME_NOT_TRUTH,
+            MSG_UNCLEAR_STAYS_REVIEW,
+            MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT,
+            MSG_CARD_HINT_WITHOUT_REF_UNCLEAR,
+            MSG_RULES_PROFILE_CONFIGURABLE,
+            MSG_PRODUCTIVE_NOT_RELEASED,
+            title="Policy-Hinweise",
+        ),
+        dense_card(
+            compact_info_row(
                 "Bridge",
                 (
                     f"{MSG_FILENAME_NOT_SOURCE_OF_TRUTH} {MSG_UNKNOWN_EVIDENCE_REVIEW} "
@@ -178,14 +182,14 @@ def build_policy_editor_controls_panel(
     for item in model.controls:
         controls.append(make_section_label(item.label))
         controls.append(
-            make_settings_panel(
-                make_metadata_row("Wert", item.value_label),
-                make_metadata_row("Hinweis", item.detail),
-                make_metadata_row("Steuerung", item.status),
-                make_metadata_row(
+            dense_card(
+                compact_info_row("Wert", item.value_label),
+                compact_info_row("Steuerung", item.status),
+                compact_info_row(
                     "Interaktiv",
                     "Nein — Readiness only" if not item.enabled else "Ja",
                 ),
             )
         )
+        controls.append(compact_hint_block(item.detail, title=item.label))
     return controls

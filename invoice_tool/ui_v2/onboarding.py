@@ -34,6 +34,15 @@ TRACK_B_ONBOARDING_STATUS_LINES = (
     MSG_SAAS_NOT_INCLUDED,
 )
 
+# Compact workspace/settings chips — same meaning, less vertical chrome.
+COMPACT_PILOT_STATUS_ITEMS = (
+    "Lokale Pilotversion",
+    "Sandbox mit kopierten Daten",
+    "Produktiv gesperrt",
+    "Originalordner geschützt",
+    "Export nur Vorschau",
+)
+
 MSG_NEXT_STEP_PILOT_ACCEPTANCE = (
     "Nächster Schritt: Pilot-Acceptance-Gate steht noch aus."
 )
@@ -271,6 +280,7 @@ def onboarding_status_blob(vm: LocalPilotReadinessViewModel | None = None) -> st
 
 
 __all__ = (
+    "COMPACT_PILOT_STATUS_ITEMS",
     "CapabilityMatrixItem",
     "CapabilityStatus",
     "LocalPilotReadinessViewModel",

@@ -45,10 +45,10 @@ UX_STATUS_PRIVATE = "Private Defaults blockiert"
 UX_STATUS_IO = "Speicherfehler"
 
 SEPARATION_HELP = (
-    "Dieser Entwurf gehört zur SaaS-/UI-v2-Variante und ist nicht das interne Arbeitsprofil."
+    "Dieser Entwurf ist ein lokaler UI-v2-Profilentwurf und nicht das interne Arbeitsprofil."
 )
-NO_CLOUD_HELP = "Noch keine Cloud-Synchronisierung."
-SCOPE_LABEL = "SaaS-Profilentwurf (lokal)"
+NO_CLOUD_HELP = "Nicht Cloud-synchronisiert."
+SCOPE_LABEL = "Lokaler Entwurf"
 
 # Must never appear in user-facing persistence UX copy.
 _PRIVATE_UI_MARKERS: tuple[str, ...] = (
@@ -266,9 +266,19 @@ def find_forbidden_cloud_claim_violations(texts: tuple[str, ...] | list[str]) ->
             if claim.lower() in lowered:
                 violations.append(f"cloud_claim:{claim}")
         # Positive sync promise variants.
-        if "cloud-sync" in lowered and "keine" not in lowered and "noch keine" not in text.lower():
-            if "kein cloud" not in lowered and "noch keine cloud" not in lowered:
-                violations.append("cloud_claim:cloud-sync")
+        # "Cloud-synchronisiert" contains the substring "cloud-sync"; allow honest
+        # negations such as "Nicht Cloud-synchronisiert" / "keine Cloud-…".
+        negation_markers = (
+            "keine",
+            "kein cloud",
+            "noch keine",
+            "noch keine cloud",
+            "nicht cloud",
+            "nicht cloud-synchronisiert",
+            "nicht cloud-sync",
+        )
+        if "cloud-sync" in lowered and not any(marker in lowered for marker in negation_markers):
+            violations.append("cloud_claim:cloud-sync")
     return violations
 
 
@@ -363,4 +373,6 @@ def _assert_ux_copy_safe(vm: SaasPersistenceStatusVM) -> None:
     assert SEPARATION_HELP in joined
     assert NO_CLOUD_HELP in joined
     assert "interne Arbeitsprofil" in joined
-    assert "Cloud-Synchronisierung" in joined
+    assert "Nicht Cloud-synchronisiert" in joined
+    assert "Lokaler Entwurf" in joined
+    assert "SaaS-Profilentwurf" not in joined

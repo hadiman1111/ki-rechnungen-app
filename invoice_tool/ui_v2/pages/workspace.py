@@ -13,9 +13,15 @@ from typing import Callable, Literal
 import flet as ft
 from invoice_tool.ui_v2.adapters.folder_picker_adapter import choose_target_folder
 from invoice_tool.ui_v2.components import (
+    compact_checklist_block,
+    compact_hint_block,
+    compact_info_row,
+    compact_status_banner,
+    dense_card,
     display_path_value,
     divider,
     empty_state,
+    form_field_group,
     inline_warning,
     make_context_strip,
     make_destination_list_row,
@@ -33,6 +39,7 @@ from invoice_tool.ui_v2.components import (
 )
 from invoice_tool.ui_v2.edit_components import (
     action_button,
+    full_width_field,
     helper_text,
     outlined_field_kwargs,
 )
@@ -42,7 +49,9 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
 )
 from invoice_tool.ui_v2.onboarding import (
+    COMPACT_PILOT_STATUS_ITEMS,
     MSG_NEXT_STEP_FINAL_RELEASE_GATE,
+    MSG_SAAS_NOT_INCLUDED,
     TRACK_B_ONBOARDING_STATUS_LINES,
     LocalPilotReadinessViewModel,
     OnboardingChecklistItem,
@@ -160,6 +169,7 @@ SANDBOX_READINESS_LINES = WORKSPACE_SANDBOX_READINESS_LINES
 # Local pilot onboarding panel (Prompt 10) — packaging/status only.
 ONBOARDING_SECTION_LABEL = "Lokale Pilotversion / Onboarding"
 ONBOARDING_STATUS_LINES = TRACK_B_ONBOARDING_STATUS_LINES
+ONBOARDING_COMPACT_STATUS_ITEMS = COMPACT_PILOT_STATUS_ITEMS
 ONBOARDING_NEXT_STEP = MSG_NEXT_STEP_FINAL_RELEASE_GATE
 
 
@@ -169,12 +179,14 @@ class WorkspaceOnboardingPanelVM:
 
     section_label: str
     status_lines: tuple[str, ...]
+    compact_status_items: tuple[str, ...]
     checklist: tuple[OnboardingChecklistItem, ...]
     next_step: str
     readiness: LocalPilotReadinessViewModel
     implies_saas_ready: bool
     implies_productive_export: bool
     has_productive_toggle: bool
+    uses_compact_status_ui: bool
 
 
 def build_workspace_onboarding_panel_vm(
@@ -187,12 +199,14 @@ def build_workspace_onboarding_panel_vm(
     return WorkspaceOnboardingPanelVM(
         section_label=ONBOARDING_SECTION_LABEL,
         status_lines=ONBOARDING_STATUS_LINES,
+        compact_status_items=ONBOARDING_COMPACT_STATUS_ITEMS,
         checklist=readiness.checklist,
         next_step=ONBOARDING_NEXT_STEP,
         readiness=readiness,
         implies_saas_ready=False,
         implies_productive_export=False,
         has_productive_toggle=False,
+        uses_compact_status_ui=True,
     )
 
 
@@ -388,13 +402,18 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
     ]
     if report.export_available:
         export_field = ft.TextField(
-            label=EXPORT_PATH_HINT,
             value=state.workspace_export_path_draft,
+            hint_text=EXPORT_PATH_HINT,
+            expand=True,
             **outlined_field_kwargs(),
         )
         panel_controls.extend(
             [
-                export_field,
+                form_field_group(
+                    "Exportpfad",
+                    full_width_field(export_field),
+                    helper=EXPORT_PATH_HINT,
+                ),
                 action_button(
                     EXPORT_ACTION_LABEL,
                     on_click=lambda e, field=export_field: _export_click(e, field),
@@ -956,20 +975,22 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 )
             tab_blocks.append(make_full_width_panel(ft.Column(result_rows, spacing=0)))
 
-    onboarding_panel = make_settings_panel(
-        *(
-            make_metadata_row("Status", line)
-            for line in onboarding.status_lines
-        ),
-        make_metadata_row("Checkliste", ""),
-        *(
-            make_metadata_row(
-                "☐" if not item.done else "☑",
-                item.label,
-            )
-            for item in onboarding.checklist
-        ),
-        make_metadata_row("Nächster Schritt", onboarding.next_step),
+    onboarding_panel = ft.Column(
+        [
+            compact_status_banner(
+                "Lokale Pilotversion",
+                onboarding.compact_status_items,
+                detail=MSG_SAAS_NOT_INCLUDED,
+            ),
+            compact_checklist_block(
+                tuple((item.done, item.label) for item in onboarding.checklist),
+            ),
+            dense_card(
+                compact_info_row("Nächster Schritt", onboarding.next_step),
+            ),
+        ],
+        spacing=4,
+        tight=True,
     )
 
     items: list[ft.Control] = [
@@ -1001,25 +1022,23 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ]
     items.extend(_build_run_report_panel(state, run_report))
     items.append(make_section_label("Workflow"))
+    sandbox_hint_lines = list(honesty.sandbox_readiness_lines)
     if readiness.dry_gate_blocked and readiness.dry_gate_message:
-        items.append(inline_warning(readiness.dry_gate_message))
+        sandbox_hint_lines.append(readiness.dry_gate_message)
     if readiness.productive_hold and MSG_PRODUCTIVE_HOLD not in (honesty.status_line or ""):
-        items.append(inline_warning(MSG_PRODUCTIVE_HOLD))
-    # Honest sandbox readiness — no productive toggle, no auto folder create/scan.
-    for sandbox_line in honesty.sandbox_readiness_lines:
-        items.append(inline_warning(sandbox_line))
+        sandbox_hint_lines.append(MSG_PRODUCTIVE_HOLD)
     if honesty.status_line:
-        items.append(inline_warning(honesty.status_line))
+        sandbox_hint_lines.append(honesty.status_line)
     for hint in run_shell.blocked_hints:
         if hint and hint not in (honesty.status_line or ""):
-            items.append(inline_warning(hint))
+            sandbox_hint_lines.append(hint)
     if (
         not has_real_results
         and honesty.policy_intent_hint
         and honesty.policy_intent_hint not in (honesty.status_line or "")
         and honesty.policy_intent_status in {"incomplete", "blocked"}
     ):
-        items.append(inline_warning(honesty.policy_intent_hint))
+        sandbox_hint_lines.append(honesty.policy_intent_hint)
     if (
         not has_real_results
         and state.processing_run_state.status in {"blocked", "not_configured"}
@@ -1027,7 +1046,15 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ):
         # Surface contract feedback after CTA without inventing result rows.
         if state.processing_run_state.message not in (honesty.status_line or ""):
-            items.append(inline_warning(state.processing_run_state.message))
+            sandbox_hint_lines.append(state.processing_run_state.message)
+    # One compact hint block instead of many stacked warning cards.
+    deduped_hints: list[str] = []
+    for line in sandbox_hint_lines:
+        text = str(line or "").strip()
+        if text and text not in deduped_hints:
+            deduped_hints.append(text)
+    if deduped_hints:
+        items.append(compact_hint_block(*deduped_hints, title="Sandbox / Laufstatus"))
     if run_shell.review.has_items:
         items.append(
             summary_alert(

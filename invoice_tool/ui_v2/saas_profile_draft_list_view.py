@@ -26,10 +26,10 @@ from invoice_tool.ui_v2.saas_profile_store import (
 if TYPE_CHECKING:
     import flet as ft
 
-DRAFT_LIST_TITLE = "Lokale SaaS-Entwürfe"
-DRAFT_LIST_SCOPE = "SaaS-Profilentwürfe (lokal)"
+DRAFT_LIST_TITLE = "Lokale Profilentwürfe"
+DRAFT_LIST_SCOPE = "Lokale Profilentwürfe"
 LOCALITY_LABEL = "lokal / nicht Cloud"
-EMPTY_LIST_HELP = "Noch keine lokalen SaaS-Entwürfe. Neuen generischen Entwurf anlegen."
+EMPTY_LIST_HELP = "Noch keine lokalen Profilentwürfe. Neuen generischen Entwurf anlegen."
 SELECTED_NONE_LABEL = "Kein Entwurf gewählt"
 ACTION_NEW = "Neuer Entwurf"
 ACTION_LOAD = "Entwurf laden"
@@ -39,14 +39,14 @@ ACTION_DELETE = "Entwurf löschen"
 ACTION_EXPORT = "Exportieren"
 ACTION_IMPORT = "Importieren"
 DELETE_WARN = (
-    "Entwurf löschen entfernt nur den gewählten lokalen SaaS-Entwurf. "
-    "Aktiver Entwurf: erneutes „Entwurf löschen“ zur Bestätigung. Kein Cloud-Sync."
+    "Entwurf löschen entfernt nur den gewählten lokalen Entwurf. "
+    "Aktiver Entwurf: erneutes „Entwurf löschen“ zur Bestätigung. Nicht Cloud-synchronisiert."
 )
 IMPORT_EXPORT_HELP = (
-    "Import/Export gilt nur für lokale SaaS-Entwürfe — kein Cloud-Sync, "
+    "Import/Export gilt nur für lokale Profilentwürfe — nicht Cloud-synchronisiert, "
     "ohne Mandanten-Anbindung, nicht das interne Arbeitsprofil."
 )
-RENAME_FIELD_HINT = "Neuer Anzeigename (lokaler SaaS-Entwurf)"
+RENAME_FIELD_HINT = "Neuer Anzeigename (lokaler Entwurf)"
 EXPORT_PATH_HINT = "Lokaler Exportpfad (JSON)"
 IMPORT_PATH_HINT = "Lokaler Importpfad (JSON)"
 
@@ -274,14 +274,17 @@ def build_saas_draft_list_panel(
         if vm.delete_confirm_pending:
             rows.append(
                 inline_warning(
-                    "Löschen bestätigen: erneut „Entwurf löschen“ für den aktiven lokalen SaaS-Entwurf."
+                    "Löschen bestätigen: erneut „Entwurf löschen“ für den aktiven lokalen Entwurf."
                 )
             )
         rename_field: ft.TextField | None = None
         if on_rename is not None:
+            # Label above field (not floating TextField label) avoids overlap with buttons.
+            rows.append(helper_text(vm.rename_field_hint))
             rename_field = ft.TextField(
-                label=vm.rename_field_hint,
                 value=rename_value,
+                hint_text=vm.rename_field_hint,
+                expand=True,
                 **outlined_field_kwargs(),
             )
             rows.append(rename_field)
@@ -303,16 +306,20 @@ def build_saas_draft_list_panel(
         export_field: ft.TextField | None = None
         import_field: ft.TextField | None = None
         if on_export is not None:
+            rows.append(helper_text(vm.export_path_hint))
             export_field = ft.TextField(
-                label=vm.export_path_hint,
                 value=export_path_value,
+                hint_text=vm.export_path_hint,
+                expand=True,
                 **outlined_field_kwargs(),
             )
             rows.append(export_field)
         if on_import is not None:
+            rows.append(helper_text(vm.import_path_hint))
             import_field = ft.TextField(
-                label=vm.import_path_hint,
                 value=import_path_value,
+                hint_text=vm.import_path_hint,
+                expand=True,
                 **outlined_field_kwargs(),
             )
             rows.append(import_field)
@@ -332,7 +339,7 @@ def build_saas_draft_list_panel(
         if io_actions:
             rows.append(ft.Row(io_actions, spacing=SPACE_SM, wrap=True))
 
-    return ft.Column(rows, spacing=SPACE_XS, tight=True)
+    return ft.Column(rows, spacing=SPACE_SM, tight=True)
 
 
 def _row_status_label(item: SaasDraftListItem) -> str:
@@ -363,6 +370,8 @@ def _assert_draft_list_ux_safe(vm: SaasDraftListVM) -> None:
     assert NO_CLOUD_HELP in joined
     assert IMPORT_EXPORT_HELP in joined
     assert "interne Arbeitsprofil" in joined
-    assert "Cloud-Synchronisierung" in joined
+    assert "Nicht Cloud-synchronisiert" in joined
     assert "ohne Mandanten-Anbindung" in joined
-    assert "kein Cloud-Sync" in joined
+    assert "Lokale Profilentwürfe" in joined
+    assert "SaaS-Profilentwurf" not in joined
+    assert "Lokale SaaS-Entwürfe" not in joined

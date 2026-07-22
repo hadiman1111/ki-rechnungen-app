@@ -115,10 +115,11 @@ def test_help_text_separates_saas_draft_from_internal_profile() -> None:
     vm = build_saas_persistence_status_vm(store_status=STATUS_SAVED, last_saved_at="18.07.2026 10:00:00")
     texts = " ".join(vm.all_ui_texts())
     assert SEPARATION_HELP in texts
-    assert "SaaS-/UI-v2-Variante" in texts
+    assert "lokaler UI-v2-Profilentwurf" in texts
     assert "nicht das interne Arbeitsprofil" in texts
     assert "interne Arbeitsprofil" in texts
-    assert vm.scope_label == "SaaS-Profilentwurf (lokal)"
+    assert vm.scope_label == "Lokaler Entwurf"
+    assert "SaaS-Profilentwurf" not in texts
 
 
 def test_no_private_defaults_in_persistence_ux_copy() -> None:
@@ -151,7 +152,7 @@ def test_no_cloud_sync_promise_in_ux_copy() -> None:
     assert NO_CLOUD_HELP in texts
     assert find_forbidden_cloud_claim_violations(texts) == []
     joined = " ".join(texts).lower()
-    assert "noch keine cloud-synchronisierung" in joined
+    assert "nicht cloud-synchronisiert" in joined
     assert "cloud-sync aktiv" not in joined
     assert "in der cloud gespeichert" not in joined
     assert "mandantenbackend" not in joined
@@ -182,7 +183,9 @@ def test_pages_wire_persistence_status_panel() -> None:
     assert "saas_persistence_status_vm" in configs
     view_src = VIEW.read_text(encoding="utf-8")
     assert "interne Arbeitsprofil" in view_src
-    assert "Noch keine Cloud-Synchronisierung" in view_src
+    assert 'NO_CLOUD_HELP = "Nicht Cloud-synchronisiert."' in view_src
+    assert 'SCOPE_LABEL = "Lokaler Entwurf"' in view_src
+    assert 'SCOPE_LABEL = "SaaS-Profilentwurf (lokal)"' not in view_src
 
 
 def test_no_private_defaults_in_view_module_source() -> None:

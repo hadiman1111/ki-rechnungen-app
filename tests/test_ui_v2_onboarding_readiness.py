@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 from invoice_tool.ui_v2.onboarding import (
+    COMPACT_PILOT_STATUS_ITEMS,
     MSG_EXPORT_PREVIEW_NOT_DATEV,
     MSG_LOCAL_PILOT_SANDBOX,
     MSG_NEXT_STEP_FINAL_RELEASE_GATE,
@@ -23,6 +24,7 @@ from invoice_tool.ui_v2.onboarding import (
 )
 from invoice_tool.ui_v2.pages.settings import build_settings_page_vm
 from invoice_tool.ui_v2.pages.workspace import (
+    ONBOARDING_COMPACT_STATUS_ITEMS,
     ONBOARDING_STATUS_LINES,
     build_workspace_onboarding_panel_vm,
 )
@@ -111,6 +113,14 @@ def test_workspace_shows_safe_onboarding_checklist() -> None:
     labels = [item.label for item in panel.checklist]
     assert panel.status_lines == ONBOARDING_STATUS_LINES
     assert panel.status_lines == TRACK_B_ONBOARDING_STATUS_LINES
+    assert panel.compact_status_items == COMPACT_PILOT_STATUS_ITEMS
+    assert panel.compact_status_items == ONBOARDING_COMPACT_STATUS_ITEMS
+    assert panel.uses_compact_status_ui is True
+    assert "Lokale Pilotversion" in panel.compact_status_items
+    assert "Sandbox mit kopierten Daten" in panel.compact_status_items
+    assert "Produktiv gesperrt" in panel.compact_status_items
+    assert "Originalordner geschützt" in panel.compact_status_items
+    assert "Export nur Vorschau" in panel.compact_status_items
     assert "Profil wählen oder vorbereiten." in labels
     assert "Kopierte Testdaten verwenden." in labels
     assert "Originalordner getrennt halten." in labels
