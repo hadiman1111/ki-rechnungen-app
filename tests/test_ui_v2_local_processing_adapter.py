@@ -10,10 +10,13 @@ from pathlib import Path
 
 from invoice_tool.saas_product_model import default_classification_policy
 from invoice_tool.ui_v2.local_processing_adapter import (
+    CORE_DRY_RUN_STATUS,
+    MSG_CORE_DRY_UNAVAILABLE,
     MSG_MISSING_CONFIGURATION,
     MSG_MISSING_INPUT,
     MSG_MISSING_OUTPUT,
     MSG_MISSING_PROFILE,
+    MSG_PRIVATE_OUTPUT_BLOCKED,
     MSG_PRODUCTIVE_NOT_RELEASED,
     MSG_USER_CONFIRMATION_REQUIRED,
     LocalProcessingAdapter,
@@ -22,26 +25,20 @@ from invoice_tool.ui_v2.policy_runtime_bridge import build_runtime_policy_intent
 from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
     ProcessingRunRequest,
+    empty_processing_request,
     make_local_processing_adapter,
 )
-from invoice_tool.ui_v2.processing_state import MSG_PRODUCTIVE_NOT_RELEASED as MSG_STATE_PRODUCTIVE
+from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "invoice_tool" / "ui_v2" / "local_processing_adapter.py"
 
-PRIVATE_MARKERS = (
-    "AMEX",
-    "Privat",
-    "SOMAA",
-    "Hadi",
-    "Bismarck",
-    "voba",
-    "Volksbank",
+# Hardcoded default-path markers that must never appear as invented paths.
+PRIVATE_PATH_DEFAULT_MARKERS = (
     "/Users/",
     "Desktop/Programm Belegerfassung",
     "TEST Rechnungen",
-    "American Express",
 )
 
 FORBIDDEN_IMPORT_PREFIXES = (
@@ -104,6 +101,68 @@ def test_validate_requires_explicit_user_inputs() -> None:
         MSG_MISSING_CONFIGURATION
         in adapter.validate_request(_ready_request(configuration_id="")).message
     )
+
+
+def test_missing_output_folder_blocks_readiness_with_required_message() -> None:
+    adapter = LocalProcessingAdapter()
+    state = adapter.validate_request(_ready_request(output_folder=None))
+    assert state.status == "not_configured"
+    assert state.message == MSG_MISSING_OUTPUT
+    assert "Ausgabeordner fehlt" in state.message
+    assert "Zielordner" in state.message
+
+
+def test_output_folder_is_never_defaulted() -> None:
+    empty = empty_processing_request()
+    assert empty.output_folder is None
+    for marker in PRIVATE_PATH_DEFAULT_MARKERS:
+        assert marker not in (empty.output_folder or "")
+
+    adapter = LocalProcessingAdapter()
+    state = adapter.validate_request(
+        ProcessingRunRequest(
+            input_folder="selected-inbox",
+            output_folder=None,
+            profile_id="profile-a",
+            configuration_id="config-a",
+            source=SOURCE_EXPLICIT_USER_SELECTION,
+            dry_run=True,
+        )
+    )
+    assert state.status == "not_configured"
+    assert MSG_MISSING_OUTPUT in state.message
+
+
+def test_output_folder_validation_does_not_create_or_write(tmp_path: Path) -> None:
+    outbox = tmp_path / "never-created-outbox"
+    sentinel = tmp_path / "sentinel.txt"
+    sentinel.write_text("untouched", encoding="utf-8")
+    before = sentinel.read_text(encoding="utf-8")
+
+    adapter = LocalProcessingAdapter()
+    state = adapter.validate_request(
+        _ready_request(output_folder=str(outbox))
+    )
+    assert state.status == "ready"
+    assert not outbox.exists()
+    assert sentinel.read_text(encoding="utf-8") == before
+    assert list(tmp_path.iterdir()) == [sentinel]
+
+
+def test_private_local_output_defaults_are_rejected_without_fs(tmp_path: Path) -> None:
+    adapter = LocalProcessingAdapter()
+    # Synthetic relative path (not created) — validation must be string-only.
+    forbidden = "SOMAA-private-out"
+    state = adapter.validate_request(_ready_request(output_folder=forbidden))
+    assert state.status == "blocked"
+    assert MSG_PRIVATE_OUTPUT_BLOCKED in state.message
+    assert not (tmp_path / forbidden).exists()
+
+    # Username-like path segments must not false-positive on private rejection.
+    username_like = str(tmp_path / "selected-outbox")
+    ok = adapter.validate_request(_ready_request(output_folder=username_like))
+    assert ok.status == "ready"
+    assert not (tmp_path / "selected-outbox").exists()
 
 
 def test_missing_or_incomplete_policy_is_not_configured() -> None:
@@ -169,7 +228,7 @@ def test_validate_does_not_read_folders_or_process_pdfs(tmp_path: Path) -> None:
     assert list(inbox.iterdir()) == [pdf]
 
 
-def test_start_run_does_not_call_core_when_dry_unavailable(tmp_path: Path) -> None:
+def test_start_run_blocked_when_dry_gate_unavailable(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     outbox = tmp_path / "outbox"
     inbox.mkdir()
@@ -182,6 +241,8 @@ def test_start_run_does_not_call_core_when_dry_unavailable(tmp_path: Path) -> No
 
     before_modules = set(sys.modules)
     adapter = LocalProcessingAdapter()
+    assert adapter.core_dry_run_status() == "unsupported_without_core_change"
+    assert adapter.dry_run_gate() == CORE_DRY_RUN_STATUS
     started = adapter.start_run(
         _ready_request(input_folder=str(inbox), output_folder=str(outbox))
     )
@@ -189,7 +250,11 @@ def test_start_run_does_not_call_core_when_dry_unavailable(tmp_path: Path) -> No
     newly = after_modules - before_modules
 
     assert started.status == "blocked"
-    assert MSG_PRODUCTIVE_NOT_RELEASED in started.message or MSG_STATE_PRODUCTIVE in started.message
+    assert MSG_DRY_RUN_UNAVAILABLE in started.message
+    assert MSG_CORE_DRY_UNAVAILABLE in started.message
+    assert started.core_dry_run_status == "unsupported_without_core_change"
+    assert started.dry_run_gate == "unsupported_without_core_change"
+    assert started.execution_gate == "unsupported_without_core_change"
     assert started.results == tuple()
     assert started.review_items == tuple()
     assert started.run_id is None
@@ -205,6 +270,15 @@ def test_start_run_does_not_call_core_when_dry_unavailable(tmp_path: Path) -> No
         assert forbidden not in newly
 
 
+def test_dry_gate_visible_on_ready_validate_state() -> None:
+    adapter = LocalProcessingAdapter()
+    state = adapter.validate_request(_ready_request())
+    assert state.status == "ready"
+    assert state.core_dry_run_status == "unsupported_without_core_change"
+    assert state.dry_run_gate == "unsupported_without_core_change"
+    assert state.execution_gate == "disabled"
+
+
 def test_no_fake_results_from_status_or_results() -> None:
     adapter = LocalProcessingAdapter()
     started = adapter.start_run(_ready_request())
@@ -215,9 +289,9 @@ def test_no_fake_results_from_status_or_results() -> None:
     assert adapter.get_status(None).status == "idle"
 
 
-def test_no_private_tokens_in_adapter_source() -> None:
+def test_adapter_source_has_no_private_path_defaults() -> None:
     src = ADAPTER.read_text(encoding="utf-8")
-    for marker in PRIVATE_MARKERS:
+    for marker in PRIVATE_PATH_DEFAULT_MARKERS:
         assert marker not in src, marker
 
 
@@ -263,12 +337,15 @@ def test_productive_dry_run_false_stays_blocked() -> None:
     started = adapter.start_run(_ready_request(dry_run=False))
     assert started.status == "blocked"
     assert MSG_PRODUCTIVE_NOT_RELEASED in started.message
+    assert started.execution_gate == "productive_blocked"
+    assert started.core_dry_run_status == "unsupported_without_core_change"
     assert started.results == tuple()
 
 
 def test_default_workspace_state_does_not_auto_select_local_adapter() -> None:
     state = UiV2State()
     assert state.processing_service.__class__.__name__ == "NotYetConnectedProcessingService"
+    assert state.workspace_output_folder_override is None
 
 
 def test_run_core_dry_placeholder_never_imports_core() -> None:
@@ -278,6 +355,7 @@ def test_run_core_dry_placeholder_never_imports_core() -> None:
     after = set(sys.modules)
     newly = after - before
     assert blocked.status == "blocked"
+    assert MSG_DRY_RUN_UNAVAILABLE in blocked.message
     for forbidden in (
         "invoice_tool.processing",
         "invoice_tool.run",

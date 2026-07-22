@@ -79,6 +79,8 @@ class UiV2State:
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
     workspace_input_folder_override: str | None = None
+    # Explicit user-selected output only — never defaulted to Desktop/private paths.
+    workspace_output_folder_override: str | None = None
     workspace_expanded_results: set[str] = field(default_factory=set)
     workspace_rename_drafts: dict[str, str] = field(default_factory=dict)
 

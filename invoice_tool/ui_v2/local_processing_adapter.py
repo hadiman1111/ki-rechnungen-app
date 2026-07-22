@@ -10,6 +10,8 @@ does not touch Track A.
 
 from __future__ import annotations
 
+import re
+
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_POLICY_INCOMPLETE,
     MSG_UNKNOWN_EVIDENCE_REVIEW,
@@ -17,10 +19,12 @@ from invoice_tool.ui_v2.policy_runtime_bridge import (
 )
 from invoice_tool.ui_v2.processing_contract import ProcessingRunRequest
 from invoice_tool.ui_v2.processing_state import (
+    MSG_DRY_RUN_UNAVAILABLE,
     MSG_IDLE,
     MSG_POLICY_BLOCKED,
     MSG_POLICY_NOT_READY,
     MSG_PRODUCTIVE_NOT_RELEASED,
+    ExecutionGateStatus,
     ProcessingRunState,
     blocked_processing_state,
     idle_processing_state,
@@ -29,7 +33,10 @@ from invoice_tool.ui_v2.processing_state import (
 )
 
 MSG_MISSING_INPUT = "Eingangsordner fehlt. Bitte einen Ordner explizit wählen."
-MSG_MISSING_OUTPUT = "Zielordner fehlt. Bitte einen Ausgabeordner explizit wählen."
+MSG_MISSING_OUTPUT = (
+    "Ausgabeordner fehlt. Bitte wähle einen Zielordner, "
+    "bevor eine Verarbeitung vorbereitet wird."
+)
 MSG_MISSING_PROFILE = "Profil fehlt. Bitte ein Profil explizit wählen."
 MSG_MISSING_CONFIGURATION = "Konfiguration fehlt. Bitte eine Konfiguration explizit wählen."
 MSG_MISSING_SOURCE = "Keine explizite Benutzerauswahl als Quelle gesetzt."
@@ -42,13 +49,30 @@ MSG_USER_CONFIRMATION_REQUIRED = (
 MSG_FILENAME_SOT_BLOCKED = (
     "Dateiname darf keine Beweisquelle sein; Lauf-Intent ist blockiert."
 )
+MSG_PRIVATE_OUTPUT_BLOCKED = (
+    "Ausgabeordner ist ungültig. Private oder lokale Standardpfade sind nicht erlaubt; "
+    "bitte einen explizit gewählten Zielordner setzen."
+)
 MSG_READY_LOCAL_ADAPTER = (
     "Anfrage ist vollständig und policy-ready; "
     "produktive Ausführung ist noch nicht freigegeben (kein sicherer Core-Dry-Pfad)."
 )
 MSG_UNKNOWN_RUN = "Kein aktiver Lauf (run_id unbekannt)."
-MSG_CORE_DRY_UNAVAILABLE = (
-    "Kein sicherer dry/no-mutation Core-Aufruf verfügbar ohne Processing-Core-Änderung."
+# Backward-compatible alias for the required dry-gate wording.
+MSG_CORE_DRY_UNAVAILABLE = MSG_DRY_RUN_UNAVAILABLE
+
+# Core dry/no-mutation finding (read-only inspection of run_once): unsupported.
+CORE_DRY_RUN_STATUS: ExecutionGateStatus = "unsupported_without_core_change"
+
+# Path tokens that must never be invented as defaults and are rejected if present.
+# Token/segment checks only — no filesystem access, no directory creation.
+# Avoid bare substrings like "hadi" that would false-positive on usernames.
+_FORBIDDEN_PRIVATE_PATH_RE = re.compile(
+    r"(?:^|[/\\_\-\s])"
+    r"(?:somaa|bismarck|amex|voba|volksbank|american express|test rechnungen|"
+    r"programm belegerfassung)"
+    r"(?:[/\\_\-\s]|$)",
+    re.IGNORECASE,
 )
 
 
@@ -59,37 +83,116 @@ class LocalProcessingAdapter:
         # In-memory run states only — never populated from filesystem scans.
         self._runs: dict[str, ProcessingRunState] = {}
 
+    def core_dry_run_status(self) -> ExecutionGateStatus:
+        """Whether a safe dry/no-mutation core entrypoint exists (never calls core)."""
+
+        return CORE_DRY_RUN_STATUS
+
+    def dry_run_gate(self) -> ExecutionGateStatus:
+        """Adapter-level dry/no-mutation gate status."""
+
+        return CORE_DRY_RUN_STATUS
+
+    def execution_gate(self, *, dry_run: bool = True) -> ExecutionGateStatus:
+        """Whether real execution may proceed for the given mode."""
+
+        if not dry_run:
+            return "productive_blocked"
+        if self.core_dry_run_status() == "dry_run_available":
+            return "dry_run_available"
+        return "unsupported_without_core_change"
+
     def validate_request(self, request: ProcessingRunRequest) -> ProcessingRunState:
         """Validate request structure and policy readiness — no folder IO, no PDFs."""
 
+        gate_disabled: ExecutionGateStatus = "disabled"
+        dry_status = self.core_dry_run_status()
+
         if not request.has_explicit_user_source():
-            return not_configured_processing_state(MSG_MISSING_SOURCE)
+            return not_configured_processing_state(
+                MSG_MISSING_SOURCE,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
         if request.normalized_input_folder() is None:
-            return not_configured_processing_state(MSG_MISSING_INPUT)
+            return not_configured_processing_state(
+                MSG_MISSING_INPUT,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
         if request.normalized_output_folder() is None:
-            return not_configured_processing_state(MSG_MISSING_OUTPUT)
+            return not_configured_processing_state(
+                MSG_MISSING_OUTPUT,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
+        if self._is_forbidden_private_default_path(request.normalized_output_folder()):
+            return blocked_processing_state(
+                MSG_PRIVATE_OUTPUT_BLOCKED,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
         if request.normalized_profile_id() is None:
-            return not_configured_processing_state(MSG_MISSING_PROFILE)
+            return not_configured_processing_state(
+                MSG_MISSING_PROFILE,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
         if request.normalized_configuration_id() is None:
-            return not_configured_processing_state(MSG_MISSING_CONFIGURATION)
+            return not_configured_processing_state(
+                MSG_MISSING_CONFIGURATION,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         policy = request.effective_policy_bridge_result()
         if policy is None or policy.status == "incomplete":
-            return not_configured_processing_state(MSG_MISSING_POLICY_INTENT)
+            return not_configured_processing_state(
+                MSG_MISSING_POLICY_INTENT,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
         if policy.status == "blocked":
             detail = "; ".join(policy.warnings) if policy.warnings else MSG_POLICY_BLOCKED
-            return blocked_processing_state(f"{MSG_POLICY_BLOCKED} {detail}")
+            return blocked_processing_state(
+                f"{MSG_POLICY_BLOCKED} {detail}",
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         intent = request.policy_intent or (policy.intent if policy is not None else None)
         if intent is None:
-            return not_configured_processing_state(MSG_MISSING_POLICY_INTENT)
+            return not_configured_processing_state(
+                MSG_MISSING_POLICY_INTENT,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         filename_gate = self._filename_not_source_of_truth(intent)
         if filename_gate is not None:
-            return blocked_processing_state(filename_gate)
+            return blocked_processing_state(
+                filename_gate,
+                execution_gate=gate_disabled,
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         # Structure + policy ready — does not imply productive or dry core execution.
-        return ready_processing_state(MSG_READY_LOCAL_ADAPTER)
+        return ready_processing_state(
+            MSG_READY_LOCAL_ADAPTER,
+            execution_gate=gate_disabled,
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
+        )
 
     def start_run(self, request: ProcessingRunRequest) -> ProcessingRunState:
         """Start only after validate is ready and user confirmed; never auto-runs."""
@@ -98,12 +201,23 @@ class LocalProcessingAdapter:
         if validated.status in {"not_configured", "blocked"}:
             return validated
 
+        dry_status = self.core_dry_run_status()
         if not request.user_confirmed_start:
-            return blocked_processing_state(MSG_USER_CONFIRMATION_REQUIRED)
+            return blocked_processing_state(
+                MSG_USER_CONFIRMATION_REQUIRED,
+                execution_gate="disabled",
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         # Productive mutation is not PO-released in this task.
         if not request.dry_run:
-            return blocked_processing_state(MSG_PRODUCTIVE_NOT_RELEASED)
+            return blocked_processing_state(
+                MSG_PRODUCTIVE_NOT_RELEASED,
+                execution_gate="productive_blocked",
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
 
         # Core has no safe dry/no-mutation flag — refuse without importing core.
         return self._run_core_dry_no_mutation(request)
@@ -117,7 +231,13 @@ class LocalProcessingAdapter:
         known = self._runs.get(key)
         if known is not None:
             return known
-        return blocked_processing_state(MSG_UNKNOWN_RUN)
+        dry_status = self.core_dry_run_status()
+        return blocked_processing_state(
+            MSG_UNKNOWN_RUN,
+            execution_gate="disabled",
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
+        )
 
     def get_results(self, run_id: str | None) -> ProcessingRunState:
         """Return real adapter-memory results only — never invent rows."""
@@ -130,7 +250,22 @@ class LocalProcessingAdapter:
             results=tuple(state.results),
             review_items=tuple(state.review_items),
             errors=tuple(state.errors),
+            execution_gate=state.execution_gate,
+            dry_run_gate=state.dry_run_gate,
+            core_dry_run_status=state.core_dry_run_status,
         )
+
+    def _is_forbidden_private_default_path(self, folder: str | None) -> bool:
+        """Reject known private/local default path tokens — string-only, no FS IO."""
+
+        if folder is None:
+            return False
+        value = folder.strip()
+        if not value:
+            return False
+        # Normalize separators so token boundaries are stable.
+        normalized = f"/{value.replace(chr(92), '/')}"
+        return _FORBIDDEN_PRIVATE_PATH_RE.search(normalized) is not None
 
     def _filename_not_source_of_truth(self, intent: RuntimePolicyIntent) -> str | None:
         filename_policy = intent.filename_policy or {}
@@ -150,13 +285,17 @@ class LocalProcessingAdapter:
 
         invoice_tool.run.run_once has no dry/no-mutation mode today. Calling it
         would snapshot/process PDFs and mutate outputs — forbidden without a
-        separate productive PO gate and/or CORE_CHANGE_REQUIRED.
+        separate productive PO gate and/or CORE_DRY_GATE_REQUIRES_CORE_CHANGE.
 
         This method therefore returns blocked by default and must not import
         invoice_tool.processing / invoice_tool.run / routing / classification.
         """
 
         _ = request  # explicit: request already validated; unused until dry API exists
+        dry_status = self.core_dry_run_status()
         return blocked_processing_state(
-            f"{MSG_PRODUCTIVE_NOT_RELEASED} {MSG_CORE_DRY_UNAVAILABLE}"
+            MSG_DRY_RUN_UNAVAILABLE,
+            execution_gate="unsupported_without_core_change",
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
         )

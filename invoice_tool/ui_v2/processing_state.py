@@ -19,6 +19,14 @@ ProcessingStatus = Literal[
     "blocked",
 ]
 
+# Explicit dry / execution gate markers for LocalProcessingAdapter readiness.
+ExecutionGateStatus = Literal[
+    "disabled",
+    "dry_run_available",
+    "productive_blocked",
+    "unsupported_without_core_change",
+]
+
 MSG_IDLE = "Noch kein Lauf gestartet."
 MSG_NOT_CONFIGURED = (
     "Verarbeitung noch nicht konfiguriert. "
@@ -31,6 +39,9 @@ MSG_READY = "Anfrage ist vorbereitet; produktive Verarbeitung ist noch nicht ang
 MSG_PRODUCTIVE_NOT_RELEASED = (
     "Lokaler Verarbeitungsadapter ist vorbereitet, aber produktive Ausführung "
     "ist noch nicht freigegeben."
+)
+MSG_DRY_RUN_UNAVAILABLE = (
+    "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar."
 )
 MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
 MSG_COMPLETED = "Lauf abgeschlossen."
@@ -68,6 +79,10 @@ class ProcessingRunState:
     results: tuple[ProcessingResultSummary, ...] = field(default_factory=tuple)
     review_items: tuple[ProcessingReviewItem, ...] = field(default_factory=tuple)
     errors: tuple[str, ...] = field(default_factory=tuple)
+    # Dry / no-mutation gate visibility (None = not evaluated / not applicable).
+    execution_gate: ExecutionGateStatus | None = None
+    dry_run_gate: ExecutionGateStatus | None = None
+    core_dry_run_status: ExecutionGateStatus | None = None
 
     @property
     def has_results(self) -> bool:
@@ -82,15 +97,51 @@ def idle_processing_state(message: str = MSG_IDLE) -> ProcessingRunState:
     return ProcessingRunState(status="idle", message=message)
 
 
-def not_configured_processing_state(message: str = MSG_NOT_CONFIGURED) -> ProcessingRunState:
-    return ProcessingRunState(status="not_configured", message=message)
+def not_configured_processing_state(
+    message: str = MSG_NOT_CONFIGURED,
+    *,
+    execution_gate: ExecutionGateStatus | None = None,
+    dry_run_gate: ExecutionGateStatus | None = None,
+    core_dry_run_status: ExecutionGateStatus | None = None,
+) -> ProcessingRunState:
+    return ProcessingRunState(
+        status="not_configured",
+        message=message,
+        execution_gate=execution_gate,
+        dry_run_gate=dry_run_gate,
+        core_dry_run_status=core_dry_run_status,
+    )
 
 
-def blocked_processing_state(message: str = MSG_BLOCKED_ADAPTER) -> ProcessingRunState:
-    return ProcessingRunState(status="blocked", message=message)
+def blocked_processing_state(
+    message: str = MSG_BLOCKED_ADAPTER,
+    *,
+    execution_gate: ExecutionGateStatus | None = None,
+    dry_run_gate: ExecutionGateStatus | None = None,
+    core_dry_run_status: ExecutionGateStatus | None = None,
+) -> ProcessingRunState:
+    return ProcessingRunState(
+        status="blocked",
+        message=message,
+        execution_gate=execution_gate,
+        dry_run_gate=dry_run_gate,
+        core_dry_run_status=core_dry_run_status,
+    )
 
 
-def ready_processing_state(message: str = MSG_READY) -> ProcessingRunState:
+def ready_processing_state(
+    message: str = MSG_READY,
+    *,
+    execution_gate: ExecutionGateStatus | None = None,
+    dry_run_gate: ExecutionGateStatus | None = None,
+    core_dry_run_status: ExecutionGateStatus | None = None,
+) -> ProcessingRunState:
     """Logical readiness only — does not imply a connected productive adapter."""
 
-    return ProcessingRunState(status="ready", message=message)
+    return ProcessingRunState(
+        status="ready",
+        message=message,
+        execution_gate=execution_gate,
+        dry_run_gate=dry_run_gate,
+        core_dry_run_status=core_dry_run_status,
+    )

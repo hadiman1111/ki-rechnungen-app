@@ -7,6 +7,10 @@ import importlib
 import sys
 from pathlib import Path
 
+from invoice_tool.ui_v2.local_processing_adapter import (
+    MSG_MISSING_OUTPUT,
+    LocalProcessingAdapter,
+)
 from invoice_tool.ui_v2.pages.workspace import (
     ADAPTER_NOT_CONNECTED_HINT,
     START_CTA_LABEL,
@@ -21,6 +25,7 @@ from invoice_tool.ui_v2.processing_contract import (
 )
 from invoice_tool.ui_v2.processing_state import (
     MSG_BLOCKED_ADAPTER,
+    MSG_DRY_RUN_UNAVAILABLE,
     blocked_processing_state,
     idle_processing_state,
     not_configured_processing_state,
@@ -131,6 +136,69 @@ def test_cta_sets_user_confirmed_start_without_auto_processing() -> None:
     )
     assert request.user_confirmed_start is True
     assert request.output_folder is None
+
+
+def test_workspace_reports_missing_output_folder_honestly() -> None:
+    state = UiV2State(processing_service=LocalProcessingAdapter())
+    state.workspace_input_folder_override = "selected-inbox"
+    state.workspace_output_folder_override = None
+    result = apply_start_processing(
+        state, profile_id="profile-a"
+    )
+    # Local adapter requires explicit output; profile/config may also be missing.
+    # Force validate path with full args via request builder + adapter.
+    request = build_processing_run_request(
+        state,
+        profile_id="profile-a",
+        configuration_id="config-a",
+        user_confirmed_start=True,
+    )
+    assert request.output_folder is None
+    validated = state.processing_service.validate_request(request)
+    assert validated.status == "not_configured"
+    assert MSG_MISSING_OUTPUT in validated.message
+
+    copy = workspace_honesty_copy(
+        has_real_results=False,
+        processing_state=validated,
+    )
+    assert copy.processing_status == "not_configured"
+    assert MSG_MISSING_OUTPUT in (copy.status_line or "")
+    assert MSG_MISSING_OUTPUT in (copy.results_detail or "")
+    assert result.results == tuple()
+
+
+def test_workspace_output_override_is_explicit_only_never_defaulted() -> None:
+    state = UiV2State()
+    assert state.workspace_output_folder_override is None
+    empty = build_processing_run_request(state)
+    assert empty.output_folder is None
+
+    state.workspace_output_folder_override = "user-selected-outbox"
+    filled = build_processing_run_request(
+        state,
+        profile_id="profile-a",
+        configuration_id="config-a",
+    )
+    assert filled.output_folder == "user-selected-outbox"
+    for marker in PRIVATE_MARKERS:
+        assert marker not in (filled.output_folder or "")
+
+
+def test_workspace_dry_gate_unavailable_honesty_copy() -> None:
+    copy = workspace_honesty_copy(
+        has_real_results=False,
+        processing_state=blocked_processing_state(
+            MSG_DRY_RUN_UNAVAILABLE,
+            execution_gate="unsupported_without_core_change",
+            dry_run_gate="unsupported_without_core_change",
+            core_dry_run_status="unsupported_without_core_change",
+        ),
+    )
+    assert copy.processing_status == "blocked"
+    assert MSG_DRY_RUN_UNAVAILABLE in (copy.status_line or "")
+    assert "running" not in (copy.status_line or "").lower()
+    assert "abgeschlossen" not in (copy.status_line or "").lower()
 
 
 def test_workspace_policy_bridge_ready_hint_is_optional() -> None:

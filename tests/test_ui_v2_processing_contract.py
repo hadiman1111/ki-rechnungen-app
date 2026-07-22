@@ -196,6 +196,24 @@ def test_idle_state_is_empty() -> None:
     assert isinstance(state, ProcessingRunState)
     assert state.results == tuple()
     assert state.review_items == tuple()
+    assert state.execution_gate is None
+    assert state.dry_run_gate is None
+    assert state.core_dry_run_status is None
+
+
+def test_processing_run_state_exposes_dry_gate_fields() -> None:
+    from invoice_tool.ui_v2.processing_state import blocked_processing_state
+
+    state = blocked_processing_state(
+        "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar.",
+        execution_gate="unsupported_without_core_change",
+        dry_run_gate="unsupported_without_core_change",
+        core_dry_run_status="unsupported_without_core_change",
+    )
+    assert state.execution_gate == "unsupported_without_core_change"
+    assert state.dry_run_gate == "unsupported_without_core_change"
+    assert state.core_dry_run_status == "unsupported_without_core_change"
+    assert state.results == tuple()
 
 
 def test_contract_modules_do_not_import_track_a_or_processing_core() -> None:

@@ -41,8 +41,10 @@ from invoice_tool.ui_v2.processing_contract import (
     SOURCE_UNSET,
     ProcessingRunRequest,
 )
+from invoice_tool.ui_v2.local_processing_adapter import MSG_MISSING_OUTPUT
 from invoice_tool.ui_v2.processing_state import (
     MSG_BLOCKED_ADAPTER,
+    MSG_DRY_RUN_UNAVAILABLE,
     MSG_IDLE,
     MSG_NOT_CONFIGURED,
     MSG_POLICY_NOT_READY,
@@ -152,9 +154,10 @@ def build_processing_run_request(
     """Build a contract request from explicit UI-v2 selection only (no private defaults)."""
 
     folder = (state.workspace_input_folder_override or "").strip() or None
+    output_folder = (state.workspace_output_folder_override or "").strip() or None
     source = SOURCE_EXPLICIT_USER_SELECTION if folder else SOURCE_UNSET
     policy_bridge = resolve_workspace_policy_bridge(state)
-    # Output folder is not collected in workspace yet — keep None (no private defaults).
+    # Output folder only from explicit override — never Desktop/private defaults.
     # Profile/config only from explicit caller args or explicit UI selection fields —
     # never invent private tenant defaults (do not fall back to state.selected_profile_id="local").
     resolved_configuration = (
@@ -165,7 +168,7 @@ def build_processing_run_request(
     resolved_profile = (profile_id or "").strip() or None
     return ProcessingRunRequest(
         input_folder=folder,
-        output_folder=None,
+        output_folder=output_folder,
         profile_id=resolved_profile,
         configuration_id=resolved_configuration,
         dry_run=True,
@@ -255,7 +258,9 @@ def workspace_honesty_copy(
             detail = f"{policy_hint} {detail}"
     elif status == "not_configured":
         status_line = f"{MSG_NOT_CONFIGURED} {EMPTY_NO_RUN_STATUS}."
-        if policy_hint and (
+        if MSG_MISSING_OUTPUT in (proc.message or ""):
+            status_line = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_STATUS}."
+        elif policy_hint and (
             MSG_POLICY_INCOMPLETE in (proc.message or "")
             or MSG_POLICY_NOT_READY in (proc.message or "")
         ):
@@ -264,7 +269,9 @@ def workspace_honesty_copy(
             f"{MSG_NOT_CONFIGURED} "
             f"{EMPTY_NO_RUN_DETAIL}"
         )
-        if policy_hint:
+        if MSG_MISSING_OUTPUT in (proc.message or ""):
+            detail = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_DETAIL}"
+        elif policy_hint:
             detail = f"{policy_hint} {detail}"
     else:
         status_line = f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}."
@@ -273,6 +280,15 @@ def workspace_honesty_copy(
         detail = EMPTY_NO_RUN_DETAIL
         if policy_hint:
             detail = f"{policy_hint} {detail}"
+
+    # Surface dry/no-mutation gate honestly when adapter reports it.
+    if status == "blocked" and MSG_DRY_RUN_UNAVAILABLE in (proc.message or ""):
+        status_line = f"{MSG_DRY_RUN_UNAVAILABLE} {EMPTY_NO_RUN_STATUS}."
+        detail = (
+            f"{MSG_DRY_RUN_UNAVAILABLE} "
+            "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen "
+            "angebundenen Adapter. Unklare Dokumente werden später im Prüfbereich angezeigt."
+        )
 
     return WorkspaceHonestyCopy(
         has_real_results=False,
