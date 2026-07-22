@@ -21,13 +21,37 @@ from invoice_tool.ui_v2.components import (
     make_destination_list_row,
     make_ergebnis_row,
     make_full_width_panel,
+    make_metadata_row,
     make_section_label,
+    make_settings_panel,
     make_tab_bar,
     make_workspace_folder_selection_panel,
     make_workspace_run_panel,
     page_header,
     page_scaffold,
     summary_alert,
+)
+from invoice_tool.ui_v2.edit_components import (
+    action_button,
+    helper_text,
+    outlined_field_kwargs,
+)
+from invoice_tool.ui_v2.export_reporting import (
+    MSG_DESTINATIONS_EMPTY,
+    MSG_EXPORT_FROM_REAL_RUN,
+    MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
+    MSG_FAILED_EMPTY,
+    MSG_NO_RUN_PAYLOAD,
+    MSG_PLANNED_DESTINATION_HINT,
+    MSG_RECOGNIZED_EMPTY,
+    MSG_UNCLEAR_EMPTY,
+    RunReportViewModel,
+    SECTION_DESTINATIONS,
+    SECTION_FAILED,
+    SECTION_RECOGNIZED,
+    SECTION_SUMMARY,
+    SECTION_UNCLEAR,
+    build_run_report_view_model,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
 from invoice_tool.saas_product_model import default_classification_policy
@@ -102,6 +126,9 @@ EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgabeordner gewählt."
 PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
 PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
 FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
+RUN_REPORT_SECTION_LABEL = "Ergebnisbericht"
+EXPORT_PATH_HINT = "Lokaler Exportpfad (JSON oder Ordner)"
+EXPORT_ACTION_LABEL = "Ergebnisse exportieren"
 
 # Honest sandbox readiness copy — no productive toggle, no folder create/scan.
 SANDBOX_MODE_PREPARED = MSG_SANDBOX_MODE_PREPARED
@@ -220,6 +247,109 @@ def build_workspace_run_result_shell(state: UiV2State) -> RunResultDisplayShellV
     """Pure workspace run-result shell from ProcessingRunState — no GUI / no FS."""
 
     return build_run_result_display_shell(state.processing_run_state)
+
+
+def build_workspace_run_report_vm(state: UiV2State) -> RunReportViewModel:
+    """Five-question run report from ProcessingRunState — no GUI / no FS invent."""
+
+    return build_run_report_view_model(state.processing_run_state)
+
+
+def _report_item_lines(report: RunReportViewModel) -> list[tuple[str, str]]:
+    """Compact metadata rows for the five report questions."""
+
+    if report.empty:
+        return [
+            (SECTION_RECOGNIZED, MSG_RECOGNIZED_EMPTY),
+            (SECTION_UNCLEAR, MSG_UNCLEAR_EMPTY),
+            (SECTION_FAILED, MSG_FAILED_EMPTY),
+            (SECTION_DESTINATIONS, MSG_DESTINATIONS_EMPTY),
+            (SECTION_SUMMARY, MSG_NO_RUN_PAYLOAD),
+        ]
+
+    recognized_detail = (
+        ", ".join(
+            f"{item.document_name} ({item.document_type}/{item.status_label})"
+            for item in report.recognized[:8]
+        )
+        or MSG_RECOGNIZED_EMPTY
+    )
+    unclear_detail = (
+        ", ".join(f"{item.document_name}: {item.reason}" for item in report.unclear[:8])
+        or MSG_UNCLEAR_EMPTY
+    )
+    failed_detail = (
+        ", ".join(
+            (f"{item.document_name}: {item.message}" if item.document_name else item.message)
+            for item in report.failed[:8]
+        )
+        or MSG_FAILED_EMPTY
+    )
+    destination_detail = (
+        ", ".join(
+            f"{item.document_name} → {item.destination_hint}"
+            for item in report.destinations[:8]
+        )
+        or MSG_DESTINATIONS_EMPTY
+    )
+    return [
+        (SECTION_RECOGNIZED, recognized_detail),
+        (SECTION_UNCLEAR, unclear_detail),
+        (SECTION_FAILED, failed_detail),
+        (SECTION_DESTINATIONS, destination_detail),
+        (SECTION_SUMMARY, report.user_summary.headline),
+    ]
+
+
+def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> list[ft.Control]:
+    """Workspace Ergebnisbericht + Export — no original mutation, no processing start."""
+
+    def _refresh() -> None:
+        if state.refresh:
+            state.refresh()
+
+    def _export_click(_e: ft.ControlEvent, field: ft.TextField | None = None) -> None:
+        path = (field.value if field is not None else state.workspace_export_path_draft) or ""
+        state.export_run_report(path)
+        _refresh()
+
+    rows: list[ft.Control] = [
+        make_metadata_row("Status", report.status_label),
+        make_metadata_row("Lauf-ID", report.run_id or "—"),
+    ]
+    for label, value in _report_item_lines(report):
+        rows.append(make_metadata_row(label, value))
+    rows.append(make_metadata_row("Zusammenfassung", report.user_summary.detail))
+    panel_controls: list[ft.Control] = [
+        make_section_label(RUN_REPORT_SECTION_LABEL),
+        make_settings_panel(*rows),
+        helper_text(MSG_EXPORT_FROM_REAL_RUN),
+        helper_text(MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS),
+        helper_text(MSG_PLANNED_DESTINATION_HINT),
+    ]
+    if report.export_available:
+        export_field = ft.TextField(
+            label=EXPORT_PATH_HINT,
+            value=state.workspace_export_path_draft,
+            **outlined_field_kwargs(),
+        )
+        panel_controls.extend(
+            [
+                export_field,
+                action_button(
+                    EXPORT_ACTION_LABEL,
+                    on_click=lambda e, field=export_field: _export_click(e, field),
+                    primary=True,
+                ),
+            ]
+        )
+    if state.workspace_export_feedback:
+        panel_controls.append(
+            inline_warning(state.workspace_export_feedback)
+            if state.workspace_export_feedback_error
+            else summary_alert(state.workspace_export_feedback)
+        )
+    return panel_controls
 
 
 @dataclass(frozen=True)
@@ -616,6 +746,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     folder_selection = build_workspace_folder_selection_vm(state)
     run_shell = build_workspace_run_result_shell(state)
     readiness = build_workspace_readiness_display_vm(state)
+    run_report = build_workspace_run_report_vm(state)
     contract_results = tuple(state.processing_run_state.results or ())
     snapshot_display = _display_results(workspace.results)
     contract_display = _display_processing_results(contract_results)
@@ -789,8 +920,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 "blockiert" if readiness.dry_gate_blocked else "nicht bewertet",
             ),
         ),
-        make_section_label("Workflow"),
     ]
+    items.extend(_build_run_report_panel(state, run_report))
+    items.append(make_section_label("Workflow"))
     if readiness.dry_gate_blocked and readiness.dry_gate_message:
         items.append(inline_warning(readiness.dry_gate_message))
     if readiness.productive_hold and MSG_PRODUCTIVE_HOLD not in (honesty.status_line or ""):

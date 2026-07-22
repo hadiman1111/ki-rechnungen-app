@@ -42,11 +42,17 @@ READINESS_BANNER = (
 NO_AUTOMATIC_FOLDER_SCAN = "Kein automatischer Ordner-Scan."
 NO_PRIVATE_DEFAULTS = "Keine privaten Standardwerte."
 
+EXPORT_SECTION_DETAIL = (
+    "Laufergebnisse exportieren Sie im Arbeitsbereich als lokalen JSON-/CSV-Bericht "
+    "(erkannt / unklar / fehlgeschlagen / Zielhinweise / Zusammenfassung). "
+    "Kein Cloud-Sync, keine Originalmutation."
+)
+
 SETTINGS_SECTIONS = (
     ("Allgemein", "Allgemeine Anzeige- und Programmhinweise (Readiness)."),
     ("Verarbeitung", "Verarbeitungsoptionen bleiben deaktiviert, bis ein PO-Gate freigibt."),
     ("Sicherheit", "Sicherheitsoptionen sind noch nicht konfigurierbar."),
-    ("Export", "Exportoptionen sind noch nicht konfigurierbar."),
+    ("Export", EXPORT_SECTION_DETAIL),
     ("Produktstatus", "Aktueller Sicherheits- und Freigabestatus der lokalen UI-v2."),
 )
 
@@ -164,6 +170,16 @@ def build_settings_page(state: UiV2State) -> ft.Control:
                     make_metadata_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
                     make_metadata_row("Hinweis", vm.product_neutral_notice),
                     make_metadata_row("Modus", section.status),
+                )
+            )
+        elif section.title == "Export":
+            controls.append(
+                make_settings_panel(
+                    make_metadata_row("Status", "Arbeitsbereich — lokaler Laufbericht"),
+                    make_metadata_row("Hinweis", section.detail),
+                    make_metadata_row("Modus", SECTION_STATUS_READINESS),
+                    make_metadata_row("Cloud-Sync", "Nein"),
+                    make_metadata_row("Originalmutation", "Nein"),
                 )
             )
         else:

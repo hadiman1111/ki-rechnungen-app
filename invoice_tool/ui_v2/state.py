@@ -93,6 +93,10 @@ class UiV2State:
     workspace_copied_data_confirmed: bool = False
     workspace_expanded_results: set[str] = field(default_factory=set)
     workspace_rename_drafts: dict[str, str] = field(default_factory=dict)
+    # Explicit local path for run-result export (JSON/CSV) — never auto-chosen.
+    workspace_export_path_draft: str = ""
+    workspace_export_feedback: str = ""
+    workspace_export_feedback_error: bool = False
 
     # Bounded UI-v2 processing contract (default: not connected — no PDF IO).
     processing_service: ProcessingServiceProtocol = field(default_factory=default_processing_service)
@@ -378,6 +382,34 @@ class UiV2State:
             return result
         result = self.saas_disk_store.export_draft(target_id, target)
         self._apply_saas_disk_result(result, operation="export")
+        return result
+
+    def export_run_report(self, export_path: Path | str | None = None):
+        """Export the current ProcessingRunState report to an explicit local path.
+
+        Writes only JSON/CSV report artifacts — never mutates original documents
+        and never starts processing.
+        """
+
+        from invoice_tool.ui_v2.export_reporting import (
+            MSG_EXPORT_NEEDS_PATH,
+            MSG_EXPORT_OK,
+            export_processing_run_state,
+        )
+
+        path = str(export_path or self.workspace_export_path_draft or "").strip()
+        self.workspace_export_path_draft = path
+        if not path:
+            self.workspace_export_feedback = MSG_EXPORT_NEEDS_PATH
+            self.workspace_export_feedback_error = True
+            return None
+        result = export_processing_run_state(self.processing_run_state, path)
+        if result.ok:
+            self.workspace_export_feedback = MSG_EXPORT_OK
+            self.workspace_export_feedback_error = False
+        else:
+            self.workspace_export_feedback = result.error or "Export fehlgeschlagen."
+            self.workspace_export_feedback_error = True
         return result
 
     def import_saas_draft(
