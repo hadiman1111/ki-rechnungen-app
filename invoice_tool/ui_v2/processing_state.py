@@ -28,6 +28,10 @@ MSG_BLOCKED_ADAPTER = "Lauf-Adapter noch nicht angebunden."
 MSG_POLICY_NOT_READY = "Verarbeitungsregeln sind noch nicht vollständig konfiguriert."
 MSG_POLICY_BLOCKED = "Verarbeitungsregeln blockieren den Lauf-Intent."
 MSG_READY = "Anfrage ist vorbereitet; produktive Verarbeitung ist noch nicht angebunden."
+MSG_PRODUCTIVE_NOT_RELEASED = (
+    "Lokaler Verarbeitungsadapter ist vorbereitet, aber produktive Ausführung "
+    "ist noch nicht freigegeben."
+)
 MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
 MSG_COMPLETED = "Lauf abgeschlossen."
 MSG_FAILED = "Lauf fehlgeschlagen."

@@ -99,6 +99,8 @@ def test_request_builder_uses_explicit_selection_only() -> None:
     state = UiV2State()
     empty = build_processing_run_request(state)
     assert empty.input_folder is None
+    assert empty.output_folder is None
+    assert empty.user_confirmed_start is False
     assert empty.source != SOURCE_EXPLICIT_USER_SELECTION
     assert empty.policy_bridge_result is not None
     assert empty.policy_bridge_result.status == "ready"
@@ -106,13 +108,29 @@ def test_request_builder_uses_explicit_selection_only() -> None:
     state.workspace_input_folder_override = "user-selected-folder"
     filled = build_processing_run_request(state, profile_id="local")
     assert filled.input_folder == "user-selected-folder"
+    assert filled.output_folder is None
     assert filled.source == SOURCE_EXPLICIT_USER_SELECTION
     assert filled.dry_run is True
+    assert filled.user_confirmed_start is False
     assert filled.policy_intent is not None
     assert filled.policy_intent.filename_policy["filename_is_source_of_truth"] is False
     for marker in PRIVATE_MARKERS:
         assert marker not in (filled.input_folder or "")
         assert marker not in (filled.output_folder or "")
+
+
+def test_cta_sets_user_confirmed_start_without_auto_processing() -> None:
+    state = UiV2State(processing_service=NotYetConnectedProcessingService())
+    state.workspace_input_folder_override = "selected-inbox"
+    result = apply_start_processing(state, profile_id="profile-a")
+    assert result.status == "blocked"
+    assert result.results == tuple()
+    # CTA marks confirmation; default service still refuses productive work.
+    request = build_processing_run_request(
+        state, profile_id="profile-a", user_confirmed_start=True
+    )
+    assert request.user_confirmed_start is True
+    assert request.output_folder is None
 
 
 def test_workspace_policy_bridge_ready_hint_is_optional() -> None:

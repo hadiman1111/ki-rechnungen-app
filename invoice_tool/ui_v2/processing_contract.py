@@ -49,6 +49,8 @@ class ProcessingRunRequest:
     source: str = SOURCE_UNSET
     policy_intent: RuntimePolicyIntent | None = None
     policy_bridge_result: RuntimePolicyBridgeResult | None = None
+    # Explicit CTA / confirmation marker — never implied by folder presence alone.
+    user_confirmed_start: bool = False
 
     def normalized_input_folder(self) -> str | None:
         value = (self.input_folder or "").strip()
@@ -56,6 +58,14 @@ class ProcessingRunRequest:
 
     def normalized_output_folder(self) -> str | None:
         value = (self.output_folder or "").strip()
+        return value or None
+
+    def normalized_profile_id(self) -> str | None:
+        value = (self.profile_id or "").strip()
+        return value or None
+
+    def normalized_configuration_id(self) -> str | None:
+        value = (self.configuration_id or "").strip()
         return value or None
 
     def has_explicit_user_source(self) -> bool:
@@ -81,6 +91,7 @@ def empty_processing_request() -> ProcessingRunRequest:
         source=SOURCE_UNSET,
         policy_intent=None,
         policy_bridge_result=None,
+        user_confirmed_start=False,
     )
 
 
@@ -156,12 +167,11 @@ NullProcessingService = NotYetConnectedProcessingService
 
 
 class FutureProcessingAdapter:
-    """Reserved slot for a future local/runtime bridge.
+    """Compatibility stub — delegates to NotYetConnectedProcessingService.
 
-    A later bounded LocalProcessingAdapter may consume RuntimePolicyIntent from
-    ProcessingRunRequest (policy_intent / policy_bridge_result) under PO gate.
-    Must not import processing.py / run.py here. Wiring a real bounded adapter
-    is a separate next task.
+    Bounded LocalProcessingAdapter lives in
+    invoice_tool.ui_v2.local_processing_adapter and must be injected explicitly
+    into UiV2State.processing_service. This stub must not import processing-core.
     """
 
     def __init__(self) -> None:
@@ -184,4 +194,16 @@ LocalProcessingAdapterProtocol = ProcessingServiceProtocol
 
 
 def default_processing_service() -> NotYetConnectedProcessingService:
+    """Safe default — LocalProcessingAdapter is opt-in via explicit state injection."""
+
     return NotYetConnectedProcessingService()
+
+
+def make_local_processing_adapter():
+    """Factory for explicit LocalProcessingAdapter selection (lazy import)."""
+
+    from invoice_tool.ui_v2.local_processing_adapter import (  # noqa: PLC0415
+        LocalProcessingAdapter,
+    )
+
+    return LocalProcessingAdapter()

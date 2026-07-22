@@ -102,6 +102,7 @@ def test_default_request_has_no_private_or_local_paths() -> None:
     assert request.profile_id is None
     assert request.configuration_id is None
     assert request.dry_run is True
+    assert request.user_confirmed_start is False
     blob = " ".join(
         filter(
             None,

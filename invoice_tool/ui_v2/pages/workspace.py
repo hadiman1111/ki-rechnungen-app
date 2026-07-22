@@ -147,28 +147,48 @@ def build_processing_run_request(
     *,
     profile_id: str | None = None,
     configuration_id: str | None = None,
+    user_confirmed_start: bool = False,
 ) -> ProcessingRunRequest:
     """Build a contract request from explicit UI-v2 selection only (no private defaults)."""
 
     folder = (state.workspace_input_folder_override or "").strip() or None
     source = SOURCE_EXPLICIT_USER_SELECTION if folder else SOURCE_UNSET
     policy_bridge = resolve_workspace_policy_bridge(state)
+    # Output folder is not collected in workspace yet — keep None (no private defaults).
+    # Profile/config only from explicit caller args or explicit UI selection fields —
+    # never invent private tenant defaults (do not fall back to state.selected_profile_id="local").
+    resolved_configuration = (
+        (configuration_id or "").strip()
+        or (state.config_list_selected_id or "").strip()
+        or None
+    )
+    resolved_profile = (profile_id or "").strip() or None
     return ProcessingRunRequest(
         input_folder=folder,
         output_folder=None,
-        profile_id=(profile_id or "").strip() or None,
-        configuration_id=(configuration_id or "").strip() or None,
+        profile_id=resolved_profile,
+        configuration_id=resolved_configuration,
         dry_run=True,
         source=source,
         policy_intent=policy_bridge.intent,
         policy_bridge_result=policy_bridge,
+        user_confirmed_start=bool(user_confirmed_start),
     )
 
 
 def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -> ProcessingRunState:
-    """Invoke the bounded processing service — never imports processing-core."""
+    """Invoke the bounded processing service — never imports processing-core.
 
-    request = build_processing_run_request(state, profile_id=profile_id)
+    Default service remains NotYetConnectedProcessingService. LocalProcessingAdapter
+    is used only when explicitly injected into state.processing_service.
+    CTA sets user_confirmed_start=True; still no auto-run and no PDF mutation.
+    """
+
+    request = build_processing_run_request(
+        state,
+        profile_id=profile_id,
+        user_confirmed_start=True,
+    )
     result = state.processing_service.start_run(request)
     state.processing_run_state = result
     return result
