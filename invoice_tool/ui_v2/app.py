@@ -7,9 +7,17 @@ import flet as ft
 from invoice_tool.app_paths import ensure_profile_storage_layout, resolve_active_profile_id
 from invoice_tool.ui_v2.adapters.read_only_backend import load_read_only_snapshot
 from invoice_tool.ui_v2.edit_components import unsaved_changes_dialog
-from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS, NAV_PROFILES, NAV_WORKSPACE
+from invoice_tool.ui_v2.navigation import (
+    NAV_CONFIGURATIONS,
+    NAV_PROFILES,
+    NAV_REVIEW,
+    NAV_SETTINGS,
+    NAV_WORKSPACE,
+)
 from invoice_tool.ui_v2.pages.configurations import build_configurations_page
 from invoice_tool.ui_v2.pages.profiles import build_profiles_page
+from invoice_tool.ui_v2.pages.review import build_review_page
+from invoice_tool.ui_v2.pages.settings import build_settings_page
 from invoice_tool.ui_v2.pages.workspace import build_workspace_page
 from invoice_tool.ui_v2.shell import ShellHandles, build_shell, replace_content, set_active_nav
 from invoice_tool.ui_v2.state import UiV2State
@@ -20,7 +28,9 @@ def _render_page(state: UiV2State, nav_id: str) -> ft.Control:
     builders = {
         NAV_WORKSPACE: build_workspace_page,
         NAV_CONFIGURATIONS: build_configurations_page,
+        NAV_REVIEW: build_review_page,
         NAV_PROFILES: build_profiles_page,
+        NAV_SETTINGS: build_settings_page,
     }
     builder = builders[nav_id]
     return builder(state)

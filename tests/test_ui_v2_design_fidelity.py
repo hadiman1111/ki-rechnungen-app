@@ -246,13 +246,15 @@ def test_workspace_summary_layout(isolated_support: Path, monkeypatch: pytest.Mo
 
 
 @requires_flet_085
-def test_nav_excludes_settings(isolated_support: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nav_includes_review_and_settings(isolated_support: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from invoice_tool.ui_v2.app import build_ui_v2
 
     page, _ = _build_test_page(monkeypatch)
     build_ui_v2(page)
     labels = collect_labels(page.controls[0])
-    assert "Einstellungen" not in labels
+    assert "Zur Prüfung" in labels
+    assert "Einstellungen" in labels
+    assert "Scanprofile" not in labels
 
 
 @requires_flet_085

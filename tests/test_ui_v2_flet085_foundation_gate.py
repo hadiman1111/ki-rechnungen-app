@@ -172,10 +172,11 @@ def test_five_navigation_items(isolated_support: Path, monkeypatch: pytest.Monke
 
 @requires_flet_085
 def test_navigation_ids_present() -> None:
-    assert len(ALL_NAV_IDS) == 4
+    assert len(ALL_NAV_IDS) == 5
     assert ALL_NAV_IDS == (
         "arbeitsbereich",
         "konfigurationen",
+        "zur_pruefung",
         "profile",
         "einstellungen",
     )

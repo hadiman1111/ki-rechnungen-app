@@ -1,0 +1,107 @@
+"""Track-B UI-v2 settings navigation and generic readiness shell — non-GUI."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+from invoice_tool.ui_v2.navigation import ALL_NAV_ITEMS, NAV_SETTINGS
+from invoice_tool.ui_v2.pages.settings import (
+    PRODUCTIVE_EXECUTION_NOTICE,
+    SETTINGS_SECTIONS,
+    build_settings_page_vm,
+)
+from invoice_tool.ui_v2.state import UiV2State
+
+ROOT = Path(__file__).resolve().parents[1]
+SETTINGS_PAGE = ROOT / "invoice_tool" / "ui_v2" / "pages" / "settings.py"
+PROCESSING_CORE = (
+    "invoice_tool.processing",
+    "invoice_tool.routing",
+    "invoice_tool.routing_guards",
+    "invoice_tool.classification",
+    "invoice_tool.target_routing",
+    "invoice_tool.run",
+)
+PRIVATE_MARKERS = (
+    "Hadi",
+    "SOMAA",
+    "Bismarck",
+    "AMEX",
+    "voba",
+    "/Users/",
+    "Desktop/",
+    "Privat",
+    "Volksbank",
+    "Application Support",
+)
+
+
+def test_settings_navigation_item_exists() -> None:
+    labels = {label for _, label, _ in ALL_NAV_ITEMS}
+    ids = {nav_id for nav_id, _, _ in ALL_NAV_ITEMS}
+    assert "Einstellungen" in labels
+    assert NAV_SETTINGS in ids
+    assert NAV_SETTINGS == "einstellungen"
+
+
+def test_settings_page_generic_readiness_state() -> None:
+    vm = build_settings_page_vm(UiV2State())
+    assert vm.title == "Einstellungen"
+    assert vm.productive_execution_enabled is False
+    assert vm.has_productive_toggle is False
+    assert PRODUCTIVE_EXECUTION_NOTICE in vm.productive_execution_notice
+    assert "noch nicht freigegeben" in vm.productive_execution_notice
+    section_titles = {section.title for section in vm.sections}
+    assert section_titles == {"Allgemein", "Verarbeitung", "Sicherheit", "Export"}
+    assert len(SETTINGS_SECTIONS) == 4
+
+
+def test_settings_page_no_private_defaults() -> None:
+    vm = build_settings_page_vm(UiV2State())
+    blob = " ".join(
+        [
+            vm.title,
+            vm.subtitle,
+            vm.banner,
+            vm.productive_execution_notice,
+            *(section.title for section in vm.sections),
+            *(section.detail for section in vm.sections),
+            *(section.status for section in vm.sections),
+        ]
+    )
+    for marker in PRIVATE_MARKERS:
+        assert marker not in blob, marker
+    src = SETTINGS_PAGE.read_text(encoding="utf-8")
+    for marker in PRIVATE_MARKERS:
+        assert marker not in src, marker
+
+
+def test_settings_page_no_productive_execution_toggle() -> None:
+    vm = build_settings_page_vm()
+    assert vm.has_productive_toggle is False
+    assert vm.productive_execution_enabled is False
+    src = SETTINGS_PAGE.read_text(encoding="utf-8")
+    for token in (
+        "Switch",
+        "Toggle",
+        "productive_execution_toggle",
+        "enable_productive",
+        "ft.Switch",
+        "ft.Checkbox",
+    ):
+        assert token not in src, token
+
+
+def test_settings_page_has_no_processing_core_import() -> None:
+    src = SETTINGS_PAGE.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported_modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    for forbidden in PROCESSING_CORE:
+        assert forbidden not in imported_modules
+        assert forbidden not in src
+    assert "invoice_tool.app_paths" not in imported_modules
