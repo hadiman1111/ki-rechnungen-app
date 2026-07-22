@@ -1,4 +1,4 @@
-"""Track-B Core Bridge sandbox/dry-run parity — Path B contract tests."""
+"""Track-B Core Bridge sandbox/dry-run parity — real Core Dry-Run wiring."""
 
 from __future__ import annotations
 
@@ -7,16 +7,12 @@ import sys
 from pathlib import Path
 
 from invoice_tool.ui_v2.core_bridge import (
-    ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED,
     ERROR_MISSING_CONFIGURATION,
     ERROR_MISSING_INPUT,
     ERROR_MISSING_OUTPUT,
     ERROR_ORIGINAL_LOOKING,
     ERROR_PRODUCTIVE_BLOCKED,
-    MSG_BRIDGE_DRY_RUN_CONTRACT_REQUIRED,
-    MSG_BRIDGE_NO_FILES_PROCESSED,
-    MSG_BRIDGE_NO_ORIGINALS,
-    MSG_BRIDGE_SANDBOX_NOT_CONNECTED,
+    MSG_BRIDGE_SAFETY_PROOF,
     CoreBridgeRequest,
     CoreBridgeStatus,
     map_core_result_to_processing_run_state,
@@ -30,8 +26,7 @@ from invoice_tool.ui_v2.export_reporting import (
 from invoice_tool.ui_v2.local_processing_adapter import LocalProcessingAdapter
 from invoice_tool.ui_v2.pages.workspace import (
     MAX_BLOCKED_DETAIL_LINES,
-    MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
-    MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+    MSG_SANDBOX_COMPLETED,
     apply_start_processing,
 )
 from invoice_tool.ui_v2.sandbox_execution_boundary import (
@@ -76,6 +71,8 @@ def _valid_request(tmp_path: Path, **overrides) -> CoreBridgeRequest:
         dry_run=True,
         productive_execution_allowed=False,
         mode="sandbox_dry_run",
+        copied_data_confirmation=True,
+        original_folder_exclusion_confirmation=True,
     )
     data.update(overrides)
     return CoreBridgeRequest(**data)
@@ -140,30 +137,30 @@ def test_core_bridge_never_enables_productive_mode(tmp_path: Path) -> None:
     assert result.productive_execution_enabled is False
 
 
-def test_core_bridge_valid_sandbox_reaches_dry_run_contract(tmp_path: Path) -> None:
+def test_core_bridge_valid_sandbox_calls_real_dry_run(tmp_path: Path) -> None:
     result = run_core_bridge_sandbox_dry_run(_valid_request(tmp_path))
-    assert result.status == CoreBridgeStatus.REQUIRES_CORE_DRY_RUN_CONTRACT
-    assert ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in result.errors
-    assert result.ok is False
+    assert result.status == CoreBridgeStatus.COMPLETED
+    assert result.ok is True
+    assert result.run_id
     assert result.results == ()
     assert result.review_items == ()
     assert result.planned_moves == ()
-    assert MSG_BRIDGE_SANDBOX_NOT_CONNECTED in result.message
-    assert MSG_BRIDGE_DRY_RUN_CONTRACT_REQUIRED in result.message
-    assert MSG_BRIDGE_NO_ORIGINALS in result.message
-    assert MSG_BRIDGE_NO_FILES_PROCESSED in result.message
+    assert result.safety_proof_summary == MSG_BRIDGE_SAFETY_PROOF
+    assert result.productive_execution_enabled is False
 
 
-def test_map_core_result_keeps_empty_rows(tmp_path: Path) -> None:
+def test_map_core_result_keeps_empty_rows_on_empty_inbox(tmp_path: Path) -> None:
     bridge = run_core_bridge_sandbox_dry_run(_valid_request(tmp_path))
     state = map_core_result_to_processing_run_state(bridge)
-    assert state.status == "failed"
+    assert state.status == "completed"
     assert state.results == ()
     assert state.review_items == ()
-    assert ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in state.errors
+    assert state.core_dry_run_status == "dry_run_available"
 
 
-def test_sandbox_core_runner_uses_core_bridge_without_core_import(tmp_path: Path) -> None:
+def test_sandbox_core_runner_uses_core_bridge_without_processing_core(
+    tmp_path: Path,
+) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -184,13 +181,12 @@ def test_sandbox_core_runner_uses_core_bridge_without_core_import(tmp_path: Path
     newly = after - before
     for forbidden in FORBIDDEN_CORE:
         assert forbidden not in newly, forbidden
-    assert outcome.ok is False
-    assert ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in outcome.errors
-    assert "sandbox_core_runner_unbound" in outcome.errors
+    assert outcome.ok is True
+    assert "sandbox_core_runner_unbound" not in outcome.errors
     assert outcome.results == ()
 
 
-def test_clicking_start_reaches_core_dry_run_contract_required(tmp_path: Path) -> None:
+def test_clicking_start_runs_real_core_dry_run(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -210,17 +206,17 @@ def test_clicking_start_reaches_core_dry_run_contract_required(tmp_path: Path) -
     for forbidden in FORBIDDEN_CORE:
         assert forbidden not in newly, forbidden
 
-    assert result.status == "failed"
-    assert ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in result.errors
-    assert state.workspace_run_interaction_status == "sandbox_not_connected"
-    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in state.workspace_start_feedback_primary
-    assert MSG_SANDBOX_BLOCKED_CORE_BRIDGE in state.workspace_start_feedback_primary
+    assert result.status == "completed"
+    assert result.run_id
+    assert state.workspace_run_interaction_status == "completed"
+    assert MSG_SANDBOX_COMPLETED in state.workspace_start_feedback_primary
     assert len(state.workspace_start_feedback_details) <= MAX_BLOCKED_DETAIL_LINES
     assert not result.results
     assert not result.review_items
+    assert result.core_dry_run_status == "dry_run_available"
 
 
-def test_no_fake_results_and_export_stays_empty(tmp_path: Path) -> None:
+def test_no_fake_results_and_export_stays_preview(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -238,11 +234,8 @@ def test_no_fake_results_and_export_stays_empty(tmp_path: Path) -> None:
     assert state.processing_run_state.results == ()
     assert report.recognized == ()
     assert report.unclear == ()
-    # Failed may contain honest bridge errors — never invented document rows.
-    assert all(item.document_name is None for item in report.failed)
     assert payload["preview"] is True
     assert payload["productive_export"] is False
-    assert payload["questions"]["recognized"]["items"] == []
 
 
 def test_core_bridge_module_has_no_processing_core_imports() -> None:
@@ -258,6 +251,10 @@ def test_core_bridge_module_has_no_processing_core_imports() -> None:
             name == forbidden or name.startswith(forbidden + ".")
             for forbidden in FORBIDDEN_CORE
         ), name
+    # Additive dry-run module is allowed (lazy import inside function).
+    source = CORE_BRIDGE.read_text(encoding="utf-8")
+    assert "run_core_dry_run_sandbox" in source
+    assert "invoice_tool.core_dry_run" in source
 
 
 def test_processing_core_files_unchanged_vs_head() -> None:

@@ -215,7 +215,7 @@ def test_productive_execution_remains_blocked() -> None:
     assert MSG_SANDBOX_BLOCKED_PRODUCTIVE in feedback
 
 
-def test_core_bridge_unavailable_shows_visible_blocked_not_noop(tmp_path: Path) -> None:
+def test_core_bridge_wired_shows_visible_completed_not_noop(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -230,18 +230,14 @@ def test_core_bridge_unavailable_shows_visible_blocked_not_noop(tmp_path: Path) 
     state.config_list_selected_id = "config-a"
 
     result = apply_start_processing(state, profile_id="profile-a")
-    assert result.status in {"failed", "blocked"}
+    assert result.status == "completed"
     feedback = state.workspace_start_feedback
     assert feedback
-    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in feedback or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in feedback
+    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
     assert MSG_SANDBOX_NO_ORIGINALS_USED in feedback
-    assert MSG_DETAIL_CORE_BRIDGE in feedback or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in feedback
-    assert "Dies ist ein Sandbox-Lauf" not in feedback
-    # Default runner is unbound — core bridge required for real OCR/AI.
-    if result.status == "failed":
-        assert "sandbox_core_runner_unbound" in result.errors or MSG_SANDBOX_RUNNER_UNBOUND in (
-            result.message + " ".join(result.errors)
-        )
+    assert "Originale unverändert" in feedback
+    assert "sandbox_core_runner_unbound" not in result.errors
+    assert result.results == ()
 
 
 def test_sandbox_stub_path_produces_run_state_and_result_display(tmp_path: Path) -> None:

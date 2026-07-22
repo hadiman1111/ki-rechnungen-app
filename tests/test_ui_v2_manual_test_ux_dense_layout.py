@@ -77,7 +77,7 @@ def test_start_click_sets_checking_then_blocked_state() -> None:
     assert state.workspace_start_feedback
 
 
-def test_core_bridge_missing_shows_compact_blocked_state(tmp_path: Path) -> None:
+def test_core_bridge_wired_shows_compact_completed_state(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -90,10 +90,10 @@ def test_core_bridge_missing_shows_compact_blocked_state(tmp_path: Path) -> None
     state.workspace_output_folder_source = "explicit_user_selection"
     state.config_list_selected_id = "config-a"
     apply_start_processing(state, profile_id="profile-a")
-    assert state.workspace_run_interaction_status == "sandbox_not_connected"
-    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in state.workspace_start_feedback_primary
+    assert state.workspace_run_interaction_status == "completed"
+    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
     assert MSG_SANDBOX_NO_ORIGINALS_USED in state.workspace_start_feedback_details
-    assert MSG_DETAIL_CORE_BRIDGE in state.workspace_start_feedback_details
+    assert any("Originale unverändert" in item for item in state.workspace_start_feedback_details)
     assert len(state.workspace_start_feedback_details) <= MAX_BLOCKED_DETAIL_LINES
     assert not state.processing_run_state.results
 

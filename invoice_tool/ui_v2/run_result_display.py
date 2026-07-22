@@ -151,7 +151,7 @@ def build_blocked_execution_hints(state: ProcessingRunState) -> tuple[str, ...]:
         or state.dry_run_gate == "unsupported_without_core_change"
         or state.core_dry_run_status == "unsupported_without_core_change"
         or state.execution_gate == "unsupported_without_core_change"
-    ):
+    ) and state.core_dry_run_status != "dry_run_available" and state.dry_run_gate != "dry_run_available":
         hints.append(MSG_DRY_RUN_HOLD)
 
     # Deduplicate while preserving order.

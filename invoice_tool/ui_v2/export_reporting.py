@@ -360,6 +360,8 @@ def build_run_export_payload(report: RunReportViewModel) -> dict[str, Any]:
         "cloud_export": False,
         "persistence": "local_export_only",
         "disclaimer": MSG_EXPORT_IS_PREVIEW,
+        # Preview may reflect a real Core Dry-Run ProcessingRunState when present.
+        "sourced_from_real_dry_run": bool(report.run_id) and not report.empty,
         "run_id": report.run_id,
         "status": report.status,
         "status_label": report.status_label,

@@ -1,12 +1,11 @@
 """Track-B UI-v2 sandbox execution call boundary.
 
-Single seam between LocalProcessingAdapter and a future/live processing call.
-Never imports processing-core at module level. Default runner is unbound so
-unit tests and UI cannot accidentally trigger OCR/AI/PDF processing.
+Single seam between LocalProcessingAdapter and the Core Bridge / Core Dry-Run.
+Never imports processing-core (``run`` / ``processing`` / routing) at module level.
+Default runner calls the Track-B core bridge, which invokes
+``run_core_dry_run_sandbox`` after sandbox validation.
 
-Tests monkeypatch ``sandbox_core_runner`` (or inject a runner into the adapter)
-to prove sandbox-only paths are passed and results map into ProcessingRunState.
-
+Tests may monkeypatch ``sandbox_core_runner`` (or inject a runner into the adapter).
 Original source folders are never part of the core call args.
 """
 
@@ -21,10 +20,13 @@ from invoice_tool.ui_v2.clarity_copy import (
 )
 from invoice_tool.ui_v2.processing_state import (
     MSG_COMPLETED,
+    MSG_COMPLETED_WITH_REVIEW,
     MSG_FAILED,
+    MSG_SAFETY_PROOF_COMPACT,
     ProcessingResultSummary,
     ProcessingReviewItem,
     ProcessingRunState,
+    ProcessingStatus,
 )
 
 MSG_SANDBOX_RUNNER_UNBOUND = (
@@ -36,6 +38,10 @@ MSG_SANDBOX_RUNNER_UNBOUND = (
 MSG_SANDBOX_EXECUTION_COMPLETED = (
     f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
     "Sandbox-Lauf abgeschlossen (kopierte Testdaten)."
+)
+MSG_SANDBOX_EXECUTION_COMPLETED_WITH_REVIEW = (
+    f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
+    "Sandbox-Lauf mit Prüffällen abgeschlossen (kopierte Testdaten)."
 )
 MSG_SANDBOX_EXECUTION_FAILED = "Sandbox-Lauf fehlgeschlagen."
 MSG_SANDBOX_BOUNDARY_REFUSED_ORIGINAL = (
@@ -70,6 +76,11 @@ class SandboxCoreCallResult:
     results: tuple[ProcessingResultSummary, ...] = field(default_factory=tuple)
     review_items: tuple[ProcessingReviewItem, ...] = field(default_factory=tuple)
     errors: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    planned_moves: tuple[str, ...] = field(default_factory=tuple)
+    planned_destination_count: int = 0
+    safety_proof_summary: str | None = None
+    bridge_status: str | None = None
 
 
 class SandboxCoreRunner(Protocol):
@@ -114,12 +125,11 @@ def assert_call_args_exclude_original(args: SandboxCoreCallArgs) -> str | None:
 
 
 def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
-    """Sandbox → core-bridge seam (Path B: dry-run contract required).
+    """Sandbox → core-bridge → Core Dry-Run seam.
 
     After sandbox-gate approval this seam validates a CoreBridgeRequest and
-    returns REQUIRES_CORE_DRY_RUN_CONTRACT. It never imports or calls
-    ``invoice_tool.run.run_once`` / processing-core, because the core has no
-    safe dry/no-mutation API today (output writes, archive moves, App Support).
+    calls ``run_core_dry_run_sandbox`` via the core bridge. It never imports or
+    calls ``invoice_tool.run.run_once`` / productive processing-core paths.
     """
 
     refused = assert_call_args_exclude_original(args)
@@ -128,6 +138,7 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
             ok=False,
             message=refused,
             errors=(refused,),
+            safety_proof_summary=MSG_SAFETY_PROOF_COMPACT,
         )
 
     # Lazy import keeps module-level boundary free of accidental core coupling.
@@ -147,16 +158,33 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
     )
     bridge_result = run_core_bridge_sandbox_dry_run(bridge_request)
     errors = tuple(bridge_result.errors)
-    # Keep legacy token for existing workspace / test detection paths.
+    # Legacy token only when the historical contract-required path is hit.
     if ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in errors:
         errors = errors + ("sandbox_core_runner_unbound",)
+
+    message = bridge_result.message or (
+        MSG_SANDBOX_EXECUTION_COMPLETED
+        if bridge_result.ok
+        else MSG_SANDBOX_EXECUTION_FAILED
+    )
+    if bridge_result.safety_proof_summary and bridge_result.safety_proof_summary not in (
+        message or ""
+    ):
+        message = f"{message} {bridge_result.safety_proof_summary}".strip()
+
     return SandboxCoreCallResult(
-        ok=False,
-        message=bridge_result.message or MSG_SANDBOX_RUNNER_UNBOUND,
+        ok=bridge_result.ok,
+        message=message,
         run_id=bridge_result.run_id,
         results=tuple(bridge_result.results),
         review_items=tuple(bridge_result.review_items),
         errors=errors,
+        warnings=tuple(bridge_result.warnings),
+        planned_moves=tuple(bridge_result.planned_moves),
+        planned_destination_count=bridge_result.planned_destination_count,
+        safety_proof_summary=bridge_result.safety_proof_summary
+        or MSG_SAFETY_PROOF_COMPACT,
+        bridge_status=bridge_result.status.value,
     )
 
 
@@ -169,21 +197,27 @@ def map_sandbox_core_result_to_run_state(
 ) -> ProcessingRunState:
     """Map boundary outcome to UI-v2 state — only fields provided by the result."""
 
-    if result.ok:
-        return ProcessingRunState(
-            status="completed",
-            message=result.message or MSG_SANDBOX_EXECUTION_COMPLETED or MSG_COMPLETED,
-            run_id=result.run_id,
-            results=tuple(result.results),
-            review_items=tuple(result.review_items),
-            errors=tuple(result.errors),
-            execution_gate=execution_gate,  # type: ignore[arg-type]
-            dry_run_gate=dry_run_gate,  # type: ignore[arg-type]
-            core_dry_run_status=core_dry_run_status,  # type: ignore[arg-type]
-        )
+    bridge_status = (result.bridge_status or "").strip()
+    status: ProcessingStatus
+    if result.ok and bridge_status == "completed_with_review":
+        status = "completed"
+        default_message = MSG_SANDBOX_EXECUTION_COMPLETED_WITH_REVIEW or MSG_COMPLETED_WITH_REVIEW
+    elif result.ok:
+        status = "completed"
+        default_message = MSG_SANDBOX_EXECUTION_COMPLETED or MSG_COMPLETED
+    elif bridge_status.startswith("blocked_missing"):
+        status = "not_configured"
+        default_message = result.message or MSG_SANDBOX_EXECUTION_FAILED
+    elif bridge_status.startswith("blocked"):
+        status = "blocked"
+        default_message = result.message or MSG_SANDBOX_EXECUTION_FAILED
+    else:
+        status = "failed"
+        default_message = result.message or MSG_SANDBOX_EXECUTION_FAILED or MSG_FAILED
+
     return ProcessingRunState(
-        status="failed",
-        message=result.message or MSG_SANDBOX_EXECUTION_FAILED or MSG_FAILED,
+        status=status,
+        message=result.message or default_message,
         run_id=result.run_id,
         results=tuple(result.results),
         review_items=tuple(result.review_items),
@@ -191,6 +225,10 @@ def map_sandbox_core_result_to_run_state(
         execution_gate=execution_gate,  # type: ignore[arg-type]
         dry_run_gate=dry_run_gate,  # type: ignore[arg-type]
         core_dry_run_status=core_dry_run_status,  # type: ignore[arg-type]
+        warnings=tuple(result.warnings),
+        planned_destination_count=result.planned_destination_count
+        or len(result.planned_moves),
+        safety_proof_summary=result.safety_proof_summary or MSG_SAFETY_PROOF_COMPACT,
     )
 
 
@@ -218,6 +256,7 @@ def invoke_sandbox_execution(
 __all__ = (
     "MSG_SANDBOX_BOUNDARY_REFUSED_ORIGINAL",
     "MSG_SANDBOX_EXECUTION_COMPLETED",
+    "MSG_SANDBOX_EXECUTION_COMPLETED_WITH_REVIEW",
     "MSG_SANDBOX_EXECUTION_FAILED",
     "MSG_SANDBOX_RUNNER_UNBOUND",
     "SandboxCoreCallArgs",

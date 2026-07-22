@@ -230,14 +230,13 @@ def test_workspace_no_longer_blocks_konfiguration_fehlt_when_active_exists(
     assert "Konfiguration fehlt" not in feedback
     assert MSG_NO_ACTIVE_CONFIGURATION not in feedback
     assert state.config_list_selected_id == "cfg-1"
-    assert result.status in {"failed", "blocked"}
-    assert (
-        MSG_SANDBOX_BRIDGE_NOT_CONNECTED in state.workspace_start_feedback_primary
-        or "Sandbox nicht verbunden" in feedback
-    )
+    # Empty copied inbox → real Core Dry-Run completes without invented rows.
+    assert result.status == "completed"
+    assert result.results == ()
+    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
 
 
-def test_start_with_folders_profile_config_reaches_core_bridge_blocker(
+def test_start_with_folders_profile_config_reaches_core_dry_run(
     tmp_path: Path,
 ) -> None:
     sandbox = tmp_path / "sandbox"
@@ -263,10 +262,11 @@ def test_start_with_folders_profile_config_reaches_core_bridge_blocker(
 
     apply_start_processing(state, profile_id="profile-a")
     assert state.config_list_selected_id == "cfg-1"
-    assert state.workspace_run_interaction_status == "sandbox_not_connected"
-    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in state.workspace_start_feedback_primary
+    assert state.workspace_run_interaction_status == "completed"
+    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
     assert "Konfiguration fehlt" not in state.workspace_start_feedback
     assert not state.processing_run_state.results
+    assert state.processing_run_state.core_dry_run_status == "dry_run_available"
 
 
 def test_workspace_shows_selected_configuration_compactly() -> None:
@@ -336,8 +336,10 @@ def test_no_fake_success_from_config_resolution(tmp_path: Path) -> None:
     state.workspace_input_folder_source = "explicit_user_selection"
     state.workspace_output_folder_source = "explicit_user_selection"
     apply_start_processing(state, profile_id="profile-a")
-    assert state.processing_run_state.status != "completed"
+    # Real empty dry-run may complete, but must not invent document rows.
     assert state.processing_run_state.results == tuple()
+    assert state.processing_run_state.review_items == tuple()
+    assert state.processing_run_state.status == "completed"
 
 
 def test_missing_profile_start_shows_compact_profile_message(tmp_path: Path) -> None:

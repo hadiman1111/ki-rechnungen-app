@@ -55,12 +55,15 @@ MSG_SANDBOX_COPIED_DATA_ONLY = MSG_CLARITY_SANDBOX_COPIED_DATA_ONLY
 MSG_SANDBOX_NO_ORIGINAL_INPUT = MSG_CLARITY_NO_ORIGINAL_FOLDERS
 MSG_SANDBOX_PRODUCTIVE_BLOCKED = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 MSG_SANDBOX_CORE_DRY_ABSENT = "Core-Dry-Run ist noch nicht vorhanden."
+MSG_SANDBOX_CORE_DRY_WIRED = (
+    "Sicherer Core-Dry-Run ist angebunden (Sandbox, keine Originalmutation)."
+)
 MSG_SANDBOX_EXECUTION_WIRED = (
     "Sandbox-Ausführung nur nach Gate-Freigabe gegen kopierte Testdaten."
 )
 MSG_SANDBOX_READY_PENDING_WIRING = (
     "Sandbox-Gate freigegeben; Sandbox-Ausführung gegen kopierte Testdaten "
-    f"ist freigegeben. {MSG_SANDBOX_CORE_DRY_ABSENT}"
+    f"ist freigegeben. {MSG_SANDBOX_CORE_DRY_WIRED}"
 )
 MSG_BLOCKED_MISSING_SANDBOX = (
     "Sandbox-Modus fehlt. Verarbeitung ist nur im expliziten Sandbox-Modus "
@@ -99,7 +102,7 @@ WORKSPACE_SANDBOX_READINESS_LINES = (
     MSG_SANDBOX_NO_ORIGINAL_INPUT,
     MSG_SANDBOX_PRODUCTIVE_BLOCKED,
     MSG_SANDBOX_EXECUTION_WIRED,
-    MSG_SANDBOX_CORE_DRY_ABSENT,
+    MSG_SANDBOX_CORE_DRY_WIRED,
 )
 
 
@@ -434,6 +437,7 @@ __all__ = (
     "MSG_SANDBOX_COPIED_DATA_ONLY",
     "MSG_SANDBOX_COPIED_RUN",
     "MSG_SANDBOX_CORE_DRY_ABSENT",
+    "MSG_SANDBOX_CORE_DRY_WIRED",
     "MSG_SANDBOX_EXECUTION_WIRED",
     "MSG_SANDBOX_MODE_PREPARED",
     "MSG_SANDBOX_NO_ORIGINAL_INPUT",

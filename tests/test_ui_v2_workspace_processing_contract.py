@@ -18,6 +18,7 @@ from invoice_tool.ui_v2.pages.workspace import (
     EMPTY_OUTPUT_FOLDER_TEXT,
     SANDBOX_COPIED_DATA_ONLY,
     SANDBOX_CORE_DRY_ABSENT,
+    SANDBOX_CORE_DRY_WIRED,
     SANDBOX_EXECUTION_WIRED,
     SANDBOX_MODE_PREPARED,
     SANDBOX_NO_ORIGINAL_INPUT,
@@ -312,7 +313,8 @@ def test_workspace_sandbox_readiness_copy_is_honest() -> None:
     assert SANDBOX_NO_ORIGINAL_INPUT in copy.sandbox_readiness_lines
     assert SANDBOX_PRODUCTIVE_BLOCKED in copy.sandbox_readiness_lines
     assert SANDBOX_EXECUTION_WIRED in copy.sandbox_readiness_lines
-    assert SANDBOX_CORE_DRY_ABSENT in copy.sandbox_readiness_lines
+    assert SANDBOX_CORE_DRY_WIRED in copy.sandbox_readiness_lines
+    assert SANDBOX_CORE_DRY_ABSENT not in copy.sandbox_readiness_lines
     detail = copy.results_detail or ""
     assert SANDBOX_MODE_PREPARED in detail
     assert SANDBOX_COPIED_DATA_ONLY in detail

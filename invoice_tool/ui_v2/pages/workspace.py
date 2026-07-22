@@ -98,6 +98,7 @@ from invoice_tool.ui_v2.processing_state import (
     MSG_NOT_CONFIGURED,
     MSG_POLICY_NOT_READY,
     MSG_PRODUCTIVE_NOT_RELEASED,
+    MSG_SAFETY_PROOF_COMPACT,
     ProcessingResultSummary,
     ProcessingRunState,
     ProcessingStatus,
@@ -107,6 +108,7 @@ from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_SANDBOX_COPIED_DATA_ONLY,
     MSG_SANDBOX_COPIED_RUN,
     MSG_SANDBOX_CORE_DRY_ABSENT,
+    MSG_SANDBOX_CORE_DRY_WIRED,
     MSG_SANDBOX_EXECUTION_WIRED,
     MSG_SANDBOX_MODE_PREPARED,
     MSG_SANDBOX_NO_ORIGINAL_INPUT,
@@ -203,7 +205,9 @@ MSG_DETAIL_EXPORT_DRAFT = MSG_EXPORT_REMAINS_DRAFT
 MSG_DETAIL_CORE_BRIDGE = MSG_CORE_BRIDGE_TECHNICAL
 RUN_SETUP_SECTION_LABEL = "Lauf-Setup"
 MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
+MSG_SANDBOX_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen."
 MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
+MSG_SANDBOX_SAFETY_PROOF = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
 MSG_EXPORT_DISCLAIMER_COMPACT = (
     "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
 )
@@ -228,6 +232,7 @@ SANDBOX_NO_ORIGINAL_INPUT = MSG_SANDBOX_NO_ORIGINAL_INPUT
 SANDBOX_PRODUCTIVE_BLOCKED = MSG_SANDBOX_PRODUCTIVE_BLOCKED
 SANDBOX_EXECUTION_WIRED = MSG_SANDBOX_EXECUTION_WIRED
 SANDBOX_CORE_DRY_ABSENT = MSG_SANDBOX_CORE_DRY_ABSENT
+SANDBOX_CORE_DRY_WIRED = MSG_SANDBOX_CORE_DRY_WIRED
 SANDBOX_READINESS_LINES = WORKSPACE_SANDBOX_READINESS_LINES
 
 # Local pilot onboarding panel (Prompt 10) — packaging/status only.
@@ -526,7 +531,11 @@ def build_workspace_readiness_display_vm(state: UiV2State) -> WorkspaceReadiness
     folders = build_workspace_folder_selection_vm(state)
     shell = build_workspace_run_result_shell(state)
     run_state = state.processing_run_state or ProcessingRunState()
-    dry_gate_blocked = (
+    dry_available = (
+        run_state.dry_run_gate == "dry_run_available"
+        or run_state.core_dry_run_status == "dry_run_available"
+    )
+    dry_gate_blocked = (not dry_available) and (
         run_state.dry_run_gate == "unsupported_without_core_change"
         or run_state.core_dry_run_status == "unsupported_without_core_change"
         or run_state.execution_gate == "unsupported_without_core_change"
@@ -716,6 +725,24 @@ def _feedback(
     )
 
 
+def _count_summary_details(result: ProcessingRunState) -> tuple[str, ...]:
+    """Compact recognized/review/error/planned counts from real state only."""
+
+    recognized = len(result.results or ())
+    review = len(result.review_items or ())
+    errors = len(result.errors or ())
+    planned = int(result.planned_destination_count or 0)
+    safety = (
+        (result.safety_proof_summary or "").strip()
+        or MSG_SANDBOX_SAFETY_PROOF
+        or MSG_SAFETY_PROOF_COMPACT
+    )
+    return (
+        f"Erkannt: {recognized} · Prüfung: {review} · Fehler: {errors} · Geplant: {planned}",
+        safety,
+    )
+
+
 def build_start_interaction_feedback(
     result: ProcessingRunState,
     *,
@@ -729,15 +756,24 @@ def build_start_interaction_feedback(
     errors = " ".join(str(item) for item in (result.errors or ()))
     blob = f"{message} {errors}".lower()
     config_label = (configuration_label or "").strip() or None
+    count_details = _count_summary_details(result)
 
     if status == "completed":
+        with_review = bool(result.review_items) and not result.results
+        primary = (
+            MSG_SANDBOX_COMPLETED_WITH_REVIEW
+            if with_review or (result.review_items and result.errors)
+            else MSG_SANDBOX_COMPLETED
+        )
+        if result.review_items and result.results:
+            primary = MSG_SANDBOX_COMPLETED_WITH_REVIEW
         return _feedback(
             interaction_status="completed",
             status_label=MSG_RUN_STATUS_COMPLETED,
-            primary=MSG_SANDBOX_COMPLETED,
+            primary=primary,
             details=_compact_details(
                 configuration_label=config_label,
-                extra=(MSG_SANDBOX_STARTED, message),
+                extra=(MSG_SANDBOX_STARTED, *count_details, message),
             ),
             tone="completed",
         )
@@ -746,7 +782,7 @@ def build_start_interaction_feedback(
         return _feedback(
             interaction_status="checking",
             status_label=MSG_RUN_STATUS_CHECKING,
-            primary=message or MSG_SANDBOX_STARTED,
+            primary=message or MSG_RUN_STATUS_CHECKING or MSG_SANDBOX_STARTED,
             details=_compact_details(configuration_label=config_label),
             tone="checking",
         )
@@ -761,33 +797,37 @@ def build_start_interaction_feedback(
         or "noch nicht mit der verarbeitung verbunden" in blob
         or "noch nicht sicher verbunden" in blob
         or "noch nicht sicher angebunden" in blob
-        or (status == "failed" and gate == "ready_for_sandbox_execution")
         or (
             status == "failed"
             and gate == "unsupported_without_core_change"
+            and "core_dry_run_contract_required" in errors
         )
     )
-    if unbound or status == "failed":
-        if unbound or "sandbox" in blob or "core" in blob or "verbunden" in blob or "angebunden" in blob:
-            return _feedback(
-                interaction_status="sandbox_not_connected",
-                status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
-                primary=(
-                    f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} "
-                    f"{MSG_SANDBOX_BLOCKED_CORE_BRIDGE}"
-                ).strip(),
-                details=_compact_details(
-                    configuration_label=config_label,
-                    core_bridge_relevant=True,
-                    include_no_files_processed=True,
-                ),
-                tone="sandbox_not_connected",
-            )
+    if unbound:
+        return _feedback(
+            interaction_status="sandbox_not_connected",
+            status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
+            primary=(
+                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} "
+                f"{MSG_SANDBOX_BLOCKED_CORE_BRIDGE}"
+            ).strip(),
+            details=_compact_details(
+                configuration_label=config_label,
+                core_bridge_relevant=True,
+                include_no_files_processed=True,
+            ),
+            tone="sandbox_not_connected",
+        )
+
+    if status == "failed":
         return _feedback(
             interaction_status="failed",
             status_label=MSG_RUN_STATUS_FAILED,
             primary=f"{MSG_SANDBOX_FAILED} {message}".strip(),
-            details=_compact_details(configuration_label=config_label),
+            details=_compact_details(
+                configuration_label=config_label,
+                extra=count_details,
+            ),
             tone="failed",
         )
 
@@ -933,6 +973,9 @@ def mark_start_checking(state: UiV2State) -> None:
         execution_gate=state.processing_run_state.execution_gate,
         dry_run_gate=state.processing_run_state.dry_run_gate,
         core_dry_run_status=state.processing_run_state.core_dry_run_status,
+        warnings=tuple(state.processing_run_state.warnings or ()),
+        planned_destination_count=state.processing_run_state.planned_destination_count,
+        safety_proof_summary=state.processing_run_state.safety_proof_summary,
     )
 
 
@@ -1065,6 +1108,9 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
             ),
             dry_run_gate=result.dry_run_gate,
             core_dry_run_status=result.core_dry_run_status,
+            warnings=tuple(result.warnings or ()),
+            planned_destination_count=result.planned_destination_count,
+            safety_proof_summary=result.safety_proof_summary,
         )
     interaction = build_start_interaction_feedback(
         result,
@@ -1082,6 +1128,10 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
         execution_gate=result.execution_gate,
         dry_run_gate=result.dry_run_gate,
         core_dry_run_status=result.core_dry_run_status,
+        warnings=tuple(result.warnings or ()),
+        planned_destination_count=result.planned_destination_count,
+        safety_proof_summary=result.safety_proof_summary
+        or MSG_SANDBOX_SAFETY_PROOF,
     )
     state.workspace_run_interaction_status = interaction.interaction_status
     state.workspace_start_feedback_primary = interaction.primary

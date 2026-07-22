@@ -49,13 +49,18 @@ MSG_PRODUCTIVE_NOT_RELEASED = (
 MSG_DRY_RUN_UNAVAILABLE = (
     "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar."
 )
+MSG_DRY_RUN_AVAILABLE = (
+    "Sicherer Core-Dry-Run ist verfügbar (Sandbox, keine Originalmutation)."
+)
 MSG_READY_FOR_SANDBOX_EXECUTION = (
     "Sandbox-Gate freigegeben; Sandbox-Ausführung gegen kopierte Testdaten "
-    "ist freigegeben. Core-Dry-Run ist noch nicht vorhanden."
+    "ist freigegeben. Sicherer Core-Dry-Run ist angebunden."
 )
-MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
-MSG_COMPLETED = "Lauf abgeschlossen."
-MSG_FAILED = "Lauf fehlgeschlagen."
+MSG_RUNNING = "Prüfung läuft …"
+MSG_COMPLETED = "Sandbox-Lauf abgeschlossen."
+MSG_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen."
+MSG_FAILED = "Sandbox-Lauf fehlgeschlagen."
+MSG_SAFETY_PROOF_COMPACT = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,9 @@ class ProcessingRunState:
     execution_gate: ExecutionGateStatus | None = None
     dry_run_gate: ExecutionGateStatus | None = None
     core_dry_run_status: ExecutionGateStatus | None = None
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    planned_destination_count: int = 0
+    safety_proof_summary: str | None = None
 
     @property
     def has_results(self) -> bool:
@@ -105,6 +113,18 @@ class ProcessingRunState:
     @property
     def has_review_items(self) -> bool:
         return bool(self.review_items)
+
+    @property
+    def recognized_count(self) -> int:
+        return len(self.results)
+
+    @property
+    def review_count(self) -> int:
+        return len(self.review_items)
+
+    @property
+    def error_count(self) -> int:
+        return len(self.errors)
 
 
 def idle_processing_state(message: str = MSG_IDLE) -> ProcessingRunState:

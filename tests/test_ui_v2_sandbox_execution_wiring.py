@@ -318,15 +318,16 @@ def test_workspace_result_display_shows_sandbox_result_state(tmp_path: Path) -> 
     assert display.show_empty_state is False
 
 
-def test_no_fake_results_when_runner_unbound(tmp_path: Path) -> None:
+def test_no_fake_results_when_default_runner_wired(tmp_path: Path) -> None:
     request, *_ = _sandbox_request(tmp_path)
     before = set(sys.modules)
     state = LocalProcessingAdapter().start_run(request)
     newly = set(sys.modules) - before
-    assert state.status == "failed"
-    assert MSG_SANDBOX_RUNNER_UNBOUND in state.message
+    # Empty copied inbox → real dry-run completes without invented rows.
+    assert state.status == "completed"
     assert state.results == tuple()
     assert state.review_items == tuple()
+    assert state.core_dry_run_status == "dry_run_available"
     for forbidden in FORBIDDEN_CORE:
         assert forbidden not in newly
 
@@ -352,20 +353,25 @@ def test_no_private_defaults_in_boundary_or_adapter_source() -> None:
         assert "TEST Rechnungen" not in src
 
 
-def test_default_runner_is_unbound_and_core_free() -> None:
+def test_default_runner_is_wired_and_processing_core_free(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    inbox = sandbox / "copied-inbox"
+    outbox = sandbox / "copied-outbox"
+    inbox.mkdir(parents=True)
+    outbox.mkdir(parents=True)
     args = SandboxCoreCallArgs(
-        input_folder="/tmp/sandbox/in",
-        output_folder="/tmp/sandbox/out",
-        sandbox_root="/tmp/sandbox",
+        input_folder=str(inbox),
+        output_folder=str(outbox),
+        sandbox_root=str(sandbox),
         profile_id="p",
         configuration_id="c",
-        original_source_folder="/tmp/original",
+        original_source_folder=str(tmp_path / "original"),
     )
     before = set(sys.modules)
     result = sandbox_core_runner(args)
     newly = set(sys.modules) - before
-    assert result.ok is False
-    assert MSG_SANDBOX_RUNNER_UNBOUND in result.message
+    assert result.ok is True
+    assert "sandbox_core_runner_unbound" not in result.errors
     for forbidden in FORBIDDEN_CORE:
         assert forbidden not in newly
 

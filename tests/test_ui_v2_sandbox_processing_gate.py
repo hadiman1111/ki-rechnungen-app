@@ -255,21 +255,35 @@ def test_validation_does_not_process_pdfs(tmp_path: Path) -> None:
     assert list(outbox.iterdir()) == []
 
 
-def test_adapter_does_not_call_core_when_sandbox_ready() -> None:
-    from invoice_tool.ui_v2.sandbox_execution_boundary import MSG_SANDBOX_RUNNER_UNBOUND
-
+def test_adapter_calls_safe_dry_run_not_processing_core_when_sandbox_ready(
+    tmp_path: Path,
+) -> None:
+    sandbox = tmp_path / "sandbox"
+    inbox = sandbox / "copied-inbox"
+    outbox = sandbox / "copied-outbox"
+    original = tmp_path / "original-source"
+    inbox.mkdir(parents=True)
+    outbox.mkdir(parents=True)
+    original.mkdir()
     before = set(sys.modules)
     adapter = LocalProcessingAdapter()
-    started = adapter.start_run(_sandbox_request())
+    started = adapter.start_run(
+        _sandbox_request(
+            sandbox_root=str(sandbox),
+            input_folder=str(inbox),
+            output_folder=str(outbox),
+            original_source_folder=str(original),
+        )
+    )
     after = set(sys.modules)
     newly = after - before
 
-    # Boundary is reached with unbound default runner — no live core import.
-    assert started.status == "failed"
+    # Safe Core Dry-Run is wired; productive processing-core stays cold.
+    assert started.status == "completed"
     assert started.execution_gate == "ready_for_sandbox_execution"
     assert started.results == tuple()
     assert started.review_items == tuple()
-    assert MSG_SANDBOX_RUNNER_UNBOUND in started.message
+    assert started.core_dry_run_status == "dry_run_available"
     for forbidden in FORBIDDEN_IMPORT_PREFIXES:
         assert forbidden not in newly
         assert not any(name.startswith(forbidden + ".") for name in newly)

@@ -142,7 +142,8 @@ def test_folder_selection_does_not_process_pdfs(tmp_path: Path) -> None:
     started = state.processing_service.start_run(request)
     assert started.status == "blocked"
     assert MSG_BLOCKED_MISSING_SANDBOX in started.message
-    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT not in started.message
+    assert started.core_dry_run_status == "dry_run_available"
     assert pdf.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == listing_before
 
@@ -225,13 +226,13 @@ def test_cta_remains_blocked_by_sandbox_gate() -> None:
     started = state.processing_service.start_run(request)
     assert started.status == "blocked"
     assert MSG_BLOCKED_MISSING_SANDBOX in started.message
-    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT not in started.message
     assert started.execution_gate == "blocked_missing_sandbox"
-    assert started.core_dry_run_status == "unsupported_without_core_change"
+    assert started.core_dry_run_status == "dry_run_available"
     assert started.results == tuple()
-    # Workspace CTA path also stays non-productive.
+    # Workspace CTA path also stays non-productive without sandbox root/copy flags.
     result = apply_start_processing(state, profile_id="profile-a")
-    assert result.status in {"blocked", "not_configured"}
+    assert result.status in {"blocked", "not_configured", "failed"}
     assert result.results == tuple()
 
 

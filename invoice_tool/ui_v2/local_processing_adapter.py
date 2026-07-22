@@ -20,6 +20,7 @@ from invoice_tool.ui_v2.policy_runtime_bridge import (
 )
 from invoice_tool.ui_v2.processing_contract import ProcessingRunRequest
 from invoice_tool.ui_v2.processing_state import (
+    MSG_DRY_RUN_AVAILABLE,
     MSG_DRY_RUN_UNAVAILABLE,
     MSG_IDLE,
     MSG_POLICY_BLOCKED,
@@ -70,7 +71,7 @@ MSG_PRIVATE_OUTPUT_BLOCKED = (
 )
 MSG_READY_LOCAL_ADAPTER = (
     "Anfrage ist vollständig und policy-ready; "
-    "produktive Ausführung ist noch nicht freigegeben (kein sicherer Core-Dry-Pfad)."
+    "sicherer Core-Dry-Run ist angebunden; produktive Ausführung bleibt gesperrt."
 )
 MSG_UNKNOWN_RUN = "Kein aktiver Lauf (run_id unbekannt)."
 # Backward-compatible alias for the required dry-gate wording.
@@ -80,8 +81,8 @@ MSG_SANDBOX_CALL_ARGS_INCOMPLETE = (
     "Sandbox-Aufrufargumente unvollständig; Ausführung wurde nicht gestartet."
 )
 
-# Core dry/no-mutation finding (read-only inspection of run_once): unsupported.
-CORE_DRY_RUN_STATUS: ExecutionGateStatus = "unsupported_without_core_change"
+# Core dry/no-mutation API (invoice_tool.core_dry_run) is wired via core_bridge.
+CORE_DRY_RUN_STATUS: ExecutionGateStatus = "dry_run_available"
 
 # Map sandbox reason codes onto ProcessingRunState.execution_gate markers.
 _SANDBOX_REASON_TO_GATE: dict[str, ExecutionGateStatus] = {
@@ -377,10 +378,17 @@ class LocalProcessingAdapter:
         dry_status: ExecutionGateStatus,
     ) -> ProcessingRunState:
         gate = _SANDBOX_REASON_TO_GATE.get(sandbox.reason_code, "blocked_missing_sandbox")
-        # Preserve dry-run absence documentation alongside sandbox blocks.
         message = sandbox.message
-        if MSG_DRY_RUN_UNAVAILABLE not in message and gate != "blocked_productive_execution":
+        # Only append legacy dry-absent copy when dry-run is truly unavailable.
+        if (
+            dry_status == "unsupported_without_core_change"
+            and MSG_DRY_RUN_UNAVAILABLE not in message
+            and MSG_SANDBOX_CORE_DRY_ABSENT not in message
+            and gate != "blocked_productive_execution"
+        ):
             message = f"{message} {MSG_SANDBOX_CORE_DRY_ABSENT}"
+        elif dry_status == "dry_run_available" and MSG_SANDBOX_CORE_DRY_ABSENT in message:
+            message = message.replace(MSG_SANDBOX_CORE_DRY_ABSENT, MSG_DRY_RUN_AVAILABLE).strip()
         return blocked_processing_state(
             message,
             execution_gate=gate,
@@ -419,6 +427,9 @@ class LocalProcessingAdapter:
             execution_gate=state.execution_gate,
             dry_run_gate=state.dry_run_gate,
             core_dry_run_status=state.core_dry_run_status,
+            warnings=tuple(state.warnings),
+            planned_destination_count=state.planned_destination_count,
+            safety_proof_summary=state.safety_proof_summary,
         )
 
     def _is_forbidden_private_default_path(self, folder: str | None) -> bool:
@@ -447,21 +458,10 @@ class LocalProcessingAdapter:
         return None
 
     def _run_core_dry_no_mutation(self, request: ProcessingRunRequest) -> ProcessingRunState:
-        """Future wrapper marker for a safe dry/no-mutation core call.
+        """Delegate to the sandbox-gated dry-run path (never ``run_once``).
 
-        invoice_tool.run.run_once has no dry/no-mutation mode today. Calling it
-        would snapshot/process PDFs and mutate outputs — forbidden without a
-        separate productive PO gate and/or CORE_DRY_GATE_REQUIRES_CORE_CHANGE.
-
-        This method therefore returns blocked by default and must not import
-        invoice_tool.processing / invoice_tool.run / routing / classification.
+        Must not import invoice_tool.processing / invoice_tool.run / routing /
+        classification. Productive execution remains blocked.
         """
 
-        _ = request  # explicit: request already validated; unused until dry API exists
-        dry_status = self.core_dry_run_status()
-        return blocked_processing_state(
-            MSG_DRY_RUN_UNAVAILABLE,
-            execution_gate="unsupported_without_core_change",
-            dry_run_gate=dry_status,
-            core_dry_run_status=dry_status,
-        )
+        return self.start_run(request)

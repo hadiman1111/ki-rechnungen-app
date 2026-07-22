@@ -246,7 +246,7 @@ def test_start_run_blocked_when_sandbox_missing(tmp_path: Path) -> None:
 
     before_modules = set(sys.modules)
     adapter = LocalProcessingAdapter()
-    assert adapter.core_dry_run_status() == "unsupported_without_core_change"
+    assert adapter.core_dry_run_status() == "dry_run_available"
     assert adapter.dry_run_gate() == CORE_DRY_RUN_STATUS
     started = adapter.start_run(
         _ready_request(input_folder=str(inbox), output_folder=str(outbox))
@@ -256,9 +256,9 @@ def test_start_run_blocked_when_sandbox_missing(tmp_path: Path) -> None:
 
     assert started.status == "blocked"
     assert MSG_BLOCKED_MISSING_SANDBOX in started.message
-    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
-    assert started.core_dry_run_status == "unsupported_without_core_change"
-    assert started.dry_run_gate == "unsupported_without_core_change"
+    assert MSG_SANDBOX_CORE_DRY_ABSENT not in started.message
+    assert started.core_dry_run_status == "dry_run_available"
+    assert started.dry_run_gate == "dry_run_available"
     assert started.execution_gate == "blocked_missing_sandbox"
     assert started.results == tuple()
     assert started.review_items == tuple()
@@ -304,12 +304,12 @@ def test_start_run_sandbox_boundary_without_live_core_call(tmp_path: Path) -> No
     )
     newly = set(sys.modules) - before_modules
 
-    # Default runner is unbound — boundary is reached, live core is not imported.
-    assert started.status == "failed"
+    # Real Core Dry-Run is wired — PDF without OCR lands honestly in review.
+    assert started.status == "completed"
     assert started.execution_gate == "ready_for_sandbox_execution"
-    assert MSG_SANDBOX_RUNNER_UNBOUND in started.message
+    assert started.core_dry_run_status == "dry_run_available"
     assert started.results == tuple()
-    assert started.review_items == tuple()
+    assert len(started.review_items) == 1
     assert pdf.read_bytes() == before
     assert list(outbox.iterdir()) == []
     for forbidden in (
@@ -325,8 +325,8 @@ def test_dry_gate_visible_on_ready_validate_state() -> None:
     adapter = LocalProcessingAdapter()
     state = adapter.validate_request(_ready_request())
     assert state.status == "ready"
-    assert state.core_dry_run_status == "unsupported_without_core_change"
-    assert state.dry_run_gate == "unsupported_without_core_change"
+    assert state.core_dry_run_status == "dry_run_available"
+    assert state.dry_run_gate == "dry_run_available"
     assert state.execution_gate == "disabled"
 
 
@@ -389,7 +389,7 @@ def test_productive_dry_run_false_stays_blocked() -> None:
     assert started.status == "blocked"
     assert MSG_PRODUCTIVE_NOT_RELEASED in started.message
     assert started.execution_gate == "blocked_productive_execution"
-    assert started.core_dry_run_status == "unsupported_without_core_change"
+    assert started.core_dry_run_status == "dry_run_available"
     assert started.results == tuple()
 
 
@@ -399,14 +399,15 @@ def test_default_workspace_state_does_not_auto_select_local_adapter() -> None:
     assert state.workspace_output_folder_override is None
 
 
-def test_run_core_dry_placeholder_never_imports_core() -> None:
+def test_run_core_dry_delegate_never_imports_processing_core() -> None:
     adapter = LocalProcessingAdapter()
     before = set(sys.modules)
+    # Missing sandbox → blocked before dry-run call; still no processing-core import.
     blocked = adapter._run_core_dry_no_mutation(_ready_request())
     after = set(sys.modules)
     newly = after - before
     assert blocked.status == "blocked"
-    assert MSG_DRY_RUN_UNAVAILABLE in blocked.message
+    assert MSG_BLOCKED_MISSING_SANDBOX in blocked.message
     for forbidden in (
         "invoice_tool.processing",
         "invoice_tool.run",
