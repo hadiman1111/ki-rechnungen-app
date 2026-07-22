@@ -31,12 +31,15 @@ from invoice_tool.ui_v2.components import (
     make_accent_cta_button,
     make_create_list_marker,
     make_form_status_toggle,
+    make_info_banner,
     make_matching_rule_display,
     make_metadata_block,
     make_metadata_row,
     make_panel_close_button,
     make_panel_footer_end,
     make_panel_footer_start,
+    make_section_label,
+    make_settings_panel,
     make_split_detail_panel,
     make_status_toggle_pill,
     page_header,
@@ -44,6 +47,13 @@ from invoice_tool.ui_v2.components import (
     resolve_list_detail_height,
     secondary_button,
     status_badge,
+)
+from invoice_tool.ui_v2.profile_policy import (
+    MSG_CONFIGS_APPLY_RULES,
+    MSG_TARGETS_AFTER_SAFE_CONFIG,
+    MSG_UNCLEAR_NOT_AUTO,
+    build_configurations_page_policy_panel_vm,
+    build_profile_policy_view_model,
 )
 from invoice_tool.ui_v2.config_edit_components import build_folder_picker_field, build_rule_builder_field
 from invoice_tool.ui_v2.display_format import user_matching_summary_from_text
@@ -320,11 +330,39 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.message)
         _refresh()
 
+    linked_policy = build_profile_policy_view_model(
+        display_name=snapshot.profile.profile_name,
+        profile_id=profile_id or "",
+        configuration_present=page_vm.total_count > 0,
+    )
+    unmatched_flag: bool | None = None
+    if page_vm.unmatched is not None:
+        unmatched_flag = not bool(page_vm.unmatched.destination_missing)
+    config_policy_panel = build_configurations_page_policy_panel_vm(
+        active_profile_name=snapshot.profile.profile_name,
+        policy_readiness_status=linked_policy.readiness_status,
+        unmatched_configured=unmatched_flag,
+    )
+
     items: list[ft.Control] = [
         page_header(
             "Konfigurationen",
             subtitle="Lege fest, welche Dokumente zusammengehören, wie sie benannt und in welchen Ordner sie gespeichert werden.",
             trailing=action_button("Neue Konfiguration", on_click=lambda _e: _start_create(), primary=True),
+        ),
+        make_info_banner(config_policy_panel.banner),
+        make_section_label("Konfiguration ↔ Profil-Policy"),
+        make_settings_panel(
+            make_metadata_row("Hinweis", MSG_CONFIGS_APPLY_RULES),
+            make_metadata_row("Hinweis", MSG_UNCLEAR_NOT_AUTO),
+            make_metadata_row("Hinweis", MSG_TARGETS_AFTER_SAFE_CONFIG),
+            make_metadata_row("Profil", config_policy_panel.linked_profile_label),
+            make_metadata_row("Policy", config_policy_panel.linked_policy_status),
+            make_metadata_row("Unklar", config_policy_panel.unmatched_concept_label),
+            make_metadata_row(
+                "Ausführung",
+                "Kein produktiver Lauf — Zielorte erst nach sicherer Konfiguration.",
+            ),
         ),
     ]
 

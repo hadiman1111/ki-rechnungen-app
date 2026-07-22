@@ -27,16 +27,25 @@ from invoice_tool.ui_v2.components import (
     list_detail_split,
     list_panel,
     make_create_list_marker,
+    make_info_banner,
     make_metadata_block,
     make_metadata_row,
     make_panel_close_button,
     make_panel_footer_end,
     make_panel_footer_profile,
+    make_section_label,
+    make_settings_panel,
     make_split_detail_panel,
     page_header,
     page_scaffold,
     resolve_list_detail_height,
     status_badge,
+)
+from invoice_tool.ui_v2.profile_policy import (
+    MSG_PAYMENT_BUSINESS_PER_PROFILE,
+    MSG_PROFILES_CONTAIN_RULES,
+    MSG_WITHOUT_EVIDENCE_REVIEW,
+    build_profiles_page_policy_panel_vm,
 )
 from invoice_tool.ui_v2.draft_models import ProfileDraftVM
 from invoice_tool.ui_v2.edit_components import (
@@ -286,6 +295,18 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.message)
         _refresh()
 
+    selected_entry_for_policy = (
+        _profile_detail_for(state, profile, selected_id) if selected_id else None
+    )
+    policy_panel = build_profiles_page_policy_panel_vm(
+        profile_count=len(profile.profiles),
+        selected_display_name=(
+            selected_entry_for_policy.profile_name if selected_entry_for_policy else ""
+        ),
+        selected_profile_id=selected_id or "",
+        configuration_present=profile.configuration_count > 0,
+    )
+
     items: list[ft.Control] = [
         page_header(
             "Profile",
@@ -295,6 +316,17 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
                 on_click=lambda _e: _start_create(),
                 primary=True,
             ),
+        ),
+        make_info_banner(policy_panel.banner),
+        make_section_label("Profil-Policy Readiness"),
+        make_settings_panel(
+            make_metadata_row("Hinweis", MSG_PROFILES_CONTAIN_RULES),
+            make_metadata_row("Hinweis", MSG_PAYMENT_BUSINESS_PER_PROFILE),
+            make_metadata_row("Hinweis", MSG_WITHOUT_EVIDENCE_REVIEW),
+            make_metadata_row("Regeln", policy_panel.rules_profile_specific_label),
+            make_metadata_row("Readiness", policy_panel.selected_readiness_label),
+            make_metadata_row("Defaults", policy_panel.no_private_default_label),
+            make_metadata_row("Aktionen", policy_panel.actions_label),
         ),
     ]
 
@@ -496,8 +528,8 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             expand=True,
             alignment=ft.Alignment.CENTER,
             content=empty_state(
-                "Keine Profile vorhanden",
-                detail=f'Legen Sie mit „{SAAS_SURFACE_UI_LABELS["new_profile"]}“ ein erstes Profil an.',
+                policy_panel.empty_title,
+                detail=policy_panel.empty_detail,
             ),
         )
 
@@ -655,6 +687,9 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             make_metadata_row("Konfigurationen gesamt", str(config_count)),
             make_metadata_row("Aktive Konfigurationen", str(active_count)),
             make_metadata_row("Nicht zugeordnete Dokumente", unmatched_label),
+            make_metadata_row("Policy-Regeln", MSG_PAYMENT_BUSINESS_PER_PROFILE),
+            make_metadata_row("Nachweis", MSG_WITHOUT_EVIDENCE_REVIEW),
+            make_metadata_row("Readiness", policy_panel.selected_readiness_label),
         )
 
         primary_action = None

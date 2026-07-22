@@ -23,12 +23,19 @@ from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_SUPPLIER_IBAN_NOT_PAYER,
     MSG_UNKNOWN_EVIDENCE_REVIEW,
 )
+from invoice_tool.ui_v2.profile_policy import (
+    MSG_CARD_HINT_WITHOUT_REF_UNCLEAR,
+    MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT,
+)
 
 # Required honest product copy for the policy editor readiness shell.
 MSG_RULES_PROFILE_CONFIGURABLE = "Regeln werden pro Profil konfiguriert."
 MSG_FILENAME_NOT_TRUTH = "Dateinamen sind keine Belegwahrheit."
 MSG_UNCLEAR_STAYS_REVIEW = "Unklare Nachweise bleiben zur Prüfung."
 MSG_PRODUCTIVE_NOT_RELEASED = "Produktive Verarbeitung ist noch nicht freigegeben."
+# Aliases for required PO copy (also re-exported for tests).
+MSG_SUPPLIER_IBAN_NOT_USER_PROOF = MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT
+MSG_CARD_WITHOUT_REF_UNCLEAR = MSG_CARD_HINT_WITHOUT_REF_UNCLEAR
 
 POLICY_EDITOR_SECTION_TITLE = "Verarbeitungsregeln (Readiness)"
 POLICY_EDITOR_SUBTITLE = (
@@ -93,15 +100,15 @@ def build_policy_editor_controls_vm() -> PolicyEditorControlsVM:
         PolicyControlVM(
             control_id="supplier_iban_not_payer",
             label="Lieferanten-IBAN allein",
-            detail=MSG_SUPPLIER_IBAN_NOT_PAYER,
+            detail=MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT,
             enabled=False,
             status=CONTROL_STATUS_READINESS,
-            value_label="Kein Zahlernachweis",
+            value_label="Kein Zahlungsnachweis des Nutzers",
         ),
         PolicyControlVM(
             control_id="generic_card_without_account_ref",
             label="Generischer Kartentext ohne Kontoreferenz",
-            detail=MSG_GENERIC_CARD_UNCLEAR,
+            detail=MSG_CARD_HINT_WITHOUT_REF_UNCLEAR,
             enabled=False,
             status=CONTROL_STATUS_READINESS,
             value_label="Zur Prüfung / unklar",
@@ -112,13 +119,15 @@ def build_policy_editor_controls_vm() -> PolicyEditorControlsVM:
             detail=MSG_RULES_PROFILE_CONFIGURABLE,
             enabled=False,
             status=CONTROL_STATUS_READINESS,
-            value_label="Profilkonfigurierbar",
+            value_label="Profilkonfigurierbar — treiben Entscheidungen",
         ),
     )
     honest_copy = (
         MSG_RULES_PROFILE_CONFIGURABLE,
         MSG_FILENAME_NOT_TRUTH,
         MSG_UNCLEAR_STAYS_REVIEW,
+        MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT,
+        MSG_CARD_HINT_WITHOUT_REF_UNCLEAR,
         MSG_PRODUCTIVE_NOT_RELEASED,
     )
     return PolicyEditorControlsVM(
@@ -153,11 +162,16 @@ def build_policy_editor_controls_panel(
         make_settings_panel(
             make_metadata_row("Hinweis", MSG_FILENAME_NOT_TRUTH),
             make_metadata_row("Hinweis", MSG_UNCLEAR_STAYS_REVIEW),
+            make_metadata_row("Hinweis", MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT),
+            make_metadata_row("Hinweis", MSG_CARD_HINT_WITHOUT_REF_UNCLEAR),
             make_metadata_row("Hinweis", MSG_RULES_PROFILE_CONFIGURABLE),
             make_metadata_row("Status", MSG_PRODUCTIVE_NOT_RELEASED),
             make_metadata_row(
                 "Bridge",
-                f"{MSG_FILENAME_NOT_SOURCE_OF_TRUTH} {MSG_UNKNOWN_EVIDENCE_REVIEW}",
+                (
+                    f"{MSG_FILENAME_NOT_SOURCE_OF_TRUTH} {MSG_UNKNOWN_EVIDENCE_REVIEW} "
+                    f"{MSG_SUPPLIER_IBAN_NOT_PAYER} {MSG_GENERIC_CARD_UNCLEAR}"
+                ),
             ),
         ),
     ]

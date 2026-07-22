@@ -7,9 +7,11 @@ from pathlib import Path
 
 from invoice_tool.ui_v2.pages.settings import build_settings_page_vm
 from invoice_tool.ui_v2.policy_editor_controls import (
+    MSG_CARD_HINT_WITHOUT_REF_UNCLEAR,
     MSG_FILENAME_NOT_TRUTH,
     MSG_PRODUCTIVE_NOT_RELEASED,
     MSG_RULES_PROFILE_CONFIGURABLE,
+    MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT,
     MSG_UNCLEAR_STAYS_REVIEW,
     build_policy_editor_controls_vm,
 )
@@ -63,6 +65,22 @@ def test_policy_editor_says_unclear_evidence_goes_to_review() -> None:
     vm = build_policy_editor_controls_vm()
     assert vm.unclear_evidence_goes_to_review is True
     assert MSG_UNCLEAR_STAYS_REVIEW in vm.honest_copy
+
+
+def test_policy_editor_says_supplier_iban_is_not_user_payment_proof() -> None:
+    vm = build_policy_editor_controls_vm()
+    assert vm.supplier_iban_alone_is_payer_evidence is False
+    assert MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT in vm.honest_copy
+    blob = " ".join(vm.honest_copy + tuple(c.detail for c in vm.controls))
+    assert "Lieferanten-IBAN ist kein Zahlungsnachweis des Nutzers" in blob
+
+
+def test_policy_editor_says_card_hints_without_ref_remain_unclear() -> None:
+    vm = build_policy_editor_controls_vm()
+    assert vm.generic_card_without_account_ref_is_clear is False
+    assert MSG_CARD_HINT_WITHOUT_REF_UNCLEAR in vm.honest_copy
+    blob = " ".join(vm.honest_copy + tuple(c.detail for c in vm.controls))
+    assert "Kartenhinweise ohne konfigurierte Referenz bleiben unklar" in blob
 
 
 def test_policy_editor_says_rules_are_profile_configurable() -> None:
