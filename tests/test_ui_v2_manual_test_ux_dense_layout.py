@@ -11,9 +11,10 @@ from invoice_tool.ui_v2.local_processing_adapter import LocalProcessingAdapter
 from invoice_tool.ui_v2.pages.settings import PRODUCT_STATUS_ONE_LINE, build_settings_page_vm
 from invoice_tool.ui_v2.pages.workspace import (
     EMPTY_RESULT_COMPACT_TITLE,
+    MAX_BLOCKED_DETAIL_LINES,
+    MSG_DETAIL_CORE_BRIDGE,
     MSG_RUN_STATUS_CHECKING,
     MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
-    MSG_SANDBOX_NEXT_CORE_BRIDGE,
     MSG_SANDBOX_NO_ORIGINALS_USED,
     apply_start_processing,
     build_start_interaction_feedback,
@@ -91,7 +92,8 @@ def test_core_bridge_missing_shows_compact_blocked_state(tmp_path: Path) -> None
     assert state.workspace_run_interaction_status == "sandbox_not_connected"
     assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in state.workspace_start_feedback_primary
     assert MSG_SANDBOX_NO_ORIGINALS_USED in state.workspace_start_feedback_details
-    assert MSG_SANDBOX_NEXT_CORE_BRIDGE in state.workspace_start_feedback_details
+    assert MSG_DETAIL_CORE_BRIDGE in state.workspace_start_feedback_details
+    assert len(state.workspace_start_feedback_details) <= MAX_BLOCKED_DETAIL_LINES
     assert not state.processing_run_state.results
 
 
@@ -216,8 +218,10 @@ def test_interaction_feedback_builder_primary_is_compact() -> None:
     )
     assert feedback.interaction_status == "sandbox_not_connected"
     assert feedback.primary == MSG_SANDBOX_BRIDGE_NOT_CONNECTED
-    assert MSG_SANDBOX_NEXT_CORE_BRIDGE in feedback.details
+    assert MSG_DETAIL_CORE_BRIDGE in feedback.details
+    assert len(feedback.details) <= MAX_BLOCKED_DETAIL_LINES
     assert "Dies ist ein Sandbox-Lauf" not in feedback.primary
+    assert "Dies ist ein Sandbox-Lauf" not in " ".join(feedback.details)
 
 
 def test_review_empty_state_is_compact() -> None:

@@ -125,6 +125,21 @@ from invoice_tool.ui_v2.run_result_display import (
 )
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.view_models import ResultSummaryVM, UiV2ReadOnlySnapshot
+from invoice_tool.ui_v2.workspace_configuration_selection import (
+    MAX_BLOCKED_DETAIL_LINES,
+    MSG_CONFIGURATION_CHANGE_HINT,
+    MSG_CORE_BRIDGE_TECHNICAL,
+    MSG_EXPORT_REMAINS_DRAFT,
+    MSG_NO_ACTIVE_CONFIGURATION,
+    MSG_NO_ORIGINALS_USED,
+    MSG_PRODUCTIVE_LOCKED,
+    MSG_PROFILE_MISSING,
+    DEFAULT_PROFILE_ID_SENTINEL,
+    WorkspaceConfigurationSelection,
+    build_compact_blocked_details,
+    resolve_selection_from_state,
+    resolve_workspace_configuration_selection,
+)
 
 ErgebnisAction = Literal["neue-konfiguration", "konfiguration-bearbeiten"]
 
@@ -174,13 +189,21 @@ MSG_SANDBOX_BRIDGE_NOT_CONNECTED = (
 MSG_SANDBOX_NEXT_CORE_BRIDGE = (
     "Nächster technischer Schritt: sichere Core-Bridge für Sandbox/Dry-Run."
 )
-MSG_SANDBOX_NO_ORIGINALS_USED = "Keine Originalordner wurden verwendet."
+MSG_SANDBOX_NO_ORIGINALS_USED = MSG_NO_ORIGINALS_USED
 MSG_SANDBOX_RESULTS_AFTER_SUCCESS = (
     "Ergebnisse erscheinen hier nach einem erfolgreichen Sandbox-Lauf."
 )
 MSG_SANDBOX_BLOCKED_PROFILE = (
     "Sandbox-Lauf blockiert: Bitte Profil und Konfiguration prüfen."
 )
+MSG_SANDBOX_BLOCKED_PROFILE_MISSING = f"Sandbox-Lauf blockiert: {MSG_PROFILE_MISSING}"
+MSG_SANDBOX_BLOCKED_NO_ACTIVE_CONFIG = (
+    f"Sandbox-Lauf blockiert: {MSG_NO_ACTIVE_CONFIGURATION}"
+)
+MSG_DETAIL_PRODUCTIVE_LOCKED = MSG_PRODUCTIVE_LOCKED
+MSG_DETAIL_EXPORT_DRAFT = MSG_EXPORT_REMAINS_DRAFT
+MSG_DETAIL_CORE_BRIDGE = MSG_CORE_BRIDGE_TECHNICAL
+RUN_SETUP_SECTION_LABEL = "Lauf-Setup"
 MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
 MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
 MSG_EXPORT_DISCLAIMER_COMPACT = (
@@ -656,11 +679,22 @@ class StartInteractionFeedback:
         return " ".join(part for part in parts if part).strip()
 
 
-_DEFAULT_SAFETY_DETAILS = (
-    MSG_SANDBOX_NO_ORIGINALS_USED,
-    MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
-    MSG_SANDBOX_NEXT_CORE_BRIDGE,
-)
+def _compact_details(
+    *,
+    configuration_label: str | None = None,
+    core_bridge_relevant: bool = False,
+    extra: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    base = build_compact_blocked_details(
+        configuration_label=configuration_label,
+        core_bridge_relevant=core_bridge_relevant,
+    )
+    merged: list[str] = []
+    for item in (*extra, *base):
+        text = str(item or "").strip()
+        if text and text not in merged:
+            merged.append(text)
+    return tuple(merged[:MAX_BLOCKED_DETAIL_LINES])
 
 
 def _feedback(
@@ -672,6 +706,7 @@ def _feedback(
     tone: str = "blocked",
 ) -> StartInteractionFeedback:
     cleaned = tuple(dict.fromkeys(item for item in details if str(item or "").strip()))
+    cleaned = cleaned[:MAX_BLOCKED_DETAIL_LINES]
     return StartInteractionFeedback(
         interaction_status=interaction_status,
         status_label=status_label,
@@ -681,7 +716,11 @@ def _feedback(
     )
 
 
-def build_start_interaction_feedback(result: ProcessingRunState) -> StartInteractionFeedback:
+def build_start_interaction_feedback(
+    result: ProcessingRunState,
+    *,
+    configuration_label: str | None = None,
+) -> StartInteractionFeedback:
     """Map ProcessingRunState into compact primary + secondary details."""
 
     message = (result.message or "").strip()
@@ -689,13 +728,17 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
     gate = result.execution_gate
     errors = " ".join(str(item) for item in (result.errors or ()))
     blob = f"{message} {errors}".lower()
+    config_label = (configuration_label or "").strip() or None
 
     if status == "completed":
         return _feedback(
             interaction_status="completed",
             status_label=MSG_RUN_STATUS_COMPLETED,
             primary=MSG_SANDBOX_COMPLETED,
-            details=(MSG_SANDBOX_STARTED, MSG_SANDBOX_NO_ORIGINALS_USED, message),
+            details=_compact_details(
+                configuration_label=config_label,
+                extra=(MSG_SANDBOX_STARTED, message),
+            ),
             tone="completed",
         )
 
@@ -704,7 +747,7 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="checking",
             status_label=MSG_RUN_STATUS_CHECKING,
             primary=message or MSG_SANDBOX_STARTED,
-            details=_DEFAULT_SAFETY_DETAILS,
+            details=_compact_details(configuration_label=config_label),
             tone="checking",
         )
 
@@ -722,11 +765,9 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
                 interaction_status="sandbox_not_connected",
                 status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
                 primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
-                details=(
-                    MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
-                    MSG_SANDBOX_NO_ORIGINALS_USED,
-                    MSG_SANDBOX_NEXT_CORE_BRIDGE,
-                    MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+                details=_compact_details(
+                    configuration_label=config_label,
+                    core_bridge_relevant=True,
                 ),
                 tone="sandbox_not_connected",
             )
@@ -734,7 +775,7 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="failed",
             status_label=MSG_RUN_STATUS_FAILED,
             primary=f"{MSG_SANDBOX_FAILED} {message}".strip(),
-            details=_DEFAULT_SAFETY_DETAILS,
+            details=_compact_details(configuration_label=config_label),
             tone="failed",
         )
 
@@ -747,7 +788,7 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="blocked",
             status_label=MSG_RUN_STATUS_BLOCKED,
             primary=MSG_SANDBOX_BLOCKED_PRODUCTIVE,
-            details=_DEFAULT_SAFETY_DETAILS,
+            details=_compact_details(configuration_label=config_label),
             tone="blocked",
         )
 
@@ -760,11 +801,9 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="sandbox_not_connected",
             status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
             primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
-            details=(
-                message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
-                MSG_SANDBOX_NO_ORIGINALS_USED,
-                MSG_SANDBOX_NEXT_CORE_BRIDGE,
-                MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+            details=_compact_details(
+                configuration_label=config_label,
+                core_bridge_relevant=True,
             ),
             tone="sandbox_not_connected",
         )
@@ -783,7 +822,34 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="blocked",
             status_label=MSG_RUN_STATUS_BLOCKED,
             primary=MSG_SANDBOX_BLOCKED_FOLDERS,
-            details=(message or MSG_SANDBOX_BLOCKED_FOLDERS, *_DEFAULT_SAFETY_DETAILS),
+            details=_compact_details(
+                configuration_label=config_label,
+                extra=(message or MSG_SANDBOX_BLOCKED_FOLDERS,),
+            ),
+            tone="blocked",
+        )
+
+    if MSG_PROFILE_MISSING in message or "profil fehlt" in blob:
+        return _feedback(
+            interaction_status="blocked",
+            status_label=MSG_RUN_STATUS_BLOCKED,
+            primary=MSG_SANDBOX_BLOCKED_PROFILE_MISSING,
+            details=_compact_details(
+                configuration_label=config_label,
+                extra=(MSG_PROFILE_MISSING,),
+            ),
+            tone="blocked",
+        )
+
+    if MSG_NO_ACTIVE_CONFIGURATION in message or "keine aktive konfiguration" in blob:
+        return _feedback(
+            interaction_status="blocked",
+            status_label=MSG_RUN_STATUS_BLOCKED,
+            primary=MSG_SANDBOX_BLOCKED_NO_ACTIVE_CONFIG,
+            details=_compact_details(
+                configuration_label="fehlt",
+                extra=(MSG_NO_ACTIVE_CONFIGURATION, MSG_CONFIGURATION_CHANGE_HINT),
+            ),
             tone="blocked",
         )
 
@@ -792,7 +858,10 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="blocked",
             status_label=MSG_RUN_STATUS_BLOCKED,
             primary=MSG_SANDBOX_BLOCKED_PROFILE,
-            details=(message or MSG_SANDBOX_BLOCKED_PROFILE, *_DEFAULT_SAFETY_DETAILS),
+            details=_compact_details(
+                configuration_label=config_label,
+                extra=(message or MSG_SANDBOX_BLOCKED_PROFILE,),
+            ),
             tone="blocked",
         )
 
@@ -801,11 +870,9 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
             interaction_status="sandbox_not_connected",
             status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
             primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
-            details=(
-                message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
-                MSG_SANDBOX_NO_ORIGINALS_USED,
-                MSG_SANDBOX_NEXT_CORE_BRIDGE,
-                MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+            details=_compact_details(
+                configuration_label=config_label,
+                core_bridge_relevant=True,
             ),
             tone="sandbox_not_connected",
         )
@@ -815,7 +882,7 @@ def build_start_interaction_feedback(result: ProcessingRunState) -> StartInterac
         interaction_status="blocked",
         status_label=MSG_RUN_STATUS_BLOCKED,
         primary=f"Sandbox-Lauf blockiert: {detail}",
-        details=_DEFAULT_SAFETY_DETAILS,
+        details=_compact_details(configuration_label=config_label),
         tone="blocked",
     )
 
@@ -829,13 +896,13 @@ def build_start_button_feedback(result: ProcessingRunState) -> str:
 def mark_start_checking(state: UiV2State) -> None:
     """Immediately surface checking state before the adapter returns."""
 
+    selection = resolve_selection_from_state(state)
     state.workspace_run_interaction_status = "checking"
     state.workspace_start_feedback_primary = MSG_RUN_STATUS_CHECKING
     state.workspace_start_feedback = MSG_RUN_STATUS_CHECKING
-    state.workspace_start_feedback_details = [
-        MSG_SANDBOX_NO_ORIGINALS_USED,
-        MSG_SANDBOX_NEXT_CORE_BRIDGE,
-    ]
+    state.workspace_start_feedback_details = list(
+        _compact_details(configuration_label=selection.configuration_display)
+    )
     state.processing_run_state = ProcessingRunState(
         status="running",
         message=MSG_RUN_STATUS_CHECKING,
@@ -849,6 +916,30 @@ def mark_start_checking(state: UiV2State) -> None:
     )
 
 
+def resolve_workspace_configuration_selection_for_state(
+    state: UiV2State,
+    *,
+    profile_id: str | None = None,
+    explicit_configuration_id: str | None = None,
+) -> WorkspaceConfigurationSelection:
+    """Resolve profile + active configuration for workspace sandbox start."""
+
+    snap = state.snapshot if isinstance(state.snapshot, UiV2ReadOnlySnapshot) else None
+    selected_profile = (profile_id or "").strip() or None
+    if selected_profile is None:
+        selected_profile = (state.selected_profile_id or "").strip() or None
+        if selected_profile == DEFAULT_PROFILE_ID_SENTINEL and snap is not None:
+            selected_profile = None
+    explicit = (explicit_configuration_id or "").strip() or None
+    if explicit is None:
+        explicit = (state.config_list_selected_id or "").strip() or None
+    return resolve_workspace_configuration_selection(
+        snapshot=snap,
+        profile_id=selected_profile,
+        explicit_configuration_id=explicit,
+    )
+
+
 def build_processing_run_request(
     state: UiV2State,
     *,
@@ -856,7 +947,7 @@ def build_processing_run_request(
     configuration_id: str | None = None,
     user_confirmed_start: bool = False,
 ) -> ProcessingRunRequest:
-    """Build a contract request from explicit UI-v2 selection only (no private defaults)."""
+    """Build a contract request from UI-v2 selection + resolved active configuration."""
 
     folder = (state.workspace_input_folder_override or "").strip() or None
     output_folder = (state.workspace_output_folder_override or "").strip() or None
@@ -867,14 +958,19 @@ def build_processing_run_request(
     )
     policy_bridge = resolve_workspace_policy_bridge(state)
     # Folders only from explicit overrides — never Desktop/private defaults.
-    # Profile/config only from explicit caller args or explicit UI selection fields —
-    # never invent private tenant defaults (do not fall back to state.selected_profile_id="local").
-    resolved_configuration = (
-        (configuration_id or "").strip()
-        or (state.config_list_selected_id or "").strip()
-        or None
+    # Profile from caller / snapshot; configuration from explicit id or active
+    # snapshot configurations (auto/default). Never invent private tenant defaults.
+    selection = resolve_workspace_configuration_selection_for_state(
+        state,
+        profile_id=profile_id,
+        explicit_configuration_id=(
+            (configuration_id or "").strip()
+            or (state.config_list_selected_id or "").strip()
+            or None
+        ),
     )
-    resolved_profile = (profile_id or "").strip() or None
+    resolved_configuration = selection.selected_configuration_id
+    resolved_profile = selection.profile_id or ((profile_id or "").strip() or None)
     sandbox_root = (state.workspace_sandbox_root or "").strip() or None
     original_source = (state.workspace_original_source_folder or "").strip() or None
     sandbox_mode = bool(state.workspace_sandbox_mode)
@@ -901,19 +997,59 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
     """Invoke the bounded processing service — never imports processing-core.
 
     Live Track-B UI injects LocalProcessingAdapter. CTA prepares sandbox intent,
-    sets user_confirmed_start=True, and always writes visible workspace feedback.
+    resolves an active configuration when available, sets user_confirmed_start=True,
+    and always writes visible workspace feedback.
     Still no productive execution and no original-folder mutation.
     """
 
     mark_start_checking(state)
     prepare_sandbox_intent_for_cta(state)
-    request = build_processing_run_request(
+    selection = resolve_workspace_configuration_selection_for_state(
         state,
         profile_id=profile_id,
+        explicit_configuration_id=(state.config_list_selected_id or "").strip() or None,
+    )
+    if selection.selected_configuration_id:
+        state.config_list_selected_id = selection.selected_configuration_id
+
+    request = build_processing_run_request(
+        state,
+        profile_id=selection.profile_id or profile_id,
+        configuration_id=selection.selected_configuration_id,
         user_confirmed_start=True,
     )
     result = state.processing_service.start_run(request)
-    interaction = build_start_interaction_feedback(result)
+    # Prefer compact workspace selection copy when the gate only knows “config missing”.
+    if (
+        not selection.is_ready
+        and selection.blocker_message
+        and result.status in {"not_configured", "blocked"}
+        and (
+            "konfiguration" in (result.message or "").lower()
+            or "profil" in (result.message or "").lower()
+            or result.execution_gate
+            in {"blocked_missing_configuration", "blocked_missing_profile"}
+        )
+    ):
+        result = ProcessingRunState(
+            status=result.status,
+            message=selection.blocker_message,
+            run_id=result.run_id,
+            results=tuple(result.results or ()),
+            review_items=tuple(result.review_items or ()),
+            errors=tuple(result.errors or ()),
+            execution_gate=(
+                "blocked_missing_profile"
+                if selection.resolution == "missing_profile"
+                else result.execution_gate or "blocked_missing_configuration"
+            ),
+            dry_run_gate=result.dry_run_gate,
+            core_dry_run_status=result.core_dry_run_status,
+        )
+    interaction = build_start_interaction_feedback(
+        result,
+        configuration_label=selection.configuration_display,
+    )
     feedback = interaction.combined
     # Keep adapter status/results; surface preferred German CTA copy in message.
     state.processing_run_state = ProcessingRunState(
@@ -1157,6 +1293,10 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     readiness = build_workspace_readiness_display_vm(state)
     onboarding = build_workspace_onboarding_panel_vm(state)
     run_report = build_workspace_run_report_vm(state)
+    config_selection = resolve_workspace_configuration_selection_for_state(
+        state,
+        profile_id=snapshot.profile.profile_id,
+    )
     contract_results = tuple(state.processing_run_state.results or ())
     snapshot_display = _display_results(workspace.results)
     contract_display = _display_processing_results(contract_results)
@@ -1312,15 +1452,26 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     if not primary_feedback and state.processing_run_state.status != "idle":
         primary_feedback = (state.processing_run_state.message or "").strip()
     detail_feedback = list(state.workspace_start_feedback_details or [])
+    core_bridge_relevant = interaction_status == "sandbox_not_connected" or (
+        "core-bridge" in primary_feedback.lower()
+        or "nicht sicher angebunden" in primary_feedback.lower()
+        or "nicht verbunden" in primary_feedback.lower()
+    )
     if interaction_status == "idle" and not primary_feedback:
         status_label = MSG_RUN_STATUS_READY
-        primary_feedback = "Ordner wählen und Sandbox-Lauf starten."
-        tone = "ready"
-        detail_feedback = [
-            MSG_SANDBOX_NO_ORIGINALS_USED,
-            MSG_SANDBOX_NEXT_CORE_BRIDGE,
-            *list(honesty.sandbox_readiness_lines[:3]),
-        ]
+        if not config_selection.is_ready and config_selection.blocker_message:
+            primary_feedback = config_selection.blocker_message
+            tone = "blocked"
+            status_label = MSG_RUN_STATUS_BLOCKED
+        else:
+            primary_feedback = "Ordner wählen und Sandbox-Lauf starten."
+            tone = "ready"
+        detail_feedback = list(
+            _compact_details(
+                configuration_label=config_selection.configuration_display,
+                core_bridge_relevant=False,
+            )
+        )
     elif interaction_status == "checking":
         status_label = MSG_RUN_STATUS_CHECKING
         primary_feedback = primary_feedback or MSG_RUN_STATUS_CHECKING
@@ -1329,6 +1480,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         status_label = MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED
         primary_feedback = primary_feedback or MSG_SANDBOX_BRIDGE_NOT_CONNECTED
         tone = "sandbox_not_connected"
+        core_bridge_relevant = True
     elif interaction_status == "completed":
         status_label = MSG_RUN_STATUS_COMPLETED
         tone = "completed"
@@ -1339,29 +1491,34 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         status_label = MSG_RUN_STATUS_BLOCKED
         tone = "blocked"
 
-    # Secondary workflow / sandbox lines stay collapsed — not a permanent bullet wall.
-    sandbox_detail_lines: list[str] = []
-    for line in (
-        *honesty.sandbox_readiness_lines,
-        readiness.dry_gate_message if readiness.dry_gate_blocked else None,
-        MSG_PRODUCTIVE_HOLD if readiness.productive_hold else None,
-        *run_shell.blocked_hints,
-        honesty.policy_intent_hint
-        if honesty.policy_intent_status in {"incomplete", "blocked"}
-        else None,
-        *detail_feedback,
-    ):
-        text = str(line or "").strip()
-        if text and text not in sandbox_detail_lines and text != primary_feedback:
-            sandbox_detail_lines.append(text)
+    # Compact details only — no sandbox readiness bullet wall.
+    sandbox_detail_lines = list(
+        _compact_details(
+            configuration_label=config_selection.configuration_display,
+            core_bridge_relevant=core_bridge_relevant,
+            extra=tuple(detail_feedback),
+        )
+    )
 
     run_status_panel = compact_run_status_panel(
         status_label=status_label,
         primary_reason=primary_feedback,
-        details=tuple(sandbox_detail_lines),
+        details=tuple(sandbox_detail_lines[:MAX_BLOCKED_DETAIL_LINES]),
         tone=tone,
         details_title="Details anzeigen",
     )
+
+    run_setup_panel = make_context_strip(
+        ("Profil", config_selection.profile_display or profile_name),
+        ("Konfiguration", config_selection.configuration_display),
+        ("Eingang", "gewählt" if readiness.input_folder_selected else "fehlt"),
+        ("Ausgang", "gewählt" if readiness.output_folder_selected else "fehlt"),
+    )
+    run_setup_hint = None
+    if config_selection.is_ready and config_selection.change_hint:
+        run_setup_hint = helper_text(config_selection.change_hint)
+    elif config_selection.blocker_message:
+        run_setup_hint = helper_text(config_selection.blocker_message)
 
     onboarding_panel = ft.Column(
         [
@@ -1386,20 +1543,26 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             subtitle="Ordner wählen, Sandbox starten, Ergebnis prüfen.",
         ),
         make_context_strip(("Profil", profile_name), ("Modell", scan_model)),
-        make_section_label(ONBOARDING_SECTION_LABEL_COMPACT),
-        onboarding_panel,
-        make_section_label(FOLDER_SELECTION_SECTION_LABEL),
-        folder_selection_panel,
-        make_section_label(START_FEEDBACK_SECTION_LABEL),
-        run_status_panel,
-        make_context_strip(
-            ("Eingang", "gewählt" if readiness.input_folder_selected else "fehlt"),
-            ("Ausgabe", "gewählt" if readiness.output_folder_selected else "fehlt"),
-            ("Ergebnisse", str(readiness.result_count)),
-            ("Prüffälle", str(readiness.review_count)),
-        ),
-        run_panel,
+        make_section_label(RUN_SETUP_SECTION_LABEL),
+        run_setup_panel,
     ]
+    if run_setup_hint is not None:
+        items.append(run_setup_hint)
+    items.extend(
+        [
+            make_section_label(ONBOARDING_SECTION_LABEL_COMPACT),
+            onboarding_panel,
+            make_section_label(FOLDER_SELECTION_SECTION_LABEL),
+            folder_selection_panel,
+            make_section_label(START_FEEDBACK_SECTION_LABEL),
+            run_status_panel,
+            make_context_strip(
+                ("Ergebnisse", str(readiness.result_count)),
+                ("Prüffälle", str(readiness.review_count)),
+            ),
+            run_panel,
+        ]
+    )
     items.extend(_build_run_report_panel(state, run_report))
     if run_shell.review.has_items:
         items.append(

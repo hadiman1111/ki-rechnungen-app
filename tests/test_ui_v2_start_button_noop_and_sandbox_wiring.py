@@ -10,18 +10,22 @@ from pathlib import Path
 
 from invoice_tool.ui_v2.local_processing_adapter import LocalProcessingAdapter
 from invoice_tool.ui_v2.pages.workspace import (
+    MSG_DETAIL_CORE_BRIDGE,
+    MSG_DETAIL_PRODUCTIVE_LOCKED,
     MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
     MSG_SANDBOX_BLOCKED_FOLDERS,
     MSG_SANDBOX_BLOCKED_PRODUCTIVE,
     MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
     MSG_SANDBOX_NO_ORIGINALS_USED,
-    MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
     START_CTA_LABEL,
     apply_start_processing,
     build_processing_run_request,
     build_start_button_feedback,
     derive_sandbox_root_from_folders,
     prepare_sandbox_intent_for_cta,
+)
+from invoice_tool.ui_v2.workspace_configuration_selection import (
+    MSG_NO_ACTIVE_CONFIGURATION,
 )
 from invoice_tool.ui_v2.processing_contract import NotYetConnectedProcessingService
 from invoice_tool.ui_v2.processing_state import (
@@ -178,8 +182,10 @@ def test_click_start_missing_configuration_shows_visible_blocked_reason() -> Non
     assert result.status == "not_configured"
     feedback = state.workspace_start_feedback
     assert feedback
-    assert "Konfiguration" in feedback or "Profil" in feedback or "Sandbox-Lauf blockiert" in feedback
-    assert MSG_SANDBOX_RESULTS_AFTER_SUCCESS in feedback
+    assert MSG_NO_ACTIVE_CONFIGURATION in feedback or "Konfiguration" in feedback
+    assert MSG_SANDBOX_NO_ORIGINALS_USED in feedback
+    assert MSG_DETAIL_PRODUCTIVE_LOCKED in feedback
+    assert "Dies ist ein Sandbox-Lauf" not in feedback
 
 
 def test_productive_execution_remains_blocked() -> None:
@@ -229,7 +235,8 @@ def test_core_bridge_unavailable_shows_visible_blocked_not_noop(tmp_path: Path) 
     assert feedback
     assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in feedback or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in feedback
     assert MSG_SANDBOX_NO_ORIGINALS_USED in feedback
-    assert MSG_SANDBOX_RESULTS_AFTER_SUCCESS in feedback
+    assert MSG_DETAIL_CORE_BRIDGE in feedback or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in feedback
+    assert "Dies ist ein Sandbox-Lauf" not in feedback
     # Default runner is unbound — core bridge required for real OCR/AI.
     if result.status == "failed":
         assert "sandbox_core_runner_unbound" in result.errors or MSG_SANDBOX_RUNNER_UNBOUND in (
@@ -385,7 +392,7 @@ def test_not_yet_connected_still_shows_visible_feedback() -> None:
         or "Sandbox nicht verbunden" in state.workspace_start_feedback
     )
     assert MSG_SANDBOX_NO_ORIGINALS_USED in state.workspace_start_feedback
-    assert MSG_SANDBOX_RESULTS_AFTER_SUCCESS in state.workspace_start_feedback
+    assert MSG_DETAIL_PRODUCTIVE_LOCKED in state.workspace_start_feedback
 
 
 def test_feedback_builder_covers_blocked_states() -> None:
@@ -403,7 +410,8 @@ def test_feedback_builder_covers_blocked_states() -> None:
             execution_gate="ready_for_sandbox_execution",
         )
     )
-    assert MSG_SANDBOX_BLOCKED_CORE_BRIDGE in failed
+    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in failed
+    assert MSG_DETAIL_CORE_BRIDGE in failed or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in failed
 
 
 def test_module_reload_stays_core_free() -> None:
