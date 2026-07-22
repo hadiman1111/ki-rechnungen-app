@@ -203,6 +203,66 @@ def build_workspace_run_result_shell(state: UiV2State) -> RunResultDisplayShellV
     return build_run_result_display_shell(state.processing_run_state)
 
 
+@dataclass(frozen=True)
+class WorkspaceReadinessDisplayVM:
+    """Honest aggregated workspace readiness display — no fake counters/results."""
+
+    input_folder_selected: bool
+    output_folder_selected: bool
+    input_folder_display: str | None
+    output_folder_display: str | None
+    run_status: ProcessingStatus
+    run_status_label: str
+    run_message: str
+    dry_gate_blocked: bool
+    dry_gate_message: str | None
+    productive_hold: bool
+    result_count: int
+    review_count: int
+    error_count: int
+    implies_successful_processing: bool
+    offers_productive_execution: bool
+    has_fake_counters: bool
+
+
+def build_workspace_readiness_display_vm(state: UiV2State) -> WorkspaceReadinessDisplayVM:
+    """Aggregate folder/run/dry-gate/result/review/error state without inventing data."""
+
+    folders = build_workspace_folder_selection_vm(state)
+    shell = build_workspace_run_result_shell(state)
+    run_state = state.processing_run_state or ProcessingRunState()
+    dry_gate_blocked = (
+        run_state.dry_run_gate == "unsupported_without_core_change"
+        or run_state.core_dry_run_status == "unsupported_without_core_change"
+        or run_state.execution_gate == "unsupported_without_core_change"
+        or MSG_DRY_RUN_UNAVAILABLE in (run_state.message or "")
+        or MSG_DRY_RUN_UNAVAILABLE in shell.blocked_hints
+    )
+    productive_hold = (
+        MSG_PRODUCTIVE_HOLD in shell.blocked_hints
+        or MSG_PRODUCTIVE_NOT_RELEASED in (run_state.message or "")
+        or run_state.execution_gate == "productive_blocked"
+    )
+    return WorkspaceReadinessDisplayVM(
+        input_folder_selected=bool(folders.input_folder),
+        output_folder_selected=bool(folders.output_folder),
+        input_folder_display=folders.input_folder_display,
+        output_folder_display=folders.output_folder_display,
+        run_status=shell.status,
+        run_status_label=shell.status_label,
+        run_message=shell.message or EMPTY_NO_RUN_STATUS,
+        dry_gate_blocked=dry_gate_blocked,
+        dry_gate_message=MSG_DRY_RUN_UNAVAILABLE if dry_gate_blocked else None,
+        productive_hold=productive_hold,
+        result_count=shell.result_count,
+        review_count=shell.review.count,
+        error_count=shell.errors.count,
+        implies_successful_processing=shell.status == "completed",
+        offers_productive_execution=False,
+        has_fake_counters=False,
+    )
+
+
 def resolve_workspace_policy_bridge(state: UiV2State) -> RuntimePolicyBridgeResult:
     """Map active SaaS draft policy (or safe blank defaults) into runtime intent."""
 
@@ -518,6 +578,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
 
     folder_selection = build_workspace_folder_selection_vm(state)
     run_shell = build_workspace_run_result_shell(state)
+    readiness = build_workspace_readiness_display_vm(state)
     contract_results = tuple(state.processing_run_state.results or ())
     snapshot_display = _display_results(workspace.results)
     contract_display = _display_processing_results(contract_results)
@@ -677,11 +738,26 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         folder_selection_panel,
         make_section_label(MSG_RUN_SUMMARY_SECTION),
         make_context_strip(
-            ("Status", run_shell.status_label),
-            ("Meldung", run_shell.message or EMPTY_NO_RUN_STATUS),
+            ("Status", readiness.run_status_label),
+            ("Meldung", readiness.run_message),
+            ("Eingang", "gewählt" if readiness.input_folder_selected else "fehlt"),
+            ("Ausgabe", "gewählt" if readiness.output_folder_selected else "fehlt"),
+        ),
+        make_context_strip(
+            ("Ergebnisse", str(readiness.result_count)),
+            ("Prüffälle", str(readiness.review_count)),
+            ("Fehler", str(readiness.error_count)),
+            (
+                "Dry-Gate",
+                "blockiert" if readiness.dry_gate_blocked else "nicht bewertet",
+            ),
         ),
         make_section_label("Workflow"),
     ]
+    if readiness.dry_gate_blocked and readiness.dry_gate_message:
+        items.append(inline_warning(readiness.dry_gate_message))
+    if readiness.productive_hold and MSG_PRODUCTIVE_HOLD not in (honesty.status_line or ""):
+        items.append(inline_warning(MSG_PRODUCTIVE_HOLD))
     if honesty.status_line:
         items.append(inline_warning(honesty.status_line))
     for hint in run_shell.blocked_hints:

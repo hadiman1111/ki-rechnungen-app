@@ -67,6 +67,10 @@ class ProcessingReviewItem:
     document_name: str
     reason: str
     status_label: str = "unklar"
+    # Optional detail-shell fields — never invent private classification values.
+    document_id: str | None = None
+    evidence_summary: str | None = None
+    next_action_hint: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Track-B UI-v2 review navigation and honest empty review queue — non-GUI."""
+"""Track-B UI-v2 review navigation and honest review detail shell — non-GUI."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from invoice_tool.ui_v2.navigation import ALL_NAV_ITEMS, NAV_REVIEW
 from invoice_tool.ui_v2.pages.review import (
     EMPTY_REVIEW_DETAIL,
     EMPTY_REVIEW_TITLE,
+    MSG_REVIEW_FROM_REAL_RUN,
+    MSG_REVIEW_NO_FILE_MUTATION,
     build_review_page_vm,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingReviewItem, ProcessingRunState
@@ -51,14 +53,18 @@ def test_review_page_honest_empty_state() -> None:
     assert vm.empty_title == EMPTY_REVIEW_TITLE
     assert vm.empty_detail == EMPTY_REVIEW_DETAIL
     assert vm.items == ()
+    assert vm.detail_items == ()
     assert "Noch keine Prüffälle vorhanden." in (vm.empty_title or "")
     assert "echten Verarbeitungslauf" in (vm.empty_detail or "")
+    assert MSG_REVIEW_FROM_REAL_RUN in vm.honest_copy
+    assert MSG_REVIEW_NO_FILE_MUTATION in vm.honest_copy
 
 
 def test_review_page_does_not_render_fake_review_items() -> None:
     vm = build_review_page_vm(UiV2State())
     assert vm.items == ()
     assert len(vm.items) == 0
+    assert vm.detail_items == ()
     for marker in ("AMEX", "Privat", "SOMAA", "Hadi", "unklar-1", "preview"):
         blob = " ".join(
             filter(
@@ -68,13 +74,14 @@ def test_review_page_does_not_render_fake_review_items() -> None:
                     vm.empty_detail,
                     *(item.document_name for item in vm.items),
                     *(item.reason for item in vm.items),
+                    *(detail.document_label for detail in vm.detail_items),
                 ),
             )
         )
         assert marker not in blob, marker
 
 
-def test_review_page_accepts_processing_run_state_items() -> None:
+def test_review_page_displays_only_injected_review_items() -> None:
     state = UiV2State(
         processing_run_state=ProcessingRunState(
             status="completed",
@@ -83,6 +90,9 @@ def test_review_page_accepts_processing_run_state_items() -> None:
                     document_name="beispiel.pdf",
                     reason="Zuordnung unklar",
                     status_label="unklar",
+                    document_id="doc-1",
+                    evidence_summary="Kein eindeutiger Zahlernachweis",
+                    next_action_hint="Profilregel prüfen",
                 ),
             ),
             errors=("Separater Fehler",),
@@ -91,9 +101,34 @@ def test_review_page_accepts_processing_run_state_items() -> None:
     vm = build_review_page_vm(state)
     assert vm.empty is False
     assert len(vm.items) == 1
+    assert len(vm.detail_items) == 1
     assert vm.items[0].document_name == "beispiel.pdf"
+    detail = vm.detail_items[0]
+    assert detail.document_label == "beispiel.pdf"
+    assert detail.document_id == "doc-1"
+    assert detail.reason == "Zuordnung unklar"
+    assert detail.suggested_status == "unklar"
+    assert detail.evidence_summary == "Kein eindeutiger Zahlernachweis"
+    assert detail.next_action_hint == "Profilregel prüfen"
     assert vm.error_count == 1
     assert all("Separater Fehler" not in item.reason for item in vm.items)
+
+
+def test_review_page_does_not_mutate_files() -> None:
+    vm = build_review_page_vm(UiV2State())
+    assert vm.mutates_files is False
+    assert MSG_REVIEW_NO_FILE_MUTATION in vm.honest_copy
+    src = REVIEW_PAGE.read_text(encoding="utf-8")
+    for token in ("unlink(", "rename(", "shutil.", "Path.write", "open(", "mkdir("):
+        assert token not in src, token
+
+
+def test_review_page_contains_no_fake_invoice_private_rows() -> None:
+    vm = build_review_page_vm(UiV2State())
+    assert vm.items == ()
+    src = REVIEW_PAGE.read_text(encoding="utf-8")
+    for marker in PRIVATE_MARKERS:
+        assert marker not in src, marker
 
 
 def test_review_page_has_no_processing_core_import() -> None:

@@ -33,6 +33,13 @@ PRIVATE_MARKERS = (
 
 def test_navigation_contains_required_labels() -> None:
     labels = [label for _, label, _ in ALL_NAV_ITEMS]
+    assert labels == [
+        "Arbeitsbereich",
+        "Konfigurationen",
+        "Zur Prüfung",
+        "Profile",
+        "Einstellungen",
+    ]
     assert "Arbeitsbereich" in labels
     assert "Konfigurationen" in labels
     assert "Profile" in labels

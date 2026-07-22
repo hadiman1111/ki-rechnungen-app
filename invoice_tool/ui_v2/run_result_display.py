@@ -56,6 +56,9 @@ class ReviewItemDisplayVM:
     document_name: str
     reason: str
     status_label: str
+    document_id: str | None = None
+    evidence_summary: str | None = None
+    next_action_hint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,9 @@ def review_item_from_state(item: ProcessingReviewItem) -> ReviewItemDisplayVM:
         document_name=item.document_name,
         reason=item.reason,
         status_label=item.status_label,
+        document_id=item.document_id,
+        evidence_summary=item.evidence_summary,
+        next_action_hint=item.next_action_hint,
     )
 
 

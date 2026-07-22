@@ -9,6 +9,7 @@ from pathlib import Path
 
 from invoice_tool.ui_v2.pages.review import build_review_page_vm
 from invoice_tool.ui_v2.pages.workspace import (
+    build_workspace_readiness_display_vm,
     build_workspace_run_result_shell,
     workspace_honesty_copy,
 )
@@ -217,6 +218,59 @@ def test_workspace_shell_uses_processing_run_state() -> None:
     assert shell.status_label == "Bereit"
     assert shell.results == ()
     assert shell.show_empty_state is True
+
+
+def test_workspace_readiness_shows_folder_run_dry_gate_and_counts_honestly() -> None:
+    state = UiV2State(
+        processing_run_state=ProcessingRunState(
+            status="blocked",
+            message=MSG_DRY_RUN_UNAVAILABLE,
+            execution_gate="unsupported_without_core_change",
+            dry_run_gate="unsupported_without_core_change",
+            core_dry_run_status="unsupported_without_core_change",
+            results=(
+                ProcessingResultSummary(
+                    document_name="only-real.pdf",
+                    document_type="beleg",
+                    classification_status="ok",
+                    status_label="OK",
+                ),
+            ),
+            review_items=(
+                ProcessingReviewItem(
+                    document_name="review.pdf",
+                    reason="Unklar",
+                ),
+            ),
+            errors=("Fehler X",),
+        )
+    )
+    state.set_workspace_input_folder("in-folder")
+    state.set_workspace_output_folder("out-folder")
+    readiness = build_workspace_readiness_display_vm(state)
+    assert readiness.input_folder_selected is True
+    assert readiness.output_folder_selected is True
+    assert readiness.run_status == "blocked"
+    assert readiness.dry_gate_blocked is True
+    assert readiness.dry_gate_message == MSG_DRY_RUN_UNAVAILABLE
+    assert readiness.productive_hold is True
+    assert readiness.result_count == 1
+    assert readiness.review_count == 1
+    assert readiness.error_count == 1
+    assert readiness.implies_successful_processing is False
+    assert readiness.offers_productive_execution is False
+    assert readiness.has_fake_counters is False
+
+
+def test_workspace_readiness_has_no_fake_counters_when_idle() -> None:
+    readiness = build_workspace_readiness_display_vm(UiV2State())
+    assert readiness.result_count == 0
+    assert readiness.review_count == 0
+    assert readiness.error_count == 0
+    assert readiness.implies_successful_processing is False
+    assert readiness.has_fake_counters is False
+    assert readiness.input_folder_selected is False
+    assert readiness.output_folder_selected is False
 
 
 def test_review_page_keeps_errors_out_of_queue() -> None:

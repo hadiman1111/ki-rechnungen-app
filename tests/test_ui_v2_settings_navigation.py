@@ -1,4 +1,4 @@
-"""Track-B UI-v2 settings navigation and generic readiness shell — non-GUI."""
+"""Track-B UI-v2 settings navigation and generic detail shell — non-GUI."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from pathlib import Path
 
 from invoice_tool.ui_v2.navigation import ALL_NAV_ITEMS, NAV_SETTINGS
 from invoice_tool.ui_v2.pages.settings import (
+    DRY_RUN_UNAVAILABLE_NOTICE,
+    PRODUCT_NEUTRAL_NOTICE,
     PRODUCTIVE_EXECUTION_NOTICE,
     SETTINGS_SECTIONS,
     build_settings_page_vm,
@@ -45,26 +47,50 @@ def test_settings_navigation_item_exists() -> None:
     assert NAV_SETTINGS == "einstellungen"
 
 
-def test_settings_page_generic_readiness_state() -> None:
+def test_settings_page_generic_sections() -> None:
     vm = build_settings_page_vm(UiV2State())
     assert vm.title == "Einstellungen"
+    section_titles = {section.title for section in vm.sections}
+    assert section_titles == {
+        "Allgemein",
+        "Verarbeitung",
+        "Sicherheit",
+        "Export",
+        "Produktstatus",
+    }
+    assert len(SETTINGS_SECTIONS) == 5
+
+
+def test_settings_page_shows_dry_run_unavailable() -> None:
+    vm = build_settings_page_vm(UiV2State())
+    assert vm.dry_run_available is False
+    assert vm.safety.dry_run_available is False
+    assert DRY_RUN_UNAVAILABLE_NOTICE in vm.dry_run_notice
+    assert "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar." in (
+        vm.dry_run_notice
+    )
+
+
+def test_settings_page_shows_productive_execution_not_enabled() -> None:
+    vm = build_settings_page_vm(UiV2State())
     assert vm.productive_execution_enabled is False
     assert vm.has_productive_toggle is False
     assert PRODUCTIVE_EXECUTION_NOTICE in vm.productive_execution_notice
     assert "noch nicht freigegeben" in vm.productive_execution_notice
-    section_titles = {section.title for section in vm.sections}
-    assert section_titles == {"Allgemein", "Verarbeitung", "Sicherheit", "Export"}
-    assert len(SETTINGS_SECTIONS) == 4
 
 
 def test_settings_page_no_private_defaults() -> None:
     vm = build_settings_page_vm(UiV2State())
+    assert vm.safety.has_private_defaults is False
+    assert PRODUCT_NEUTRAL_NOTICE in vm.product_neutral_notice
     blob = " ".join(
         [
             vm.title,
             vm.subtitle,
             vm.banner,
             vm.productive_execution_notice,
+            vm.dry_run_notice,
+            vm.product_neutral_notice,
             *(section.title for section in vm.sections),
             *(section.detail for section in vm.sections),
             *(section.status for section in vm.sections),
