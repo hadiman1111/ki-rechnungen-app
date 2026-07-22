@@ -1,16 +1,17 @@
 """Track-B UI-v2 bounded LocalProcessingAdapter.
 
 Implements ProcessingServiceProtocol with explicit-user-input validation and a
-safe blocked execution path. Processing-core is never imported at module level
-and is not called while no safe dry/no-mutation core API exists.
+sandbox-gated execution path. Processing-core is never imported at module level.
+Live core calls go only through the injectable sandbox execution boundary after
+sandbox-gate approval, never against original folders, never productive.
 
-Does not process real PDFs, does not scan folders, does not invent results,
-does not touch Track A.
+Does not invent results, does not touch Track A, does not auto-run on import.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_POLICY_INCOMPLETE,
@@ -31,6 +32,14 @@ from invoice_tool.ui_v2.processing_state import (
     idle_processing_state,
     not_configured_processing_state,
     ready_processing_state,
+)
+from invoice_tool.ui_v2.sandbox_execution_boundary import (
+    SandboxCoreCallArgs,
+    SandboxCoreCallResult,
+    build_sandbox_core_call_args,
+    invoke_sandbox_execution,
+    map_sandbox_core_result_to_run_state,
+    sandbox_core_runner,
 )
 from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_SANDBOX_CORE_DRY_ABSENT,
@@ -67,6 +76,9 @@ MSG_UNKNOWN_RUN = "Kein aktiver Lauf (run_id unbekannt)."
 # Backward-compatible alias for the required dry-gate wording.
 MSG_CORE_DRY_UNAVAILABLE = MSG_DRY_RUN_UNAVAILABLE
 MSG_READY_SANDBOX_EXECUTION = MSG_READY_FOR_SANDBOX_EXECUTION
+MSG_SANDBOX_CALL_ARGS_INCOMPLETE = (
+    "Sandbox-Aufrufargumente unvollständig; Ausführung wurde nicht gestartet."
+)
 
 # Core dry/no-mutation finding (read-only inspection of run_once): unsupported.
 CORE_DRY_RUN_STATUS: ExecutionGateStatus = "unsupported_without_core_change"
@@ -93,13 +105,17 @@ _FORBIDDEN_PRIVATE_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 
+SandboxRunner = Callable[[SandboxCoreCallArgs], SandboxCoreCallResult]
+
 
 class LocalProcessingAdapter:
-    """Bounded Track-B adapter: validate explicitly, never auto-run, no fake results."""
+    """Bounded Track-B adapter: validate explicitly, sandbox-gated execution only."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, sandbox_runner: SandboxRunner | None = None) -> None:
         # In-memory run states only — never populated from filesystem scans.
         self._runs: dict[str, ProcessingRunState] = {}
+        # Injectable sandbox core seam (tests monkeypatch module runner or inject here).
+        self._sandbox_runner: SandboxRunner = sandbox_runner or sandbox_core_runner
 
     def core_dry_run_status(self) -> ExecutionGateStatus:
         """Whether a safe dry/no-mutation core entrypoint exists (never calls core)."""
@@ -215,8 +231,9 @@ class LocalProcessingAdapter:
     def start_run(self, request: ProcessingRunRequest) -> ProcessingRunState:
         """Start only after validate is ready and user confirmed; never auto-runs.
 
-        Sandbox gate must approve before any future execution wiring. This task
-        never calls processing-core, never mutates files, and never processes PDFs.
+        Sandbox gate must approve before the sandbox execution boundary is called.
+        Productive execution stays blocked. Original folders are never passed as
+        processing input/output to the boundary.
         """
 
         validated = self.validate_request(request)
@@ -249,13 +266,23 @@ class LocalProcessingAdapter:
         if not sandbox.approved:
             return self._blocked_from_sandbox(sandbox, dry_status)
 
-        # Sandbox approved — execution wiring is the next task; still no core call.
-        return ready_processing_state(
-            f"{MSG_READY_SANDBOX_EXECUTION} {MSG_SANDBOX_CORE_DRY_ABSENT}",
-            execution_gate="ready_for_sandbox_execution",
-            dry_run_gate=dry_status,
-            core_dry_run_status=dry_status,
-        )
+        if sandbox.execution_scope != "sandbox":
+            return blocked_processing_state(
+                MSG_PRODUCTIVE_NOT_RELEASED,
+                execution_gate="blocked_productive_execution",
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
+
+        if not request.copied_data_confirmed:
+            return blocked_processing_state(
+                "Bestätigung für kopierte Testdaten fehlt.",
+                execution_gate="blocked_missing_copied_data_confirmation",
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
+
+        return self._execute_sandbox_run(request, sandbox, dry_status)
 
     def evaluate_sandbox_gate(
         self, request: ProcessingRunRequest
@@ -263,6 +290,86 @@ class LocalProcessingAdapter:
         """Pure sandbox confinement check — no FS IO, no core import."""
 
         return evaluate_sandbox_gate(request)
+
+    def _execute_sandbox_run(
+        self,
+        request: ProcessingRunRequest,
+        sandbox: SandboxPathValidationResult,
+        dry_status: ExecutionGateStatus,
+    ) -> ProcessingRunState:
+        """Call sandbox execution boundary with sandbox-only paths — no Track-A."""
+
+        input_folder = sandbox.input_folder or request.normalized_input_folder()
+        output_folder = sandbox.output_folder or request.normalized_output_folder()
+        sandbox_root = sandbox.sandbox_root or request.normalized_sandbox_root()
+        profile_id = request.normalized_profile_id()
+        configuration_id = request.normalized_configuration_id()
+        original = sandbox.original_source_folder or request.normalized_original_source_folder()
+
+        if (
+            input_folder is None
+            or output_folder is None
+            or sandbox_root is None
+            or profile_id is None
+            or configuration_id is None
+        ):
+            return blocked_processing_state(
+                MSG_SANDBOX_CALL_ARGS_INCOMPLETE,
+                execution_gate="blocked_missing_sandbox",
+                dry_run_gate=dry_status,
+                core_dry_run_status=dry_status,
+            )
+
+        # Hard exclusion: never pass original folder as processing input/output.
+        if original is not None:
+            norm = lambda p: p.replace("\\", "/").rstrip("/")  # noqa: E731
+            o = norm(original)
+            if norm(input_folder) == o or norm(input_folder).startswith(o + "/"):
+                return self._blocked_from_sandbox(
+                    SandboxPathValidationResult(
+                        approved=False,
+                        reason_code="blocked_original_folder",
+                        message="Original-Quellordner darf nicht als Verarbeitungseingang verwendet werden.",
+                        sandbox_root=sandbox_root,
+                        input_folder=input_folder,
+                        output_folder=output_folder,
+                        original_source_folder=original,
+                    ),
+                    dry_status,
+                )
+            if norm(output_folder) == o or norm(output_folder).startswith(o + "/"):
+                return self._blocked_from_sandbox(
+                    SandboxPathValidationResult(
+                        approved=False,
+                        reason_code="blocked_output_inside_original",
+                        message="Ausgabeordner darf nicht innerhalb des Original-Quellordners liegen.",
+                        sandbox_root=sandbox_root,
+                        input_folder=input_folder,
+                        output_folder=output_folder,
+                        original_source_folder=original,
+                    ),
+                    dry_status,
+                )
+
+        args = build_sandbox_core_call_args(
+            input_folder=input_folder,
+            output_folder=output_folder,
+            sandbox_root=sandbox_root,
+            profile_id=profile_id,
+            configuration_id=configuration_id,
+            original_source_folder=original,
+        )
+        # Boundary call — runner is injectable/monkeypatchable; default unbound.
+        outcome = invoke_sandbox_execution(args, runner=self._sandbox_runner)
+        state = map_sandbox_core_result_to_run_state(
+            outcome,
+            execution_gate="ready_for_sandbox_execution",
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
+        )
+        if state.run_id:
+            self._runs[state.run_id] = state
+        return state
 
     def _blocked_from_sandbox(
         self,

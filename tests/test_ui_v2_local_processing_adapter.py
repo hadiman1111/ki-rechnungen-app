@@ -17,10 +17,10 @@ from invoice_tool.ui_v2.local_processing_adapter import (
     MSG_MISSING_PROFILE,
     MSG_PRIVATE_OUTPUT_BLOCKED,
     MSG_PRODUCTIVE_NOT_RELEASED,
-    MSG_READY_SANDBOX_EXECUTION,
     MSG_USER_CONFIRMATION_REQUIRED,
     LocalProcessingAdapter,
 )
+from invoice_tool.ui_v2.sandbox_execution_boundary import MSG_SANDBOX_RUNNER_UNBOUND
 from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_BLOCKED_MISSING_SANDBOX,
     MSG_SANDBOX_CORE_DRY_ABSENT,
@@ -275,7 +275,7 @@ def test_start_run_blocked_when_sandbox_missing(tmp_path: Path) -> None:
         assert forbidden not in newly
 
 
-def test_start_run_sandbox_ready_without_core_call(tmp_path: Path) -> None:
+def test_start_run_sandbox_boundary_without_live_core_call(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     inbox = sandbox / "copied-inbox"
     outbox = sandbox / "copied-outbox"
@@ -304,12 +304,12 @@ def test_start_run_sandbox_ready_without_core_call(tmp_path: Path) -> None:
     )
     newly = set(sys.modules) - before_modules
 
-    assert started.status == "ready"
+    # Default runner is unbound — boundary is reached, live core is not imported.
+    assert started.status == "failed"
     assert started.execution_gate == "ready_for_sandbox_execution"
-    assert MSG_READY_SANDBOX_EXECUTION in started.message
-    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert MSG_SANDBOX_RUNNER_UNBOUND in started.message
     assert started.results == tuple()
-    assert started.run_id is None
+    assert started.review_items == tuple()
     assert pdf.read_bytes() == before
     assert list(outbox.iterdir()) == []
     for forbidden in (

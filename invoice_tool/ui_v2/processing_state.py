@@ -50,8 +50,8 @@ MSG_DRY_RUN_UNAVAILABLE = (
     "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar."
 )
 MSG_READY_FOR_SANDBOX_EXECUTION = (
-    "Sandbox-Gate freigegeben; Ausführungsverdrahtung ist noch nicht aktiv. "
-    "Core-Dry-Run ist noch nicht vorhanden."
+    "Sandbox-Gate freigegeben; Sandbox-Ausführung gegen kopierte Testdaten "
+    "ist freigegeben. Core-Dry-Run ist noch nicht vorhanden."
 )
 MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
 MSG_COMPLETED = "Lauf abgeschlossen."

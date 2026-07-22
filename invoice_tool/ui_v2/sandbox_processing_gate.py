@@ -52,9 +52,12 @@ MSG_SANDBOX_NO_ORIGINAL_INPUT = (
 )
 MSG_SANDBOX_PRODUCTIVE_BLOCKED = "Produktive Verarbeitung ist nicht freigegeben."
 MSG_SANDBOX_CORE_DRY_ABSENT = "Core-Dry-Run ist noch nicht vorhanden."
+MSG_SANDBOX_EXECUTION_WIRED = (
+    "Sandbox-Ausführung nur nach Gate-Freigabe gegen kopierte Testdaten."
+)
 MSG_SANDBOX_READY_PENDING_WIRING = (
-    "Sandbox-Gate freigegeben; Ausführungsverdrahtung ist noch nicht aktiv. "
-    f"{MSG_SANDBOX_CORE_DRY_ABSENT}"
+    "Sandbox-Gate freigegeben; Sandbox-Ausführung gegen kopierte Testdaten "
+    f"ist freigegeben. {MSG_SANDBOX_CORE_DRY_ABSENT}"
 )
 MSG_BLOCKED_MISSING_SANDBOX = (
     "Sandbox-Modus fehlt. Verarbeitung ist nur im expliziten Sandbox-Modus "
@@ -91,6 +94,7 @@ WORKSPACE_SANDBOX_READINESS_LINES = (
     MSG_SANDBOX_COPIED_DATA_ONLY,
     MSG_SANDBOX_NO_ORIGINAL_INPUT,
     MSG_SANDBOX_PRODUCTIVE_BLOCKED,
+    MSG_SANDBOX_EXECUTION_WIRED,
     MSG_SANDBOX_CORE_DRY_ABSENT,
 )
 
@@ -428,6 +432,7 @@ __all__ = (
     "MSG_BLOCKED_SAME_INPUT_OUTPUT",
     "MSG_SANDBOX_COPIED_DATA_ONLY",
     "MSG_SANDBOX_CORE_DRY_ABSENT",
+    "MSG_SANDBOX_EXECUTION_WIRED",
     "MSG_SANDBOX_MODE_PREPARED",
     "MSG_SANDBOX_NO_ORIGINAL_INPUT",
     "MSG_SANDBOX_PRODUCTIVE_BLOCKED",

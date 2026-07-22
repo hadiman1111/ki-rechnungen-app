@@ -256,18 +256,20 @@ def test_validation_does_not_process_pdfs(tmp_path: Path) -> None:
 
 
 def test_adapter_does_not_call_core_when_sandbox_ready() -> None:
+    from invoice_tool.ui_v2.sandbox_execution_boundary import MSG_SANDBOX_RUNNER_UNBOUND
+
     before = set(sys.modules)
     adapter = LocalProcessingAdapter()
     started = adapter.start_run(_sandbox_request())
     after = set(sys.modules)
     newly = after - before
 
-    assert started.status == "ready"
+    # Boundary is reached with unbound default runner — no live core import.
+    assert started.status == "failed"
     assert started.execution_gate == "ready_for_sandbox_execution"
     assert started.results == tuple()
     assert started.review_items == tuple()
-    assert started.run_id is None
-    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert MSG_SANDBOX_RUNNER_UNBOUND in started.message
     for forbidden in FORBIDDEN_IMPORT_PREFIXES:
         assert forbidden not in newly
         assert not any(name.startswith(forbidden + ".") for name in newly)
