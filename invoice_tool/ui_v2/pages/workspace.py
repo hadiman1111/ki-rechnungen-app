@@ -180,16 +180,14 @@ MSG_SANDBOX_BLOCKED_PRODUCTIVE = (
     "Sandbox-Lauf blockiert: Produktive Verarbeitung ist nicht freigegeben."
 )
 MSG_SANDBOX_BLOCKED_CORE_BRIDGE = (
-    "Echte Verarbeitung noch nicht sicher verbunden."
+    "Echte Verarbeitung benötigt noch eine sichere Dry-Run-Schnittstelle im Core."
 )
-MSG_SANDBOX_BRIDGE_NOT_CONNECTED = (
-    "Sandbox nicht verbunden: Die echte Verarbeitung ist in Track B noch nicht "
-    "sicher angebunden."
-)
+MSG_SANDBOX_BRIDGE_NOT_CONNECTED = "Sandbox nicht verbunden."
 MSG_SANDBOX_NEXT_CORE_BRIDGE = (
-    "Nächster technischer Schritt: sichere Core-Bridge für Sandbox/Dry-Run."
+    "Nächster technischer Schritt: sichere Core-Dry-Run-Schnittstelle im Core."
 )
 MSG_SANDBOX_NO_ORIGINALS_USED = MSG_NO_ORIGINALS_USED
+MSG_SANDBOX_NO_FILES_PROCESSED = "Keine Dateien wurden verarbeitet."
 MSG_SANDBOX_RESULTS_AFTER_SUCCESS = (
     "Ergebnisse erscheinen hier nach einem erfolgreichen Sandbox-Lauf."
 )
@@ -683,11 +681,13 @@ def _compact_details(
     *,
     configuration_label: str | None = None,
     core_bridge_relevant: bool = False,
+    include_no_files_processed: bool = False,
     extra: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     base = build_compact_blocked_details(
         configuration_label=configuration_label,
         core_bridge_relevant=core_bridge_relevant,
+        include_no_files_processed=include_no_files_processed,
     )
     merged: list[str] = []
     for item in (*extra, *base):
@@ -753,21 +753,33 @@ def build_start_interaction_feedback(
 
     unbound = (
         "sandbox_core_runner_unbound" in errors
+        or "core_dry_run_contract_required" in errors
+        or "requires_core_dry_run_contract" in blob
         or MSG_SANDBOX_RUNNER_UNBOUND in message
+        or MSG_SANDBOX_BLOCKED_CORE_BRIDGE in message
+        or "dry-run-schnittstelle" in blob
         or "noch nicht mit der verarbeitung verbunden" in blob
         or "noch nicht sicher verbunden" in blob
         or "noch nicht sicher angebunden" in blob
         or (status == "failed" and gate == "ready_for_sandbox_execution")
+        or (
+            status == "failed"
+            and gate == "unsupported_without_core_change"
+        )
     )
     if unbound or status == "failed":
         if unbound or "sandbox" in blob or "core" in blob or "verbunden" in blob or "angebunden" in blob:
             return _feedback(
                 interaction_status="sandbox_not_connected",
                 status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
-                primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+                primary=(
+                    f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} "
+                    f"{MSG_SANDBOX_BLOCKED_CORE_BRIDGE}"
+                ).strip(),
                 details=_compact_details(
                     configuration_label=config_label,
                     core_bridge_relevant=True,
+                    include_no_files_processed=True,
                 ),
                 tone="sandbox_not_connected",
             )
@@ -800,10 +812,14 @@ def build_start_interaction_feedback(
         return _feedback(
             interaction_status="sandbox_not_connected",
             status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
-            primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+            primary=(
+                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} "
+                f"{MSG_SANDBOX_BLOCKED_CORE_BRIDGE}"
+            ).strip(),
             details=_compact_details(
                 configuration_label=config_label,
                 core_bridge_relevant=True,
+                include_no_files_processed=True,
             ),
             tone="sandbox_not_connected",
         )
@@ -869,10 +885,14 @@ def build_start_interaction_feedback(
         return _feedback(
             interaction_status="sandbox_not_connected",
             status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
-            primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+            primary=(
+                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} "
+                f"{MSG_SANDBOX_BLOCKED_CORE_BRIDGE}"
+            ).strip(),
             details=_compact_details(
                 configuration_label=config_label,
                 core_bridge_relevant=True,
+                include_no_files_processed=True,
             ),
             tone="sandbox_not_connected",
         )

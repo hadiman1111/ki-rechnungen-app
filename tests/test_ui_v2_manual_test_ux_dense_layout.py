@@ -14,6 +14,7 @@ from invoice_tool.ui_v2.pages.workspace import (
     MAX_BLOCKED_DETAIL_LINES,
     MSG_DETAIL_CORE_BRIDGE,
     MSG_RUN_STATUS_CHECKING,
+    MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
     MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
     MSG_SANDBOX_NO_ORIGINALS_USED,
     apply_start_processing,
@@ -217,7 +218,8 @@ def test_interaction_feedback_builder_primary_is_compact() -> None:
         )
     )
     assert feedback.interaction_status == "sandbox_not_connected"
-    assert feedback.primary == MSG_SANDBOX_BRIDGE_NOT_CONNECTED
+    assert MSG_SANDBOX_BRIDGE_NOT_CONNECTED in feedback.primary
+    assert MSG_SANDBOX_BLOCKED_CORE_BRIDGE in feedback.primary
     assert MSG_DETAIL_CORE_BRIDGE in feedback.details
     assert len(feedback.details) <= MAX_BLOCKED_DETAIL_LINES
     assert "Dies ist ein Sandbox-Lauf" not in feedback.primary

@@ -58,6 +58,7 @@ TRACK_B_ENTRY_MODULES = (
     ROOT / "invoice_tool" / "ui_v2" / "export_reporting.py",
     ROOT / "invoice_tool" / "ui_v2" / "sandbox_execution_boundary.py",
     ROOT / "invoice_tool" / "ui_v2" / "local_processing_adapter.py",
+    ROOT / "invoice_tool" / "ui_v2" / "core_bridge.py",
 )
 
 PRIVATE_DEFAULT_MARKERS = (

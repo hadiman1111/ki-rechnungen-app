@@ -28,8 +28,11 @@ MSG_CONFIGURATION_MISSING_EXPLICIT = (
 )
 MSG_PRODUCTIVE_LOCKED = "Produktive Verarbeitung ist gesperrt."
 MSG_EXPORT_REMAINS_DRAFT = "Export bleibt Vorschau."
-MSG_CORE_BRIDGE_TECHNICAL = "Technischer Blocker: Core-Bridge fehlt."
+MSG_CORE_BRIDGE_TECHNICAL = (
+    "Technischer Blocker: Sichere Core-Dry-Run-Schnittstelle fehlt."
+)
 MSG_NO_ORIGINALS_USED = "Keine Originalordner wurden verwendet."
+MSG_NO_FILES_PROCESSED = "Keine Dateien wurden verarbeitet."
 DEFAULT_PROFILE_ID_SENTINEL = "local"
 
 MAX_BLOCKED_DETAIL_LINES = 5
@@ -169,13 +172,18 @@ def build_compact_blocked_details(
     core_bridge_relevant: bool = False,
     include_productive: bool = True,
     include_export: bool = True,
+    include_no_files_processed: bool = False,
 ) -> tuple[str, ...]:
     """Default expanded details — max 5 short lines, no sandbox bullet wall."""
 
     lines: list[str] = [MSG_NO_ORIGINALS_USED]
     if include_productive:
         lines.append(MSG_PRODUCTIVE_LOCKED)
-    if include_export:
+    # Prefer “no files processed” over export draft when the dry-run contract
+    # blocker is shown, so Konfiguration stays inside the 5-line budget.
+    if include_no_files_processed:
+        lines.append(MSG_NO_FILES_PROCESSED)
+    elif include_export:
         lines.append(MSG_EXPORT_REMAINS_DRAFT)
     if core_bridge_relevant:
         lines.append(MSG_CORE_BRIDGE_TECHNICAL)

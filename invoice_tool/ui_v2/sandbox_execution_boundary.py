@@ -17,7 +17,6 @@ from typing import Callable, Protocol
 
 from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_NO_ORIGINAL_FOLDERS,
-    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
     MSG_CLARITY_SANDBOX_COPIED_RUN,
 )
 from invoice_tool.ui_v2.processing_state import (
@@ -29,10 +28,10 @@ from invoice_tool.ui_v2.processing_state import (
 )
 
 MSG_SANDBOX_RUNNER_UNBOUND = (
-    "Sandbox-Ausführung ist noch nicht mit der Verarbeitung verbunden. "
-    "Sandbox-Lauf blockiert: Die echte Verarbeitung ist in Track B noch nicht "
-    "sicher verbunden. "
-    f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS} {MSG_CLARITY_PRODUCTIVE_NOT_RELEASED}"
+    "Sandbox nicht verbunden. "
+    "Echte Verarbeitung benötigt noch eine sichere Dry-Run-Schnittstelle im Core. "
+    "Keine Originalordner wurden verwendet. "
+    "Keine Dateien wurden verarbeitet."
 )
 MSG_SANDBOX_EXECUTION_COMPLETED = (
     f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
@@ -115,13 +114,12 @@ def assert_call_args_exclude_original(args: SandboxCoreCallArgs) -> str | None:
 
 
 def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
-    """Monkeypatch seam for sandbox core execution.
+    """Sandbox → core-bridge seam (Path B: dry-run contract required).
 
-    Default is unbound on purpose: ``invoice_tool.run.run_once`` requires real
-    profile/config filesystem paths, may run OCR/AI, and writes technical run
-    artifacts outside the sandbox root. Track-B therefore calls this seam only
-    after sandbox-gate approval; live binding is injected/monkeypatched.
-    Processing-core stays untouched.
+    After sandbox-gate approval this seam validates a CoreBridgeRequest and
+    returns REQUIRES_CORE_DRY_RUN_CONTRACT. It never imports or calls
+    ``invoice_tool.run.run_once`` / processing-core, because the core has no
+    safe dry/no-mutation API today (output writes, archive moves, App Support).
     """
 
     refused = assert_call_args_exclude_original(args)
@@ -131,10 +129,34 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
             message=refused,
             errors=(refused,),
         )
+
+    # Lazy import keeps module-level boundary free of accidental core coupling.
+    from invoice_tool.ui_v2.core_bridge import (  # noqa: PLC0415
+        ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED,
+        core_bridge_request_from_sandbox_args,
+        run_core_bridge_sandbox_dry_run,
+    )
+
+    bridge_request = core_bridge_request_from_sandbox_args(
+        input_folder=args.input_folder,
+        output_folder=args.output_folder,
+        sandbox_root=args.sandbox_root,
+        profile_id=args.profile_id,
+        configuration_id=args.configuration_id,
+        original_source_folder=args.original_source_folder,
+    )
+    bridge_result = run_core_bridge_sandbox_dry_run(bridge_request)
+    errors = tuple(bridge_result.errors)
+    # Keep legacy token for existing workspace / test detection paths.
+    if ERROR_CORE_DRY_RUN_CONTRACT_REQUIRED in errors:
+        errors = errors + ("sandbox_core_runner_unbound",)
     return SandboxCoreCallResult(
         ok=False,
-        message=MSG_SANDBOX_RUNNER_UNBOUND,
-        errors=("sandbox_core_runner_unbound",),
+        message=bridge_result.message or MSG_SANDBOX_RUNNER_UNBOUND,
+        run_id=bridge_result.run_id,
+        results=tuple(bridge_result.results),
+        review_items=tuple(bridge_result.review_items),
+        errors=errors,
     )
 
 
