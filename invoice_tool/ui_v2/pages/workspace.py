@@ -23,6 +23,7 @@ from invoice_tool.ui_v2.components import (
     make_full_width_panel,
     make_section_label,
     make_tab_bar,
+    make_workspace_folder_selection_panel,
     make_workspace_run_panel,
     page_header,
     page_scaffold,
@@ -41,13 +42,17 @@ from invoice_tool.ui_v2.processing_contract import (
     SOURCE_UNSET,
     ProcessingRunRequest,
 )
-from invoice_tool.ui_v2.local_processing_adapter import MSG_MISSING_OUTPUT
+from invoice_tool.ui_v2.local_processing_adapter import (
+    MSG_MISSING_INPUT,
+    MSG_MISSING_OUTPUT,
+)
 from invoice_tool.ui_v2.processing_state import (
     MSG_BLOCKED_ADAPTER,
     MSG_DRY_RUN_UNAVAILABLE,
     MSG_IDLE,
     MSG_NOT_CONFIGURED,
     MSG_POLICY_NOT_READY,
+    MSG_PRODUCTIVE_NOT_RELEASED,
     ProcessingRunState,
     ProcessingStatus,
 )
@@ -59,8 +64,8 @@ ErgebnisAction = Literal["neue-konfiguration", "konfiguration-bearbeiten"]
 # Honest empty-state copy (generic product UI-v2 — no private/demo run data).
 EMPTY_NO_RUN_TITLE = "Noch kein Verarbeitungslauf in dieser Oberfläche."
 EMPTY_NO_RUN_DETAIL = (
-    "Wähle später einen Eingangsordner und starte eine Verarbeitung, "
-    "sobald der Lauf-Adapter angebunden ist. "
+    "Wähle Eingangs- und Ausgabeordner explizit und starte eine Verarbeitung erst, "
+    "wenn Dry-Run und produktive Ausführung freigegeben sind. "
     "Ergebnisse erscheinen hier erst nach einem echten Lauf. "
     "Unklare Dokumente werden später im Prüfbereich angezeigt."
 )
@@ -69,6 +74,13 @@ EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
 EMPTY_NO_RUN_STATUS = "Kein Lauf gestartet"
 START_CTA_LABEL = "Verarbeitung starten"
 ADAPTER_NOT_CONNECTED_HINT = MSG_BLOCKED_ADAPTER
+
+# Explicit folder selection copy — no private/default paths.
+EMPTY_INPUT_FOLDER_TEXT = "Kein Eingangsordner gewählt."
+EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgabeordner gewählt."
+PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
+PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
+FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
 
 
 @dataclass(frozen=True)
@@ -144,6 +156,62 @@ def resolve_workspace_policy_bridge(state: UiV2State) -> RuntimePolicyBridgeResu
     return build_runtime_policy_intent(default_classification_policy())
 
 
+def apply_workspace_input_folder_selection(state: UiV2State, path: str | None) -> None:
+    """Apply an explicit input folder path string to UI state — no FS create/scan/PDF IO."""
+
+    state.set_workspace_input_folder(path)
+
+
+def apply_workspace_output_folder_selection(state: UiV2State, path: str | None) -> None:
+    """Apply an explicit output folder path string to UI state — no FS create/scan/PDF IO."""
+
+    state.set_workspace_output_folder(path)
+
+
+@dataclass(frozen=True)
+class WorkspaceFolderSelectionVM:
+    """Pure folder-selection display state for workspace (no Flet / no filesystem)."""
+
+    input_folder: str | None
+    output_folder: str | None
+    input_folder_display: str | None
+    output_folder_display: str | None
+    input_empty_text: str
+    output_empty_text: str
+    input_pick_label: str
+    output_pick_label: str
+    input_source: str
+    output_source: str
+    picker_wired: bool
+
+
+def build_workspace_folder_selection_vm(state: UiV2State) -> WorkspaceFolderSelectionVM:
+    """Build honest input/output folder display state from explicit UI overrides only."""
+
+    input_folder = (state.workspace_input_folder_override or "").strip() or None
+    output_folder = (state.workspace_output_folder_override or "").strip() or None
+    input_source = state.workspace_input_folder_source or SOURCE_UNSET
+    output_source = state.workspace_output_folder_source or SOURCE_UNSET
+    if input_folder and input_source == SOURCE_UNSET:
+        input_source = SOURCE_EXPLICIT_USER_SELECTION
+    if output_folder and output_source == SOURCE_UNSET:
+        output_source = SOURCE_EXPLICIT_USER_SELECTION
+    return WorkspaceFolderSelectionVM(
+        input_folder=input_folder,
+        output_folder=output_folder,
+        input_folder_display=display_path_value(input_folder) if input_folder else None,
+        output_folder_display=display_path_value(output_folder) if output_folder else None,
+        input_empty_text=EMPTY_INPUT_FOLDER_TEXT,
+        output_empty_text=EMPTY_OUTPUT_FOLDER_TEXT,
+        input_pick_label=PICK_INPUT_FOLDER_LABEL,
+        output_pick_label=PICK_OUTPUT_FOLDER_LABEL,
+        input_source=input_source,
+        output_source=output_source,
+        # Native FilePicker is wired to state only — no scan/create/PDF processing.
+        picker_wired=True,
+    )
+
+
 def build_processing_run_request(
     state: UiV2State,
     *,
@@ -155,9 +223,13 @@ def build_processing_run_request(
 
     folder = (state.workspace_input_folder_override or "").strip() or None
     output_folder = (state.workspace_output_folder_override or "").strip() or None
-    source = SOURCE_EXPLICIT_USER_SELECTION if folder else SOURCE_UNSET
+    source = (
+        SOURCE_EXPLICIT_USER_SELECTION
+        if state.has_explicit_workspace_folder_selection()
+        else SOURCE_UNSET
+    )
     policy_bridge = resolve_workspace_policy_bridge(state)
-    # Output folder only from explicit override — never Desktop/private defaults.
+    # Folders only from explicit overrides — never Desktop/private defaults.
     # Profile/config only from explicit caller args or explicit UI selection fields —
     # never invent private tenant defaults (do not fall back to state.selected_profile_id="local").
     resolved_configuration = (
@@ -258,7 +330,9 @@ def workspace_honesty_copy(
             detail = f"{policy_hint} {detail}"
     elif status == "not_configured":
         status_line = f"{MSG_NOT_CONFIGURED} {EMPTY_NO_RUN_STATUS}."
-        if MSG_MISSING_OUTPUT in (proc.message or ""):
+        if MSG_MISSING_INPUT in (proc.message or ""):
+            status_line = f"{MSG_MISSING_INPUT} {EMPTY_NO_RUN_STATUS}."
+        elif MSG_MISSING_OUTPUT in (proc.message or ""):
             status_line = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_STATUS}."
         elif policy_hint and (
             MSG_POLICY_INCOMPLETE in (proc.message or "")
@@ -269,7 +343,9 @@ def workspace_honesty_copy(
             f"{MSG_NOT_CONFIGURED} "
             f"{EMPTY_NO_RUN_DETAIL}"
         )
-        if MSG_MISSING_OUTPUT in (proc.message or ""):
+        if MSG_MISSING_INPUT in (proc.message or ""):
+            detail = f"{MSG_MISSING_INPUT} {EMPTY_NO_RUN_DETAIL}"
+        elif MSG_MISSING_OUTPUT in (proc.message or ""):
             detail = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_DETAIL}"
         elif policy_hint:
             detail = f"{policy_hint} {detail}"
@@ -286,6 +362,7 @@ def workspace_honesty_copy(
         status_line = f"{MSG_DRY_RUN_UNAVAILABLE} {EMPTY_NO_RUN_STATUS}."
         detail = (
             f"{MSG_DRY_RUN_UNAVAILABLE} "
+            f"{MSG_PRODUCTIVE_NOT_RELEASED} "
             "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen "
             "angebundenen Adapter. Unklare Dokumente werden später im Prüfbereich angezeigt."
         )
@@ -305,12 +382,27 @@ def workspace_honesty_copy(
     )
 
 
-def _schedule_folder_picker(state: UiV2State, refresh: Callable[[], None]) -> Callable[[ft.ControlEvent], None]:
+def _schedule_folder_picker(
+    state: UiV2State,
+    refresh: Callable[[], None],
+    *,
+    role: Literal["input", "output"],
+) -> Callable[[ft.ControlEvent], None]:
+    """Wire native folder picker to UI state only — no scan, create, or PDF processing."""
+
+    dialog_title = (
+        "Eingangsordner auswählen" if role == "input" else "Ausgabeordner auswählen"
+    )
+
     async def _pick_folder(_event: ft.ControlEvent) -> None:
-        path = await choose_target_folder(dialog_title="Eingangsordner auswählen")
-        if path:
-            state.workspace_input_folder_override = path
-            refresh()
+        path = await choose_target_folder(dialog_title=dialog_title)
+        if not path:
+            return
+        if role == "input":
+            apply_workspace_input_folder_selection(state, path)
+        else:
+            apply_workspace_output_folder_selection(state, path)
+        refresh()
 
     def _handler(event: ft.ControlEvent) -> None:
         page = state.page
@@ -357,7 +449,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         state.workspace_tab = tab_id
         _refresh()
 
-    folder_override = state.workspace_input_folder_override
+    folder_selection = build_workspace_folder_selection_vm(state)
     display_results = _display_results(workspace.results)
     has_real_results = _has_real_run_results(workspace.results)
     policy_bridge = resolve_workspace_policy_bridge(state)
@@ -366,17 +458,12 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         processing_state=state.processing_run_state,
         policy_bridge=policy_bridge,
     )
-    input_configured = bool(folder_override) or (
-        workspace.input_folder_state == "configured" and bool(workspace.input_folder_summary.strip())
-    )
-    if folder_override:
-        input_path = display_path_value(folder_override)
-    elif input_configured:
-        input_path = display_path_value(workspace.input_folder_summary)
-    else:
-        input_path = None
+    # Display only explicit UI override — never invent Desktop/private snapshot defaults.
+    input_path = folder_selection.input_folder_display
+    output_path = folder_selection.output_folder_display
 
-    pick_folder = _schedule_folder_picker(state, _refresh)
+    pick_input_folder = _schedule_folder_picker(state, _refresh, role="input")
+    pick_output_folder = _schedule_folder_picker(state, _refresh, role="output")
     start_processing = _schedule_start_processing(
         state,
         _refresh,
@@ -387,10 +474,22 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ok_count = (len(display_results) - fail_count) if has_real_results else None
     fail_count_display = fail_count if has_real_results else None
 
+    folder_selection_panel = make_workspace_folder_selection_panel(
+        input_path_display=input_path,
+        output_path_display=output_path,
+        input_empty_text=folder_selection.input_empty_text,
+        output_empty_text=folder_selection.output_empty_text,
+        input_pick_label=folder_selection.input_pick_label,
+        output_pick_label=folder_selection.output_pick_label,
+        on_pick_input=pick_input_folder if folder_selection.picker_wired else None,
+        on_pick_output=pick_output_folder if folder_selection.picker_wired else None,
+        pick_disabled=not folder_selection.picker_wired,
+    )
+
     run_panel = make_workspace_run_panel(
         folder_path=input_path,
-        on_change_folder=pick_folder if input_path else None,
-        on_pick_folder=pick_folder if not input_path else None,
+        on_change_folder=pick_input_folder if input_path else None,
+        on_pick_folder=pick_input_folder if not input_path else None,
         on_start=start_processing,
         start_label=honesty.start_cta_label,
         start_disabled=honesty.start_cta_disabled,
@@ -399,6 +498,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         ok_count=ok_count if input_path else None,
         fail_count=fail_count_display if input_path else None,
         mappings=mappings if input_path else tuple(),
+        pick_folder_label=PICK_INPUT_FOLDER_LABEL,
+        empty_folder_text=EMPTY_INPUT_FOLDER_TEXT,
     )
 
     tab_bar = make_tab_bar(
@@ -497,6 +598,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             subtitle="Dokumente auswählen, verarbeiten und Ergebnisse prüfen.",
         ),
         make_context_strip(("Profil", profile_name), ("Erkennungsmodell", scan_model)),
+        make_section_label(FOLDER_SELECTION_SECTION_LABEL),
+        folder_selection_panel,
         make_section_label("Workflow"),
     ]
     if honesty.status_line:

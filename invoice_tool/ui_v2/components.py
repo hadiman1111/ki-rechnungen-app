@@ -763,6 +763,111 @@ def make_file_mapping_row(source: str, target: str) -> ft.Container:
     )
 
 
+def make_workspace_folder_row(
+    *,
+    label: str,
+    path_display: str | None,
+    empty_text: str,
+    pick_label: str,
+    on_pick: Callable[[ft.ControlEvent], None] | None,
+    pick_disabled: bool = False,
+) -> ft.Container:
+    """Single input/output folder row — path display or honest empty copy; no FS IO."""
+
+    path_control: ft.Control
+    if path_display:
+        path_control = ft.Text(
+            path_display,
+            size=12,
+            font_family="Menlo",
+            color=COLOR_TEXT_SECONDARY,
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            selectable=True,
+            expand=True,
+        )
+    else:
+        path_control = ft.Text(
+            empty_text,
+            size=12,
+            color=COLOR_MUTED_LIGHT,
+            expand=True,
+        )
+
+    actions: list[ft.Control] = []
+    if on_pick is not None:
+        actions.append(
+            secondary_button(pick_label, on_click=on_pick, disabled=pick_disabled)
+        )
+
+    return ft.Container(
+        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+        content=ft.Column(
+            [
+                ft.Text(
+                    label,
+                    size=FONT_SIZE_NAV_GROUP,
+                    weight=ft.FontWeight.W_700,
+                    color=COLOR_TEXT_MUTED,
+                ),
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.FOLDER_OUTLINED, size=14, color=COLOR_TEXT_MUTED),
+                        path_control,
+                        *actions,
+                    ],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=6,
+        ),
+    )
+
+
+def make_workspace_folder_selection_panel(
+    *,
+    input_path_display: str | None,
+    output_path_display: str | None,
+    input_empty_text: str,
+    output_empty_text: str,
+    input_pick_label: str,
+    output_pick_label: str,
+    on_pick_input: Callable[[ft.ControlEvent], None] | None,
+    on_pick_output: Callable[[ft.ControlEvent], None] | None,
+    pick_disabled: bool = False,
+) -> ft.Container:
+    """Workspace input/output folder selection — state wiring only; never processes PDFs."""
+
+    rows: list[ft.Control] = [
+        make_workspace_folder_row(
+            label="Eingangsordner",
+            path_display=input_path_display,
+            empty_text=input_empty_text,
+            pick_label=input_pick_label,
+            on_pick=on_pick_input,
+            pick_disabled=pick_disabled,
+        ),
+        divider(),
+        make_workspace_folder_row(
+            label="Ausgabeordner",
+            path_display=output_path_display,
+            empty_text=output_empty_text,
+            pick_label=output_pick_label,
+            on_pick=on_pick_output,
+            pick_disabled=pick_disabled,
+        ),
+    ]
+    return ft.Container(
+        margin=ft.Margin.only(bottom=12),
+        bgcolor=COLOR_SURFACE,
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        content=ft.Column(rows, spacing=0),
+    )
+
+
 def make_workspace_run_panel(
     *,
     folder_path: str | None,
@@ -776,6 +881,8 @@ def make_workspace_run_panel(
     on_start: Callable[[ft.ControlEvent], None] | None = None,
     start_label: str = "Verarbeitung starten",
     start_disabled: bool = False,
+    pick_folder_label: str = "Ordner auswählen",
+    empty_folder_text: str = "Kein Ordner ausgewählt",
 ) -> ft.Container:
     """Figma workspace run panel — folder toolbar + Eingangs/Ergebnis mapping list."""
     header_left: list[ft.Control]
@@ -795,14 +902,14 @@ def make_workspace_run_panel(
         ]
     else:
         header_left = [
-            ft.Text("Kein Ordner ausgewählt", size=12, color=COLOR_MUTED_LIGHT, expand=True),
+            ft.Text(empty_folder_text, size=12, color=COLOR_MUTED_LIGHT, expand=True),
         ]
 
     header_actions: list[ft.Control] = []
     if folder_path and on_change_folder is not None:
         header_actions.append(secondary_button("Ändern", on_click=on_change_folder))
     elif on_pick_folder is not None:
-        header_actions.append(secondary_button("Ordner auswählen", on_click=on_pick_folder))
+        header_actions.append(secondary_button(pick_folder_label, on_click=on_pick_folder))
     if on_start is not None:
         header_actions.append(
             make_accent_cta_button(

@@ -8,14 +8,20 @@ import sys
 from pathlib import Path
 
 from invoice_tool.ui_v2.local_processing_adapter import (
+    MSG_MISSING_INPUT,
     MSG_MISSING_OUTPUT,
     LocalProcessingAdapter,
 )
 from invoice_tool.ui_v2.pages.workspace import (
     ADAPTER_NOT_CONNECTED_HINT,
+    EMPTY_INPUT_FOLDER_TEXT,
+    EMPTY_OUTPUT_FOLDER_TEXT,
     START_CTA_LABEL,
     apply_start_processing,
+    apply_workspace_input_folder_selection,
+    apply_workspace_output_folder_selection,
     build_processing_run_request,
+    build_workspace_folder_selection_vm,
     resolve_workspace_policy_bridge,
     workspace_honesty_copy,
 )
@@ -183,6 +189,41 @@ def test_workspace_output_override_is_explicit_only_never_defaulted() -> None:
     assert filled.output_folder == "user-selected-outbox"
     for marker in PRIVATE_MARKERS:
         assert marker not in (filled.output_folder or "")
+
+
+def test_workspace_folder_selection_vm_empty_copy() -> None:
+    vm = build_workspace_folder_selection_vm(UiV2State())
+    assert vm.input_empty_text == EMPTY_INPUT_FOLDER_TEXT
+    assert vm.output_empty_text == EMPTY_OUTPUT_FOLDER_TEXT
+    assert vm.input_folder is None
+    assert vm.output_folder is None
+
+
+def test_workspace_reports_missing_input_folder_honestly() -> None:
+    state = UiV2State(processing_service=LocalProcessingAdapter())
+    apply_workspace_output_folder_selection(state, "selected-outbox")
+    request = build_processing_run_request(
+        state,
+        profile_id="profile-a",
+        configuration_id="config-a",
+        user_confirmed_start=True,
+    )
+    assert request.input_folder is None
+    validated = state.processing_service.validate_request(request)
+    assert validated.status == "not_configured"
+    assert MSG_MISSING_INPUT in validated.message
+    copy = workspace_honesty_copy(has_real_results=False, processing_state=validated)
+    assert MSG_MISSING_INPUT in (copy.status_line or "")
+
+
+def test_workspace_folder_setters_feed_request_builder() -> None:
+    state = UiV2State()
+    apply_workspace_input_folder_selection(state, "in-folder")
+    apply_workspace_output_folder_selection(state, "out-folder")
+    request = build_processing_run_request(state)
+    assert request.input_folder == "in-folder"
+    assert request.output_folder == "out-folder"
+    assert request.source == SOURCE_EXPLICIT_USER_SELECTION
 
 
 def test_workspace_dry_gate_unavailable_honesty_copy() -> None:

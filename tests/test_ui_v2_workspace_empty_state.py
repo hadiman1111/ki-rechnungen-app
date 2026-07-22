@@ -85,7 +85,7 @@ def test_workspace_empty_state_says_no_run_occurred() -> None:
     assert copy.results_detail == EMPTY_NO_RUN_DETAIL
     assert "Noch kein Verarbeitungslauf" in (copy.results_title or "")
     assert "echten Lauf" in (copy.results_detail or "")
-    assert "Lauf-Adapter" in (copy.results_detail or "")
+    assert "Eingangs- und Ausgabeordner" in (copy.results_detail or "")
     assert "Prüfbereich" in (copy.results_detail or "")
     assert copy.start_cta_label == START_CTA_LABEL
     assert copy.adapter_hint == ADAPTER_NOT_CONNECTED_HINT

@@ -34,6 +34,8 @@ from invoice_tool.ui_v2.saas_profile_store import (
     new_saas_profile_disk_store,
 )
 from invoice_tool.ui_v2.processing_contract import (
+    SOURCE_EXPLICIT_USER_SELECTION,
+    SOURCE_UNSET,
     ProcessingServiceProtocol,
     default_processing_service,
 )
@@ -78,9 +80,11 @@ class UiV2State:
 
     pending_delete: DeleteConfirmationVM | None = None
     workspace_tab: str = "zielordner"
+    # Explicit user-selected folders only — never Desktop/private defaults; never auto-created.
     workspace_input_folder_override: str | None = None
-    # Explicit user-selected output only — never defaulted to Desktop/private paths.
+    workspace_input_folder_source: str = SOURCE_UNSET
     workspace_output_folder_override: str | None = None
+    workspace_output_folder_source: str = SOURCE_UNSET
     workspace_expanded_results: set[str] = field(default_factory=set)
     workspace_rename_drafts: dict[str, str] = field(default_factory=dict)
 
@@ -102,6 +106,44 @@ class UiV2State:
 
     def has_unsaved_changes(self) -> bool:
         return self.has_unsaved_profile_changes() or self.has_unsaved_config_changes()
+
+    def set_workspace_input_folder(self, path: str | None) -> None:
+        """Store an explicitly selected input folder path string — no FS create/scan."""
+
+        cleaned = (path or "").strip() or None
+        self.workspace_input_folder_override = cleaned
+        self.workspace_input_folder_source = (
+            SOURCE_EXPLICIT_USER_SELECTION if cleaned else SOURCE_UNSET
+        )
+
+    def set_workspace_output_folder(self, path: str | None) -> None:
+        """Store an explicitly selected output folder path string — no FS create/scan."""
+
+        cleaned = (path or "").strip() or None
+        self.workspace_output_folder_override = cleaned
+        self.workspace_output_folder_source = (
+            SOURCE_EXPLICIT_USER_SELECTION if cleaned else SOURCE_UNSET
+        )
+
+    def clear_workspace_folder_selection(self) -> None:
+        """Clear both workspace folder overrides and source markers."""
+
+        self.set_workspace_input_folder(None)
+        self.set_workspace_output_folder(None)
+
+    def has_explicit_workspace_folder_selection(self) -> bool:
+        """True when UI state marks any folder as an explicit user selection."""
+
+        if self.workspace_input_folder_source == SOURCE_EXPLICIT_USER_SELECTION:
+            return True
+        if self.workspace_output_folder_source == SOURCE_EXPLICIT_USER_SELECTION:
+            return True
+        # Backward-compatible: tests/direct assign of override path strings.
+        if (self.workspace_input_folder_override or "").strip():
+            return True
+        if (self.workspace_output_folder_override or "").strip():
+            return True
+        return False
 
     def discard_profile_edit(self) -> None:
         self.profile_edit_mode = "view"
