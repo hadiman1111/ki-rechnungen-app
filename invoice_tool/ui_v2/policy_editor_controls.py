@@ -31,7 +31,7 @@ from invoice_tool.ui_v2.profile_policy import (
 # Required honest product copy for the policy editor readiness shell.
 MSG_RULES_PROFILE_CONFIGURABLE = "Regeln werden pro Profil konfiguriert."
 MSG_FILENAME_NOT_TRUTH = "Dateinamen sind keine Belegwahrheit."
-MSG_UNCLEAR_STAYS_REVIEW = "Unklare Nachweise bleiben zur Prüfung."
+MSG_UNCLEAR_STAYS_REVIEW = "Unklare Fälle bleiben zur Prüfung."
 MSG_PRODUCTIVE_NOT_RELEASED = "Produktive Verarbeitung ist noch nicht freigegeben."
 # Aliases for required PO copy (also re-exported for tests).
 MSG_SUPPLIER_IBAN_NOT_USER_PROOF = MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT

@@ -36,9 +36,15 @@ from invoice_tool.ui_v2.edit_components import (
     helper_text,
     outlined_field_kwargs,
 )
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_BUCKETS_SEPARATED,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
+)
 from invoice_tool.ui_v2.export_reporting import (
     MSG_DESTINATIONS_EMPTY,
     MSG_EXPORT_FROM_REAL_RUN,
+    MSG_EXPORT_IS_PREVIEW,
     MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
     MSG_FAILED_EMPTY,
     MSG_NO_RUN_PAYLOAD,
@@ -83,6 +89,7 @@ from invoice_tool.ui_v2.processing_state import (
 )
 from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_SANDBOX_COPIED_DATA_ONLY,
+    MSG_SANDBOX_COPIED_RUN,
     MSG_SANDBOX_CORE_DRY_ABSENT,
     MSG_SANDBOX_EXECUTION_WIRED,
     MSG_SANDBOX_MODE_PREPARED,
@@ -112,7 +119,10 @@ EMPTY_NO_RUN_DETAIL = (
     "Wähle Eingangs- und Ausgabeordner explizit und starte eine Verarbeitung erst, "
     "wenn Dry-Run und produktive Ausführung freigegeben sind. "
     "Ergebnisse erscheinen hier erst nach einem echten Lauf. "
-    "Unklare Dokumente werden später im Prüfbereich angezeigt."
+    "Unklare Dokumente werden später im Prüfbereich angezeigt. "
+    f"{MSG_CLARITY_UNCLEAR_STAYS_REVIEW} "
+    f"{MSG_CLARITY_BUCKETS_SEPARATED} "
+    f"{MSG_CLARITY_FILENAME_NOT_TRUTH}"
 )
 EMPTY_NO_RESULTS_TITLE = "Keine Ergebnisse vorhanden"
 EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
@@ -127,10 +137,11 @@ PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
 PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
 FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
 RUN_REPORT_SECTION_LABEL = "Ergebnisbericht"
-EXPORT_PATH_HINT = "Lokaler Exportpfad (JSON oder Ordner)"
-EXPORT_ACTION_LABEL = "Ergebnisse exportieren"
+EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
+EXPORT_ACTION_LABEL = "Ergebnisvorschau exportieren"
 
 # Honest sandbox readiness copy — no productive toggle, no folder create/scan.
+SANDBOX_COPIED_RUN = MSG_SANDBOX_COPIED_RUN
 SANDBOX_MODE_PREPARED = MSG_SANDBOX_MODE_PREPARED
 SANDBOX_COPIED_DATA_ONLY = MSG_SANDBOX_COPIED_DATA_ONLY
 SANDBOX_NO_ORIGINAL_INPUT = MSG_SANDBOX_NO_ORIGINAL_INPUT
@@ -323,9 +334,12 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
     panel_controls: list[ft.Control] = [
         make_section_label(RUN_REPORT_SECTION_LABEL),
         make_settings_panel(*rows),
+        helper_text(MSG_EXPORT_IS_PREVIEW),
         helper_text(MSG_EXPORT_FROM_REAL_RUN),
         helper_text(MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS),
         helper_text(MSG_PLANNED_DESTINATION_HINT),
+        helper_text(MSG_CLARITY_BUCKETS_SEPARATED),
+        helper_text(MSG_CLARITY_FILENAME_NOT_TRUTH),
     ]
     if report.export_available:
         export_field = ft.TextField(
@@ -960,8 +974,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     if run_shell.errors.has_items:
         items.append(
             summary_alert(
-                f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count} "
-                "(getrennt von Prüffällen)."
+                f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count}. "
+                f"{MSG_CLARITY_BUCKETS_SEPARATED}"
             )
         )
     if has_real_results and contract_display:

@@ -230,9 +230,12 @@ def test_review_workflow_displays_payment_and_business_unclear(tmp_path: Path) -
     assert queue.error_count == 1
     assert MSG_RESULTS_SEPARATED in queue.separation_notes
     assert MSG_ERRORS_SEPARATED in queue.separation_notes
+    assert "Ergebnisse, Prüffälle und Fehler werden getrennt geführt." in queue.separation_notes
+    assert "Unklare Fälle bleiben zur Prüfung." in queue.honest_copy
     assert queue.mutates_files is False
     assert flow.validation_report.review_payment_visible is True
     assert flow.validation_report.review_business_visible is True
+    assert "bitte manuell prüfen" in " ".join(reasons)
 
 
 def test_export_report_contains_recognized_review_error_target_summary(
@@ -251,13 +254,21 @@ def test_export_report_contains_recognized_review_error_target_summary(
     assert questions["failed"]["count"] >= 2
     assert questions["destinations"]["planned_only"] is True
     assert payload["cloud"] is False
+    assert payload["preview"] is True
+    assert payload["productive_export"] is False
+    assert payload["datev_export"] is False
     assert payload["persistence"] == "local_export_only"
+    assert "Vorschau" in payload["disclaimer"]
+    assert "DATEV" in payload["disclaimer"]
     report = flow.validation_report
     assert report.export_has_recognized
     assert report.export_has_unclear
     assert report.export_has_failed
     assert report.export_has_destinations
     assert report.export_has_summary
+    assert report.original_folders_excluded_message == "Originalordner werden nicht verwendet."
+    assert "kopierte" in report.copied_data_only_message.lower()
+    assert "Dies ist ein Sandbox-Lauf mit kopierten Daten." in report.user_clarity_lines
 
 
 def test_workspace_answers_five_questions_with_copied_realistic_data(

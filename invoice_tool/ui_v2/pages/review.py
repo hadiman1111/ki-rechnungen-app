@@ -30,8 +30,10 @@ from invoice_tool.ui_v2.review_workflow import (
     DEFAULT_NEXT_ACTION_HINT,
     EMPTY_REVIEW_DETAIL,
     EMPTY_REVIEW_TITLE,
+    MSG_BUCKETS_SEPARATED,
     MSG_REVIEW_FROM_REAL_RUN,
     MSG_REVIEW_NO_FILE_MUTATION,
+    MSG_UNCLEAR_CASES_STAY_REVIEW,
     REVIEW_QUEUE_SUBTITLE,
     ReviewItemViewModel,
     ReviewQueueViewModel,
@@ -160,7 +162,10 @@ def build_review_page(state: UiV2State) -> ft.Control:
     queue = build_review_queue_view_model(state.processing_run_state)
     items: list[ft.Control] = [
         page_header(vm.title, subtitle=vm.subtitle),
-        make_info_banner(f"{MSG_REVIEW_FROM_REAL_RUN} {MSG_REVIEW_NO_FILE_MUTATION}"),
+        make_info_banner(
+            f"{MSG_REVIEW_FROM_REAL_RUN} {MSG_REVIEW_NO_FILE_MUTATION} "
+            f"{MSG_UNCLEAR_CASES_STAY_REVIEW} {MSG_BUCKETS_SEPARATED}"
+        ),
     ]
 
     if vm.empty:

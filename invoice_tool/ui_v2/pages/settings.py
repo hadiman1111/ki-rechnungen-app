@@ -24,18 +24,26 @@ from invoice_tool.ui_v2.policy_editor_controls import (
     build_policy_editor_controls_panel,
     build_policy_editor_controls_vm,
 )
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_BUCKETS_SEPARATED,
+    MSG_CLARITY_EXPORT_PREVIEW,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_NO_ORIGINAL_FOLDERS,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+)
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
 SETTINGS_SUBTITLE = "Allgemeine Programmeinstellungen und Readiness-Hinweise."
-PRODUCTIVE_EXECUTION_NOTICE = (
-    "Produktive lokale Verarbeitung ist noch nicht freigegeben."
-)
+PRODUCTIVE_EXECUTION_NOTICE = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 DRY_RUN_UNAVAILABLE_NOTICE = MSG_DRY_RUN_UNAVAILABLE
 PRODUCT_NEUTRAL_NOTICE = (
     "Diese Einstellungen sind produktneutral und enthalten keine privaten Standardwerte."
 )
 READINESS_BANNER = (
+    f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
+    f"{MSG_CLARITY_PRODUCTIVE_NOT_RELEASED} "
     "Track-B Einstellungen sind vorbereitet; produktive lokale Ausführung "
     "ist noch nicht aktiviert."
 )
@@ -45,7 +53,15 @@ NO_PRIVATE_DEFAULTS = "Keine privaten Standardwerte."
 EXPORT_SECTION_DETAIL = (
     "Laufergebnisse exportieren Sie im Arbeitsbereich als lokalen JSON-/CSV-Bericht "
     "(erkannt / unklar / fehlgeschlagen / Zielhinweise / Zusammenfassung). "
+    f"{MSG_CLARITY_EXPORT_PREVIEW} "
+    f"{MSG_CLARITY_BUCKETS_SEPARATED} "
     "Kein Cloud-Sync, keine Originalmutation."
+)
+STATUS_SECTION_DETAIL = (
+    f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
+    f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS} "
+    f"{MSG_CLARITY_PRODUCTIVE_NOT_RELEASED} "
+    f"{MSG_CLARITY_FILENAME_NOT_TRUTH}"
 )
 
 SETTINGS_SECTIONS = (
@@ -53,7 +69,7 @@ SETTINGS_SECTIONS = (
     ("Verarbeitung", "Verarbeitungsoptionen bleiben deaktiviert, bis ein PO-Gate freigibt."),
     ("Sicherheit", "Sicherheitsoptionen sind noch nicht konfigurierbar."),
     ("Export", EXPORT_SECTION_DETAIL),
-    ("Produktstatus", "Aktueller Sicherheits- und Freigabestatus der lokalen UI-v2."),
+    ("Produktstatus", STATUS_SECTION_DETAIL),
 )
 
 SECTION_STATUS_DISABLED = "Nicht verfügbar"

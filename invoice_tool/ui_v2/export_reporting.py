@@ -20,6 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_BUCKETS_SEPARATED,
+    MSG_CLARITY_EXPORT_FROM_REAL_RUN,
+    MSG_CLARITY_EXPORT_PREVIEW,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+)
 from invoice_tool.ui_v2.processing_state import (
     ProcessingResultSummary,
     ProcessingReviewItem,
@@ -37,15 +44,14 @@ SECTION_DESTINATIONS = "Welche Dateien wären wohin gegangen?"
 SECTION_SUMMARY = "Welche Zusammenfassung bekommt der Nutzer?"
 
 MSG_NO_RUN_PAYLOAD = "Noch kein Laufergebnis zum Berichten vorhanden."
-MSG_EXPORT_FROM_REAL_RUN = (
-    "Bericht und Export nutzen nur echte Laufergebnisse — keine Vorschau-Daten."
-)
+MSG_EXPORT_FROM_REAL_RUN = MSG_CLARITY_EXPORT_FROM_REAL_RUN
+MSG_EXPORT_IS_PREVIEW = MSG_CLARITY_EXPORT_PREVIEW
 MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS = (
     "Der Export verändert keine Originalbelege und startet keine Verarbeitung."
 )
 MSG_EXPORT_NEEDS_PATH = "Exportpfad fehlt — bitte eine lokale Zieldatei angeben."
 MSG_EXPORT_EMPTY = "Kein Laufergebnis vorhanden — Export nicht möglich."
-MSG_EXPORT_OK = "Laufergebnis lokal exportiert."
+MSG_EXPORT_OK = "Laufergebnis-Vorschau lokal exportiert (kein produktiver DATEV-/Cloud-Export)."
 MSG_DESTINATION_UNKNOWN = "Kein Zielhinweis vorhanden"
 MSG_DESTINATION_REVIEW = "Zur Prüfung"
 MSG_FAILED_STATUS = "fehlgeschlagen"
@@ -56,6 +62,15 @@ MSG_DESTINATIONS_EMPTY = "Keine Zielhinweise in diesem Lauf."
 MSG_PLANNED_DESTINATION_HINT = (
     "Zielhinweise beschreiben die geplante Zuordnung aus dem Laufzustand; "
     "ohne freigegebene Ausführung werden keine Dateien verschoben."
+)
+MSG_EXPORT_HONEST_COPY = (
+    MSG_EXPORT_IS_PREVIEW,
+    MSG_EXPORT_FROM_REAL_RUN,
+    MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
+    MSG_PLANNED_DESTINATION_HINT,
+    MSG_CLARITY_BUCKETS_SEPARATED,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
 )
 
 DEFAULT_DOCUMENT_LABEL = "Dokument"
@@ -322,11 +337,7 @@ def build_run_report_view_model(
             SECTION_DESTINATIONS,
             SECTION_SUMMARY,
         ),
-        honest_copy=(
-            MSG_EXPORT_FROM_REAL_RUN,
-            MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
-            MSG_PLANNED_DESTINATION_HINT,
-        ),
+        honest_copy=MSG_EXPORT_HONEST_COPY,
         export_available=not empty,
         mutates_original_files=False,
         starts_processing=False,
@@ -340,7 +351,12 @@ def build_run_export_payload(report: RunReportViewModel) -> dict[str, Any]:
         "kind": EXPORT_KIND,
         "schema_version": EXPORT_SCHEMA_VERSION,
         "cloud": False,
+        "preview": True,
+        "productive_export": False,
+        "datev_export": False,
+        "cloud_export": False,
         "persistence": "local_export_only",
+        "disclaimer": MSG_EXPORT_IS_PREVIEW,
         "run_id": report.run_id,
         "status": report.status,
         "status_label": report.status_label,
@@ -559,6 +575,8 @@ __all__ = (
     "MSG_DESTINATIONS_EMPTY",
     "MSG_EXPORT_EMPTY",
     "MSG_EXPORT_FROM_REAL_RUN",
+    "MSG_EXPORT_HONEST_COPY",
+    "MSG_EXPORT_IS_PREVIEW",
     "MSG_EXPORT_NEEDS_PATH",
     "MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS",
     "MSG_EXPORT_OK",

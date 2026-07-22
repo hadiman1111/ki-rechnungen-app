@@ -16,6 +16,14 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from invoice_tool.saas_product_model import default_classification_policy
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_COPIED_DATA_ONLY_REPORT,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_NO_ORIGINAL_FOLDERS,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+    track_b_clarity_lines,
+)
 from invoice_tool.ui_v2.export_reporting import (
     SECTION_DESTINATIONS,
     SECTION_FAILED,
@@ -87,12 +95,17 @@ COPIED_RUN_ID = "copied-realistic-run-001"
 COPIED_PROFILE_DISPLAY = "Copied Realistic Pilot Profile"
 
 MSG_PAYMENT_UNCLEAR = (
-    "Zahlungsnachweis unklar — kopierter realistischer Prüffall (kein tenant-default)"
+    "Zahlungsnachweis unklar — bitte manuell prüfen "
+    "(kopierter realistischer Prüffall; Dateiname ist keine Belegwahrheit)"
 )
 MSG_BUSINESS_UNCLEAR = (
-    "Betrieblich/persönlicher Nachweis unklar — kopierter realistischer Prüffall"
+    "Betrieblich/persönlicher Nachweis unklar — bitte manuell prüfen "
+    "(kopierter realistischer Prüffall; bleibt zur Prüfung)"
 )
-MSG_UNSUPPORTED_ERROR = "unsupported document type: copied-error-004"
+MSG_UNSUPPORTED_ERROR = (
+    "Dokumenttyp nicht unterstützt — Fehler getrennt von Prüffällen "
+    "(kopierter realistischer Fehlerfall: copied-error-004)"
+)
 MSG_PAYMENT_EVIDENCE = "Kein eindeutiger Zahlungsnachweis in Fixture-Metadaten"
 MSG_BUSINESS_EVIDENCE = (
     "Kein eindeutiger betrieblich/persönlicher Nachweis in Fixture-Metadaten"
@@ -185,6 +198,12 @@ class CopiedRealDataValidationReport:
     no_filename_as_truth: bool
     no_writes_outside_tmp: bool
     fixture_inside_tmp: bool
+    user_clarity_lines: tuple[str, ...] = ()
+    original_folders_excluded_message: str = MSG_CLARITY_NO_ORIGINAL_FOLDERS
+    copied_data_only_message: str = MSG_CLARITY_COPIED_DATA_ONLY_REPORT
+    sandbox_run_message: str = MSG_CLARITY_SANDBOX_COPIED_RUN
+    productive_blocked_message: str = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
+    filename_not_truth_message: str = MSG_CLARITY_FILENAME_NOT_TRUTH
 
 
 @dataclass(frozen=True)
@@ -497,6 +516,9 @@ def build_copied_real_data_validation_report(
         and fixture_inside
     )
 
+    clarity_lines = track_b_clarity_lines() + (
+        MSG_CLARITY_COPIED_DATA_ONLY_REPORT,
+    )
     return CopiedRealDataValidationReport(
         case=case,
         quality_rows=quality_rows,
@@ -518,6 +540,12 @@ def build_copied_real_data_validation_report(
         no_filename_as_truth=all(row.filename_is_not_truth for row in quality_rows),
         no_writes_outside_tmp=no_writes_outside,
         fixture_inside_tmp=fixture_inside,
+        user_clarity_lines=clarity_lines,
+        original_folders_excluded_message=MSG_CLARITY_NO_ORIGINAL_FOLDERS,
+        copied_data_only_message=MSG_CLARITY_COPIED_DATA_ONLY_REPORT,
+        sandbox_run_message=MSG_CLARITY_SANDBOX_COPIED_RUN,
+        productive_blocked_message=MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+        filename_not_truth_message=MSG_CLARITY_FILENAME_NOT_TRUTH,
     )
 
 

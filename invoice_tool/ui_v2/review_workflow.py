@@ -9,6 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_BUCKETS_SEPARATED,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+    MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
+)
 from invoice_tool.ui_v2.processing_state import (
     ProcessingReviewItem,
     ProcessingRunState,
@@ -20,6 +27,8 @@ MSG_REVIEW_NO_FILE_MUTATION = "Diese Ansicht verändert keine Dateien."
 EMPTY_REVIEW_DETAIL = MSG_REVIEW_FROM_REAL_RUN
 MSG_ERRORS_SEPARATED = "Fehler werden getrennt von Prüffällen geführt."
 MSG_RESULTS_SEPARATED = "Erfolgreiche Ergebnisse werden getrennt von Prüffällen geführt."
+MSG_BUCKETS_SEPARATED = MSG_CLARITY_BUCKETS_SEPARATED
+MSG_UNCLEAR_CASES_STAY_REVIEW = MSG_CLARITY_UNCLEAR_STAYS_REVIEW
 MSG_ACTION_NOT_CONNECTED = "noch nicht verbunden"
 MSG_ACTION_INFORMATIONAL = "nur Hinweis — keine Dateiöffnung"
 DEFAULT_NEXT_ACTION_HINT = "Manuell prüfen und Zuordnung im Profil nachziehen."
@@ -27,6 +36,15 @@ DEFAULT_EVIDENCE_SUMMARY = "Kein Nachweiszusammenfassung bereitgestellt."
 DEFAULT_DOCUMENT_LABEL = "Dokument"
 DEFAULT_REASON = "Grund nicht angegeben"
 DEFAULT_STATUS = "unklar"
+MSG_REVIEW_HONEST_COPY = (
+    MSG_REVIEW_FROM_REAL_RUN,
+    MSG_REVIEW_NO_FILE_MUTATION,
+    MSG_UNCLEAR_CASES_STAY_REVIEW,
+    MSG_BUCKETS_SEPARATED,
+    MSG_CLARITY_FILENAME_NOT_TRUTH,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+)
 
 ACTION_MARK_REVIEWED = "Als geprüft markieren"
 ACTION_SAVE_LATER = "Entscheidung später speichern"
@@ -156,8 +174,9 @@ def build_review_queue_view_model(
     )
     error_count = len(tuple(run_state.errors or ()))
     result_count = len(tuple(run_state.results or ()))
-    honest_copy = (MSG_REVIEW_FROM_REAL_RUN, MSG_REVIEW_NO_FILE_MUTATION)
-    separation_notes: list[str] = []
+    honest_copy = MSG_REVIEW_HONEST_COPY
+    # Always keep buckets separated in copy — never mix results/review/errors.
+    separation_notes: list[str] = [MSG_BUCKETS_SEPARATED, MSG_UNCLEAR_CASES_STAY_REVIEW]
     if error_count:
         separation_notes.append(MSG_ERRORS_SEPARATED)
     if result_count:
@@ -213,10 +232,13 @@ __all__ = (
     "EMPTY_REVIEW_TITLE",
     "MSG_ACTION_INFORMATIONAL",
     "MSG_ACTION_NOT_CONNECTED",
+    "MSG_BUCKETS_SEPARATED",
     "MSG_ERRORS_SEPARATED",
     "MSG_RESULTS_SEPARATED",
     "MSG_REVIEW_FROM_REAL_RUN",
+    "MSG_REVIEW_HONEST_COPY",
     "MSG_REVIEW_NO_FILE_MUTATION",
+    "MSG_UNCLEAR_CASES_STAY_REVIEW",
     "REVIEW_QUEUE_SUBTITLE",
     "ReviewActionVM",
     "ReviewItemViewModel",

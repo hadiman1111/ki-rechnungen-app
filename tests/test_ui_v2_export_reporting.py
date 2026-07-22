@@ -11,6 +11,7 @@ from invoice_tool.ui_v2.export_reporting import (
     MSG_DESTINATION_REVIEW,
     MSG_EXPORT_EMPTY,
     MSG_EXPORT_FROM_REAL_RUN,
+    MSG_EXPORT_IS_PREVIEW,
     MSG_EXPORT_NEEDS_PATH,
     MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
     MSG_EXPORT_OK,
@@ -65,7 +66,10 @@ PRIVATE_MARKERS = (
 def _completed_state() -> ProcessingRunState:
     return ProcessingRunState(
         status="completed",
-        message="Sandbox-Lauf abgeschlossen (kopierte Testdaten).",
+        message=(
+            "Dies ist ein Sandbox-Lauf mit kopierten Daten. "
+            "Sandbox-Lauf abgeschlossen (kopierte Testdaten)."
+        ),
         run_id="run-export-1",
         results=(
             ProcessingResultSummary(
@@ -105,8 +109,10 @@ def test_empty_report_is_honest() -> None:
     assert report.unclear == ()
     assert report.failed == ()
     assert report.user_summary.headline == MSG_NO_RUN_PAYLOAD
+    assert MSG_EXPORT_IS_PREVIEW in report.honest_copy
     assert MSG_EXPORT_FROM_REAL_RUN in report.honest_copy
     assert MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS in report.honest_copy
+    assert "keine Vorschau-Daten" not in MSG_EXPORT_FROM_REAL_RUN
     assert report.mutates_original_files is False
     assert report.starts_processing is False
 
@@ -161,6 +167,10 @@ def test_export_payload_contains_five_question_blocks() -> None:
     payload = build_run_export_payload(report)
     assert payload["kind"] == EXPORT_KIND
     assert payload["cloud"] is False
+    assert payload["preview"] is True
+    assert payload["productive_export"] is False
+    assert payload["datev_export"] is False
+    assert payload["disclaimer"] == MSG_EXPORT_IS_PREVIEW
     assert payload["persistence"] == "local_export_only"
     questions = payload["questions"]
     assert set(questions) == {
@@ -246,6 +256,8 @@ def test_settings_export_section_points_to_workspace_report() -> None:
     assert "erkannt" in EXPORT_SECTION_DETAIL
     assert "unklar" in EXPORT_SECTION_DETAIL
     assert "fehlgeschlagen" in EXPORT_SECTION_DETAIL
+    assert MSG_EXPORT_IS_PREVIEW in EXPORT_SECTION_DETAIL
+    assert "DATEV" in EXPORT_SECTION_DETAIL
 
 
 def test_module_has_no_processing_core_imports() -> None:
@@ -272,7 +284,8 @@ def test_module_has_no_processing_core_imports() -> None:
 def test_workspace_wires_export_reporting_without_core() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "build_run_report_view_model" in src
-    assert "Ergebnisse exportieren" in src
+    assert "Ergebnisvorschau exportieren" in src or "EXPORT_ACTION_LABEL" in src
+    assert "MSG_EXPORT_IS_PREVIEW" in src
     assert "Was wurde erkannt?" in src or "SECTION_RECOGNIZED" in src
     for core in ("invoice_tool.processing", "invoice_tool.run", "invoice_tool.routing"):
         assert core not in src

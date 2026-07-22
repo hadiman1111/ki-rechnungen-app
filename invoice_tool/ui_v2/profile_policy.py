@@ -43,7 +43,7 @@ MSG_TARGETS_AFTER_SAFE_CONFIG = (
 
 # Required honest product copy — policy editor (shared with controls module).
 MSG_FILENAME_NOT_TRUTH = "Dateinamen sind keine Belegwahrheit."
-MSG_UNCLEAR_STAYS_REVIEW = "Unklare Nachweise bleiben zur Prüfung."
+MSG_UNCLEAR_STAYS_REVIEW = "Unklare Fälle bleiben zur Prüfung."
 MSG_SUPPLIER_IBAN_NOT_USER_PAYMENT = (
     "Lieferanten-IBAN ist kein Zahlungsnachweis des Nutzers."
 )

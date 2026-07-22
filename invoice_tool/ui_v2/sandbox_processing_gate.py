@@ -14,6 +14,12 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_NO_ORIGINAL_FOLDERS,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+    MSG_CLARITY_SANDBOX_COPIED_DATA_ONLY,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+)
 from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
     SOURCE_UNSET,
@@ -44,13 +50,10 @@ SandboxReasonCode = Literal[
 ExecutionScope = Literal["blocked", "sandbox", "dry_run", "productive"]
 
 MSG_SANDBOX_MODE_PREPARED = "Sandbox-Modus: vorbereitet"
-MSG_SANDBOX_COPIED_DATA_ONLY = (
-    "Verarbeitung ist nur mit kopierten Testdaten erlaubt."
-)
-MSG_SANDBOX_NO_ORIGINAL_INPUT = (
-    "Originalordner werden nicht als Verarbeitungseingang akzeptiert."
-)
-MSG_SANDBOX_PRODUCTIVE_BLOCKED = "Produktive Verarbeitung ist nicht freigegeben."
+MSG_SANDBOX_COPIED_RUN = MSG_CLARITY_SANDBOX_COPIED_RUN
+MSG_SANDBOX_COPIED_DATA_ONLY = MSG_CLARITY_SANDBOX_COPIED_DATA_ONLY
+MSG_SANDBOX_NO_ORIGINAL_INPUT = MSG_CLARITY_NO_ORIGINAL_FOLDERS
+MSG_SANDBOX_PRODUCTIVE_BLOCKED = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 MSG_SANDBOX_CORE_DRY_ABSENT = "Core-Dry-Run ist noch nicht vorhanden."
 MSG_SANDBOX_EXECUTION_WIRED = (
     "Sandbox-Ausführung nur nach Gate-Freigabe gegen kopierte Testdaten."
@@ -90,6 +93,7 @@ MSG_BLOCKED_MISSING_ORIGINAL_SOURCE = (
 )
 
 WORKSPACE_SANDBOX_READINESS_LINES = (
+    MSG_SANDBOX_COPIED_RUN,
     MSG_SANDBOX_MODE_PREPARED,
     MSG_SANDBOX_COPIED_DATA_ONLY,
     MSG_SANDBOX_NO_ORIGINAL_INPUT,
@@ -431,6 +435,7 @@ __all__ = (
     "MSG_BLOCKED_PRODUCTIVE",
     "MSG_BLOCKED_SAME_INPUT_OUTPUT",
     "MSG_SANDBOX_COPIED_DATA_ONLY",
+    "MSG_SANDBOX_COPIED_RUN",
     "MSG_SANDBOX_CORE_DRY_ABSENT",
     "MSG_SANDBOX_EXECUTION_WIRED",
     "MSG_SANDBOX_MODE_PREPARED",

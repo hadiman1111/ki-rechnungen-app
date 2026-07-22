@@ -378,7 +378,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         if result.ok:
             label = result.display_name or "Lokaler Entwurf"
             _set_feedback(
-                f"Neuer lokaler SaaS-Entwurf „{label}“ — keine Cloud-Synchronisierung."
+                f"Neuer lokaler Profilentwurf „{label}“ — keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(result.error or "Speicherfehler", is_error=True)
@@ -389,15 +389,15 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         if not result.ok:
             _set_feedback(result.error or "Lokaler Draft beschädigt", is_error=True)
         elif result.status == "missing_blank":
-            _set_feedback("Nicht gespeichert — kein lokaler SaaS-Entwurf vorhanden.")
+            _set_feedback("Nicht gespeichert — kein lokaler Profilentwurf vorhanden.")
         else:
-            _set_feedback("Lokal geladen — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+            _set_feedback("Lokal geladen — lokaler Profilentwurf, keine Cloud-Synchronisierung.")
         _refresh()
 
     def _save_saas_draft_local() -> None:
         result = state.save_saas_drafts_to_disk()
         if result.ok:
-            _set_feedback("Lokal gespeichert — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+            _set_feedback("Lokal gespeichert — lokaler Profilentwurf, keine Cloud-Synchronisierung.")
         else:
             _set_feedback(result.error or "Speicherfehler", is_error=True)
         _refresh()
@@ -407,7 +407,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         if result.ok:
             label = result.display_name or new_name
             _set_feedback(
-                f"Lokal umbenannt „{label}“ — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"Lokal umbenannt „{label}“ — lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(result.error or "Validierungsfehler", is_error=True)
@@ -418,7 +418,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         result = state.delete_saas_draft(confirmed=confirmed)
         if result.ok:
             _set_feedback(
-                "Lokal gelöscht — lokaler SaaS-Entwurf entfernt, keine Cloud-Synchronisierung."
+                "Lokal gelöscht — lokaler Profilentwurf entfernt, keine Cloud-Synchronisierung."
             )
         elif result.status == "delete_needs_confirm":
             _set_feedback(result.error or "Löschen bestätigen.")
@@ -429,12 +429,12 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
     def _export_saas_draft_local(export_path: str) -> None:
         path = (export_path or "").strip()
         if not path:
-            _set_feedback("Exportpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _set_feedback("Exportpfad fehlt — lokaler Profilentwurf, keine Cloud-Synchronisierung.", is_error=True)
             _refresh()
             return
         result = state.export_saas_draft(path)
         if result.ok:
-            _set_feedback("Lokal exportiert — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.")
+            _set_feedback("Lokal exportiert — lokaler Profilentwurf, keine Cloud-Synchronisierung.")
         else:
             _set_feedback(result.error or "Export fehlgeschlagen", is_error=True)
         _refresh()
@@ -442,14 +442,14 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
     def _import_saas_draft_local(import_path: str) -> None:
         path = (import_path or "").strip()
         if not path:
-            _set_feedback("Importpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _set_feedback("Importpfad fehlt — lokaler Profilentwurf, keine Cloud-Synchronisierung.", is_error=True)
             _refresh()
             return
         result = state.import_saas_draft(path)
         if result.ok:
             label = result.display_name or "Lokaler Entwurf"
             _set_feedback(
-                f"Lokal importiert „{label}“ — neuer lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"Lokal importiert „{label}“ — neuer lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(result.error or "Import fehlgeschlagen", is_error=True)

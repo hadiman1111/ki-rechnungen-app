@@ -338,7 +338,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         status_vm = state.saas_persistence_status_vm()
         if result.ok:
             _set_feedback(
-                f"{status_vm.status_label} — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"{status_vm.status_label} — lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(
@@ -359,11 +359,11 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             return
         if result.status == "missing_blank":
             _set_feedback(
-                "Nicht gespeichert — kein lokaler SaaS-Entwurf vorhanden; generischer Blank-Draft aktiv."
+                "Nicht gespeichert — kein lokaler Profilentwurf vorhanden; generischer Blank-Draft aktiv."
             )
         else:
             _set_feedback(
-                f"{status_vm.status_label} — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"{status_vm.status_label} — lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         _refresh()
 
@@ -373,7 +373,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         if result.ok:
             label = result.display_name or "Lokaler Entwurf"
             _set_feedback(
-                f"Neuer lokaler SaaS-Entwurf „{label}“ — keine Cloud-Synchronisierung."
+                f"Neuer lokaler Profilentwurf „{label}“ — keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(
@@ -392,7 +392,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         if result.ok:
             label = result.display_name or new_name
             _set_feedback(
-                f"Lokal umbenannt „{label}“ — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"Lokal umbenannt „{label}“ — lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(
@@ -407,7 +407,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         status_vm = state.saas_persistence_status_vm()
         if result.ok:
             _set_feedback(
-                "Lokal gelöscht — lokaler SaaS-Entwurf entfernt, keine Cloud-Synchronisierung."
+                "Lokal gelöscht — lokaler Profilentwurf entfernt, keine Cloud-Synchronisierung."
             )
         elif result.status == "delete_needs_confirm":
             _set_feedback(
@@ -424,14 +424,14 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     def _export_saas_draft_local(export_path: str) -> None:
         path = (export_path or "").strip()
         if not path:
-            _set_feedback("Exportpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _set_feedback("Exportpfad fehlt — lokaler Profilentwurf, keine Cloud-Synchronisierung.", is_error=True)
             _refresh()
             return
         result = state.export_saas_draft(path)
         status_vm = state.saas_persistence_status_vm()
         if result.ok:
             _set_feedback(
-                f"{status_vm.status_label} — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"{status_vm.status_label} — lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(
@@ -443,7 +443,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
     def _import_saas_draft_local(import_path: str) -> None:
         path = (import_path or "").strip()
         if not path:
-            _set_feedback("Importpfad fehlt — lokaler SaaS-Entwurf, keine Cloud-Synchronisierung.", is_error=True)
+            _set_feedback("Importpfad fehlt — lokaler Profilentwurf, keine Cloud-Synchronisierung.", is_error=True)
             _refresh()
             return
         result = state.import_saas_draft(path)
@@ -451,7 +451,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         if result.ok:
             label = result.display_name or "Lokaler Entwurf"
             _set_feedback(
-                f"Lokal importiert „{label}“ — neuer lokaler SaaS-Entwurf, keine Cloud-Synchronisierung."
+                f"Lokal importiert „{label}“ — neuer lokaler Profilentwurf, keine Cloud-Synchronisierung."
             )
         else:
             _set_feedback(
@@ -656,7 +656,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
                 full_width_field(payment_field),
             ),
             helper_text(
-                "Entwurfsfelder im generischen SaaS-Profilmodell (In-Memory); "
+                "Entwurfsfelder im generischen Profilentwurfsmodell (In-Memory); "
                 "keine privaten Vorbelegungen. Verarbeitung wird hier nicht gestartet."
             ),
         ]

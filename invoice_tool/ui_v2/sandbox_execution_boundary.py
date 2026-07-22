@@ -15,6 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
+from invoice_tool.ui_v2.clarity_copy import (
+    MSG_CLARITY_NO_ORIGINAL_FOLDERS,
+    MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
+    MSG_CLARITY_SANDBOX_COPIED_RUN,
+)
 from invoice_tool.ui_v2.processing_state import (
     MSG_COMPLETED,
     MSG_FAILED,
@@ -25,12 +30,16 @@ from invoice_tool.ui_v2.processing_state import (
 
 MSG_SANDBOX_RUNNER_UNBOUND = (
     "Sandbox-Ausführungsgrenze: Live-Core-Runner ist nicht gebunden. "
-    "Kein Originalordner wurde verwendet; keine produktive Ausführung."
+    f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS} {MSG_CLARITY_PRODUCTIVE_NOT_RELEASED}"
 )
-MSG_SANDBOX_EXECUTION_COMPLETED = "Sandbox-Lauf abgeschlossen (kopierte Testdaten)."
+MSG_SANDBOX_EXECUTION_COMPLETED = (
+    f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
+    "Sandbox-Lauf abgeschlossen (kopierte Testdaten)."
+)
 MSG_SANDBOX_EXECUTION_FAILED = "Sandbox-Lauf fehlgeschlagen."
 MSG_SANDBOX_BOUNDARY_REFUSED_ORIGINAL = (
-    "Sandbox-Ausführungsgrenze verweigert Original-Quellordner als Eingang."
+    "Sandbox-Ausführungsgrenze verweigert Original-Quellordner als Eingang. "
+    f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS}"
 )
 
 
