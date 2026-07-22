@@ -26,7 +26,10 @@ from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
     SOURCE_UNSET,
 )
-from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
+from invoice_tool.ui_v2.sandbox_processing_gate import (
+    MSG_BLOCKED_MISSING_SANDBOX,
+    MSG_SANDBOX_CORE_DRY_ABSENT,
+)
 from invoice_tool.ui_v2.state import UiV2State
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,7 +141,8 @@ def test_folder_selection_does_not_process_pdfs(tmp_path: Path) -> None:
     )
     started = state.processing_service.start_run(request)
     assert started.status == "blocked"
-    assert MSG_DRY_RUN_UNAVAILABLE in started.message
+    assert MSG_BLOCKED_MISSING_SANDBOX in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
     assert pdf.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == listing_before
 
@@ -207,11 +211,11 @@ def test_explicit_test_folder_strings_do_not_touch_filesystem(tmp_path: Path) ->
     assert not Path(out_path).exists()
 
 
-def test_cta_remains_blocked_by_dry_no_mutation_gate() -> None:
+def test_cta_remains_blocked_by_sandbox_gate() -> None:
     state = UiV2State(processing_service=LocalProcessingAdapter())
     apply_workspace_input_folder_selection(state, "explicit-in")
     apply_workspace_output_folder_selection(state, "explicit-out")
-    # Provide profile/config so dry-gate (not missing folders) is the blocker.
+    # Provide profile/config so sandbox-gate (not missing folders) is the blocker.
     request = build_processing_run_request(
         state,
         profile_id="profile-a",
@@ -220,7 +224,9 @@ def test_cta_remains_blocked_by_dry_no_mutation_gate() -> None:
     )
     started = state.processing_service.start_run(request)
     assert started.status == "blocked"
-    assert MSG_DRY_RUN_UNAVAILABLE in started.message
+    assert MSG_BLOCKED_MISSING_SANDBOX in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert started.execution_gate == "blocked_missing_sandbox"
     assert started.core_dry_run_status == "unsupported_without_core_change"
     assert started.results == tuple()
     # Workspace CTA path also stays non-productive.

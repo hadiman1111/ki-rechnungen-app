@@ -10,7 +10,7 @@ Does not import invoice_tool.processing / invoice_tool.run / routing / classific
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_POLICY_INCOMPLETE,
@@ -36,6 +36,9 @@ SOURCE_UNSET = "unset"
 
 ALLOWED_REQUEST_SOURCES = frozenset({SOURCE_EXPLICIT_USER_SELECTION})
 
+# Execution scope defaults to blocked — productive/sandbox must be explicit.
+ExecutionScope = Literal["blocked", "sandbox", "dry_run", "productive"]
+
 
 @dataclass(frozen=True)
 class ProcessingRunRequest:
@@ -51,6 +54,13 @@ class ProcessingRunRequest:
     policy_bridge_result: RuntimePolicyBridgeResult | None = None
     # Explicit CTA / confirmation marker — never implied by folder presence alone.
     user_confirmed_start: bool = False
+    # Sandbox confinement markers — defaults keep productive execution blocked.
+    sandbox_mode: bool = False
+    sandbox_root: str | None = None
+    original_source_folder: str | None = None
+    copied_data_confirmed: bool = False
+    productive_execution_allowed: bool = False
+    execution_scope: ExecutionScope = "blocked"
 
     def normalized_input_folder(self) -> str | None:
         value = (self.input_folder or "").strip()
@@ -66,6 +76,14 @@ class ProcessingRunRequest:
 
     def normalized_configuration_id(self) -> str | None:
         value = (self.configuration_id or "").strip()
+        return value or None
+
+    def normalized_sandbox_root(self) -> str | None:
+        value = (self.sandbox_root or "").strip()
+        return value or None
+
+    def normalized_original_source_folder(self) -> str | None:
+        value = (self.original_source_folder or "").strip()
         return value or None
 
     def has_explicit_user_source(self) -> bool:
@@ -92,6 +110,12 @@ def empty_processing_request() -> ProcessingRunRequest:
         policy_intent=None,
         policy_bridge_result=None,
         user_confirmed_start=False,
+        sandbox_mode=False,
+        sandbox_root=None,
+        original_source_folder=None,
+        copied_data_confirmed=False,
+        productive_execution_allowed=False,
+        execution_scope="blocked",
     )
 
 

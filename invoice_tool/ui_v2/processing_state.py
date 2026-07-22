@@ -25,6 +25,12 @@ ExecutionGateStatus = Literal[
     "dry_run_available",
     "productive_blocked",
     "unsupported_without_core_change",
+    # Sandbox processing run gate (Track B only — no core call implied).
+    "blocked_missing_sandbox",
+    "blocked_original_folder",
+    "blocked_missing_copied_data_confirmation",
+    "blocked_productive_execution",
+    "ready_for_sandbox_execution",
 ]
 
 MSG_IDLE = "Noch kein Lauf gestartet."
@@ -42,6 +48,10 @@ MSG_PRODUCTIVE_NOT_RELEASED = (
 )
 MSG_DRY_RUN_UNAVAILABLE = (
     "Dry-Run ohne Dateiveränderung ist im lokalen Core noch nicht verfügbar."
+)
+MSG_READY_FOR_SANDBOX_EXECUTION = (
+    "Sandbox-Gate freigegeben; Ausführungsverdrahtung ist noch nicht aktiv. "
+    "Core-Dry-Run ist noch nicht vorhanden."
 )
 MSG_RUNNING = "Lauf läuft (nur über einen zukünftigen Adapter)."
 MSG_COMPLETED = "Lauf abgeschlossen."

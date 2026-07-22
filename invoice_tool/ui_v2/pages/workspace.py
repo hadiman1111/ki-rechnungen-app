@@ -57,6 +57,15 @@ from invoice_tool.ui_v2.processing_state import (
     ProcessingRunState,
     ProcessingStatus,
 )
+from invoice_tool.ui_v2.sandbox_processing_gate import (
+    MSG_SANDBOX_COPIED_DATA_ONLY,
+    MSG_SANDBOX_CORE_DRY_ABSENT,
+    MSG_SANDBOX_MODE_PREPARED,
+    MSG_SANDBOX_NO_ORIGINAL_INPUT,
+    MSG_SANDBOX_PRODUCTIVE_BLOCKED,
+    WORKSPACE_SANDBOX_READINESS_LINES,
+    workspace_sandbox_readiness_copy,
+)
 from invoice_tool.ui_v2.run_result_display import (
     MSG_ERROR_SUMMARY_SECTION,
     MSG_PRODUCTIVE_HOLD,
@@ -92,6 +101,14 @@ EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgabeordner gewählt."
 PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
 PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
 FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
+
+# Honest sandbox readiness copy — no productive toggle, no folder create/scan.
+SANDBOX_MODE_PREPARED = MSG_SANDBOX_MODE_PREPARED
+SANDBOX_COPIED_DATA_ONLY = MSG_SANDBOX_COPIED_DATA_ONLY
+SANDBOX_NO_ORIGINAL_INPUT = MSG_SANDBOX_NO_ORIGINAL_INPUT
+SANDBOX_PRODUCTIVE_BLOCKED = MSG_SANDBOX_PRODUCTIVE_BLOCKED
+SANDBOX_CORE_DRY_ABSENT = MSG_SANDBOX_CORE_DRY_ABSENT
+SANDBOX_READINESS_LINES = WORKSPACE_SANDBOX_READINESS_LINES
 
 
 @dataclass(frozen=True)
@@ -355,6 +372,9 @@ def build_processing_run_request(
         or None
     )
     resolved_profile = (profile_id or "").strip() or None
+    sandbox_root = (state.workspace_sandbox_root or "").strip() or None
+    original_source = (state.workspace_original_source_folder or "").strip() or None
+    sandbox_mode = bool(state.workspace_sandbox_mode)
     return ProcessingRunRequest(
         input_folder=folder,
         output_folder=output_folder,
@@ -365,6 +385,12 @@ def build_processing_run_request(
         policy_intent=policy_bridge.intent,
         policy_bridge_result=policy_bridge,
         user_confirmed_start=bool(user_confirmed_start),
+        sandbox_mode=sandbox_mode,
+        sandbox_root=sandbox_root,
+        original_source_folder=original_source,
+        copied_data_confirmed=bool(state.workspace_copied_data_confirmed),
+        productive_execution_allowed=False,
+        execution_scope="sandbox" if sandbox_mode else "blocked",
     )
 
 
@@ -400,6 +426,7 @@ class WorkspaceHonestyCopy:
     adapter_hint: str | None = ADAPTER_NOT_CONNECTED_HINT
     policy_intent_status: str | None = None
     policy_intent_hint: str | None = None
+    sandbox_readiness_lines: tuple[str, ...] = ()
 
 
 def workspace_honesty_copy(
@@ -413,6 +440,7 @@ def workspace_honesty_copy(
     status = proc.status
     policy_status = policy_bridge.status if policy_bridge is not None else None
     policy_hint = None
+    sandbox_lines = workspace_sandbox_readiness_copy()
     if policy_bridge is not None and policy_bridge.status in {"incomplete", "blocked"}:
         policy_hint = f"{MSG_POLICY_NOT_READY} {MSG_UNKNOWN_EVIDENCE_REVIEW}"
         if policy_bridge.status == "incomplete":
@@ -430,6 +458,7 @@ def workspace_honesty_copy(
             adapter_hint=None,
             policy_intent_status=policy_status,
             policy_intent_hint=policy_hint,
+            sandbox_readiness_lines=sandbox_lines,
         )
 
     if status == "blocked":
@@ -494,6 +523,11 @@ def workspace_honesty_copy(
         if MSG_PRODUCTIVE_HOLD not in detail:
             detail = f"{MSG_PRODUCTIVE_HOLD} {detail}"
 
+    # Always surface sandbox readiness honestly (no productive toggle / no auto-create).
+    sandbox_block = " ".join(sandbox_lines)
+    if sandbox_block and sandbox_block not in detail:
+        detail = f"{detail} {sandbox_block}"
+
     return WorkspaceHonestyCopy(
         has_real_results=False,
         status_line=status_line,
@@ -506,6 +540,7 @@ def workspace_honesty_copy(
         adapter_hint=ADAPTER_NOT_CONNECTED_HINT,
         policy_intent_status=policy_status,
         policy_intent_hint=policy_hint,
+        sandbox_readiness_lines=sandbox_lines,
     )
 
 
@@ -758,6 +793,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         items.append(inline_warning(readiness.dry_gate_message))
     if readiness.productive_hold and MSG_PRODUCTIVE_HOLD not in (honesty.status_line or ""):
         items.append(inline_warning(MSG_PRODUCTIVE_HOLD))
+    # Honest sandbox readiness — no productive toggle, no auto folder create/scan.
+    for sandbox_line in honesty.sandbox_readiness_lines:
+        items.append(inline_warning(sandbox_line))
     if honesty.status_line:
         items.append(inline_warning(honesty.status_line))
     for hint in run_shell.blocked_hints:

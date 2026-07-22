@@ -24,12 +24,18 @@ from invoice_tool.ui_v2.processing_state import (
     MSG_POLICY_BLOCKED,
     MSG_POLICY_NOT_READY,
     MSG_PRODUCTIVE_NOT_RELEASED,
+    MSG_READY_FOR_SANDBOX_EXECUTION,
     ExecutionGateStatus,
     ProcessingRunState,
     blocked_processing_state,
     idle_processing_state,
     not_configured_processing_state,
     ready_processing_state,
+)
+from invoice_tool.ui_v2.sandbox_processing_gate import (
+    MSG_SANDBOX_CORE_DRY_ABSENT,
+    SandboxPathValidationResult,
+    evaluate_sandbox_gate,
 )
 
 MSG_MISSING_INPUT = "Eingangsordner fehlt. Bitte einen Ordner explizit wählen."
@@ -60,9 +66,21 @@ MSG_READY_LOCAL_ADAPTER = (
 MSG_UNKNOWN_RUN = "Kein aktiver Lauf (run_id unbekannt)."
 # Backward-compatible alias for the required dry-gate wording.
 MSG_CORE_DRY_UNAVAILABLE = MSG_DRY_RUN_UNAVAILABLE
+MSG_READY_SANDBOX_EXECUTION = MSG_READY_FOR_SANDBOX_EXECUTION
 
 # Core dry/no-mutation finding (read-only inspection of run_once): unsupported.
 CORE_DRY_RUN_STATUS: ExecutionGateStatus = "unsupported_without_core_change"
+
+# Map sandbox reason codes onto ProcessingRunState.execution_gate markers.
+_SANDBOX_REASON_TO_GATE: dict[str, ExecutionGateStatus] = {
+    "blocked_missing_sandbox": "blocked_missing_sandbox",
+    "blocked_missing_sandbox_root": "blocked_missing_sandbox",
+    "blocked_missing_copied_data_confirmation": "blocked_missing_copied_data_confirmation",
+    "blocked_original_folder": "blocked_original_folder",
+    "blocked_output_inside_original": "blocked_original_folder",
+    "blocked_productive_execution": "blocked_productive_execution",
+    "ready_for_sandbox_execution": "ready_for_sandbox_execution",
+}
 
 # Path tokens that must never be invented as defaults and are rejected if present.
 # Token/segment checks only — no filesystem access, no directory creation.
@@ -195,7 +213,11 @@ class LocalProcessingAdapter:
         )
 
     def start_run(self, request: ProcessingRunRequest) -> ProcessingRunState:
-        """Start only after validate is ready and user confirmed; never auto-runs."""
+        """Start only after validate is ready and user confirmed; never auto-runs.
+
+        Sandbox gate must approve before any future execution wiring. This task
+        never calls processing-core, never mutates files, and never processes PDFs.
+        """
 
         validated = self.validate_request(request)
         if validated.status in {"not_configured", "blocked"}:
@@ -210,17 +232,54 @@ class LocalProcessingAdapter:
                 core_dry_run_status=dry_status,
             )
 
-        # Productive mutation is not PO-released in this task.
-        if not request.dry_run:
+        # Productive mutation is not PO-released — always blocked.
+        if (
+            not request.dry_run
+            or request.productive_execution_allowed
+            or request.execution_scope == "productive"
+        ):
             return blocked_processing_state(
                 MSG_PRODUCTIVE_NOT_RELEASED,
-                execution_gate="productive_blocked",
+                execution_gate="blocked_productive_execution",
                 dry_run_gate=dry_status,
                 core_dry_run_status=dry_status,
             )
 
-        # Core has no safe dry/no-mutation flag — refuse without importing core.
-        return self._run_core_dry_no_mutation(request)
+        sandbox = self.evaluate_sandbox_gate(request)
+        if not sandbox.approved:
+            return self._blocked_from_sandbox(sandbox, dry_status)
+
+        # Sandbox approved — execution wiring is the next task; still no core call.
+        return ready_processing_state(
+            f"{MSG_READY_SANDBOX_EXECUTION} {MSG_SANDBOX_CORE_DRY_ABSENT}",
+            execution_gate="ready_for_sandbox_execution",
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
+        )
+
+    def evaluate_sandbox_gate(
+        self, request: ProcessingRunRequest
+    ) -> SandboxPathValidationResult:
+        """Pure sandbox confinement check — no FS IO, no core import."""
+
+        return evaluate_sandbox_gate(request)
+
+    def _blocked_from_sandbox(
+        self,
+        sandbox: SandboxPathValidationResult,
+        dry_status: ExecutionGateStatus,
+    ) -> ProcessingRunState:
+        gate = _SANDBOX_REASON_TO_GATE.get(sandbox.reason_code, "blocked_missing_sandbox")
+        # Preserve dry-run absence documentation alongside sandbox blocks.
+        message = sandbox.message
+        if MSG_DRY_RUN_UNAVAILABLE not in message and gate != "blocked_productive_execution":
+            message = f"{message} {MSG_SANDBOX_CORE_DRY_ABSENT}"
+        return blocked_processing_state(
+            message,
+            execution_gate=gate,
+            dry_run_gate=dry_status,
+            core_dry_run_status=dry_status,
+        )
 
     def get_status(self, run_id: str | None) -> ProcessingRunState:
         """Return adapter-memory state only — no filesystem scan."""

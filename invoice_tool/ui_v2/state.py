@@ -85,6 +85,12 @@ class UiV2State:
     workspace_input_folder_source: str = SOURCE_UNSET
     workspace_output_folder_override: str | None = None
     workspace_output_folder_source: str = SOURCE_UNSET
+    # Sandbox contract readiness — defaults keep productive execution blocked.
+    # No automatic folder creation; paths only from explicit future UI wiring.
+    workspace_sandbox_mode: bool = False
+    workspace_sandbox_root: str | None = None
+    workspace_original_source_folder: str | None = None
+    workspace_copied_data_confirmed: bool = False
     workspace_expanded_results: set[str] = field(default_factory=set)
     workspace_rename_drafts: dict[str, str] = field(default_factory=dict)
 

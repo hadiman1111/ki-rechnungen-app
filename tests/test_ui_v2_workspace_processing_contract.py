@@ -16,6 +16,11 @@ from invoice_tool.ui_v2.pages.workspace import (
     ADAPTER_NOT_CONNECTED_HINT,
     EMPTY_INPUT_FOLDER_TEXT,
     EMPTY_OUTPUT_FOLDER_TEXT,
+    SANDBOX_COPIED_DATA_ONLY,
+    SANDBOX_CORE_DRY_ABSENT,
+    SANDBOX_MODE_PREPARED,
+    SANDBOX_NO_ORIGINAL_INPUT,
+    SANDBOX_PRODUCTIVE_BLOCKED,
     START_CTA_LABEL,
     apply_start_processing,
     apply_workspace_input_folder_selection,
@@ -265,6 +270,32 @@ def test_default_state_idle_has_no_fake_results() -> None:
     )
     assert "AMEX" not in (copy.results_detail or "")
     assert copy.adapter_hint == ADAPTER_NOT_CONNECTED_HINT
+
+
+def test_workspace_sandbox_readiness_copy_is_honest() -> None:
+    state = UiV2State()
+    assert state.workspace_sandbox_mode is False
+    assert state.workspace_sandbox_root is None
+    assert state.workspace_copied_data_confirmed is False
+    request = build_processing_run_request(state)
+    assert request.sandbox_mode is False
+    assert request.productive_execution_allowed is False
+    assert request.execution_scope == "blocked"
+
+    copy = workspace_honesty_copy(
+        has_real_results=False,
+        processing_state=idle_processing_state(),
+    )
+    assert SANDBOX_MODE_PREPARED in copy.sandbox_readiness_lines
+    assert SANDBOX_COPIED_DATA_ONLY in copy.sandbox_readiness_lines
+    assert SANDBOX_NO_ORIGINAL_INPUT in copy.sandbox_readiness_lines
+    assert SANDBOX_PRODUCTIVE_BLOCKED in copy.sandbox_readiness_lines
+    assert SANDBOX_CORE_DRY_ABSENT in copy.sandbox_readiness_lines
+    detail = copy.results_detail or ""
+    assert SANDBOX_MODE_PREPARED in detail
+    assert SANDBOX_COPIED_DATA_ONLY in detail
+    for marker in PRIVATE_MARKERS:
+        assert marker not in detail
 
 
 def test_workspace_contract_source_has_no_private_tokens() -> None:

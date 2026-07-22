@@ -11,15 +11,20 @@ from pathlib import Path
 from invoice_tool.saas_product_model import default_classification_policy
 from invoice_tool.ui_v2.local_processing_adapter import (
     CORE_DRY_RUN_STATUS,
-    MSG_CORE_DRY_UNAVAILABLE,
     MSG_MISSING_CONFIGURATION,
     MSG_MISSING_INPUT,
     MSG_MISSING_OUTPUT,
     MSG_MISSING_PROFILE,
     MSG_PRIVATE_OUTPUT_BLOCKED,
     MSG_PRODUCTIVE_NOT_RELEASED,
+    MSG_READY_SANDBOX_EXECUTION,
     MSG_USER_CONFIRMATION_REQUIRED,
     LocalProcessingAdapter,
+)
+from invoice_tool.ui_v2.sandbox_processing_gate import (
+    MSG_BLOCKED_MISSING_SANDBOX,
+    MSG_SANDBOX_CORE_DRY_ABSENT,
+    build_sandbox_run_request,
 )
 from invoice_tool.ui_v2.policy_runtime_bridge import build_runtime_policy_intent
 from invoice_tool.ui_v2.processing_contract import (
@@ -228,7 +233,7 @@ def test_validate_does_not_read_folders_or_process_pdfs(tmp_path: Path) -> None:
     assert list(inbox.iterdir()) == [pdf]
 
 
-def test_start_run_blocked_when_dry_gate_unavailable(tmp_path: Path) -> None:
+def test_start_run_blocked_when_sandbox_missing(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     outbox = tmp_path / "outbox"
     inbox.mkdir()
@@ -250,17 +255,63 @@ def test_start_run_blocked_when_dry_gate_unavailable(tmp_path: Path) -> None:
     newly = after_modules - before_modules
 
     assert started.status == "blocked"
-    assert MSG_DRY_RUN_UNAVAILABLE in started.message
-    assert MSG_CORE_DRY_UNAVAILABLE in started.message
+    assert MSG_BLOCKED_MISSING_SANDBOX in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
     assert started.core_dry_run_status == "unsupported_without_core_change"
     assert started.dry_run_gate == "unsupported_without_core_change"
-    assert started.execution_gate == "unsupported_without_core_change"
+    assert started.execution_gate == "blocked_missing_sandbox"
     assert started.results == tuple()
     assert started.review_items == tuple()
     assert started.run_id is None
     assert list(inbox.iterdir()) == before
     assert pdf.read_bytes() == before_bytes
     assert list(outbox.iterdir()) == before_out
+    for forbidden in (
+        "invoice_tool.processing",
+        "invoice_tool.run",
+        "invoice_tool.routing",
+        "invoice_tool.classification",
+    ):
+        assert forbidden not in newly
+
+
+def test_start_run_sandbox_ready_without_core_call(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    inbox = sandbox / "copied-inbox"
+    outbox = sandbox / "copied-outbox"
+    original = tmp_path / "original-source"
+    inbox.mkdir(parents=True)
+    outbox.mkdir(parents=True)
+    original.mkdir()
+    pdf = inbox / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    before = pdf.read_bytes()
+
+    bridge = build_runtime_policy_intent(default_classification_policy())
+    before_modules = set(sys.modules)
+    adapter = LocalProcessingAdapter()
+    started = adapter.start_run(
+        build_sandbox_run_request(
+            sandbox_root=str(sandbox),
+            input_folder=str(inbox),
+            output_folder=str(outbox),
+            original_source_folder=str(original),
+            profile_id="profile-a",
+            configuration_id="config-a",
+            policy_intent=bridge.intent,
+            policy_bridge_result=bridge,
+        )
+    )
+    newly = set(sys.modules) - before_modules
+
+    assert started.status == "ready"
+    assert started.execution_gate == "ready_for_sandbox_execution"
+    assert MSG_READY_SANDBOX_EXECUTION in started.message
+    assert MSG_SANDBOX_CORE_DRY_ABSENT in started.message
+    assert started.results == tuple()
+    assert started.run_id is None
+    assert pdf.read_bytes() == before
+    assert list(outbox.iterdir()) == []
     for forbidden in (
         "invoice_tool.processing",
         "invoice_tool.run",
@@ -337,7 +388,7 @@ def test_productive_dry_run_false_stays_blocked() -> None:
     started = adapter.start_run(_ready_request(dry_run=False))
     assert started.status == "blocked"
     assert MSG_PRODUCTIVE_NOT_RELEASED in started.message
-    assert started.execution_gate == "productive_blocked"
+    assert started.execution_gate == "blocked_productive_execution"
     assert started.core_dry_run_status == "unsupported_without_core_change"
     assert started.results == tuple()
 
