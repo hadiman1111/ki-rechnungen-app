@@ -42,7 +42,7 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
 )
 from invoice_tool.ui_v2.onboarding import (
-    MSG_NEXT_STEP_PILOT_ACCEPTANCE,
+    MSG_NEXT_STEP_FINAL_RELEASE_GATE,
     TRACK_B_ONBOARDING_STATUS_LINES,
     LocalPilotReadinessViewModel,
     OnboardingChecklistItem,
@@ -160,7 +160,7 @@ SANDBOX_READINESS_LINES = WORKSPACE_SANDBOX_READINESS_LINES
 # Local pilot onboarding panel (Prompt 10) — packaging/status only.
 ONBOARDING_SECTION_LABEL = "Lokale Pilotversion / Onboarding"
 ONBOARDING_STATUS_LINES = TRACK_B_ONBOARDING_STATUS_LINES
-ONBOARDING_NEXT_STEP = MSG_NEXT_STEP_PILOT_ACCEPTANCE
+ONBOARDING_NEXT_STEP = MSG_NEXT_STEP_FINAL_RELEASE_GATE
 
 
 @dataclass(frozen=True)

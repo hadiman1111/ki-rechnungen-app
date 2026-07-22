@@ -8,8 +8,9 @@ from pathlib import Path
 from invoice_tool.ui_v2.onboarding import (
     MSG_EXPORT_PREVIEW_NOT_DATEV,
     MSG_LOCAL_PILOT_SANDBOX,
-    MSG_NEXT_STEP_PILOT_ACCEPTANCE,
+    MSG_NEXT_STEP_FINAL_RELEASE_GATE,
     MSG_ORIGINAL_FOLDERS_PROTECTED,
+    MSG_PILOT_ACCEPTANCE_DONE,
     MSG_PRODUCTIVE_BLOCKED,
     MSG_SAAS_NOT_INCLUDED,
     MSG_STAGE_LOCAL_PILOT,
@@ -116,7 +117,8 @@ def test_workspace_shows_safe_onboarding_checklist() -> None:
     assert "Sandbox-Validierung ausführen." in labels
     assert "Unklare Fälle prüfen." in labels
     assert "Exportvorschau lesen." in labels
-    assert panel.next_step == MSG_NEXT_STEP_PILOT_ACCEPTANCE
+    assert panel.next_step == MSG_NEXT_STEP_FINAL_RELEASE_GATE
+    assert MSG_PILOT_ACCEPTANCE_DONE in build_safe_start_guidance()
     assert panel.implies_saas_ready is False
     assert panel.implies_productive_export is False
     assert panel.has_productive_toggle is False

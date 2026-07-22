@@ -37,6 +37,12 @@ TRACK_B_ONBOARDING_STATUS_LINES = (
 MSG_NEXT_STEP_PILOT_ACCEPTANCE = (
     "Nächster Schritt: Pilot-Acceptance-Gate steht noch aus."
 )
+MSG_NEXT_STEP_FINAL_RELEASE_GATE = (
+    "Nächster Schritt: Finaler Release-Gate steht noch aus."
+)
+MSG_PILOT_ACCEPTANCE_DONE = (
+    "Lokale Pilotversion unter Sandbox-/Kopie-/Nicht-Produktiv-Grenzen abgenommen."
+)
 MSG_REVIEW_IS_MANUAL = (
     "Prüfung ist ein manueller Kontrollfluss, keine automatische Buchungsfreigabe."
 )
@@ -205,7 +211,8 @@ def build_safe_start_guidance() -> tuple[str, ...]:
         MSG_REVIEW_IS_MANUAL,
         MSG_FILENAME_NOT_TRUTH,
         MSG_SAAS_NOT_INCLUDED,
-        MSG_NEXT_STEP_PILOT_ACCEPTANCE,
+        MSG_PILOT_ACCEPTANCE_DONE,
+        MSG_NEXT_STEP_FINAL_RELEASE_GATE,
     )
 
 
@@ -233,7 +240,7 @@ def build_local_pilot_readiness(
         stage_label=MSG_STAGE_LOCAL_PILOT,
         status_lines=TRACK_B_ONBOARDING_STATUS_LINES,
         checklist=checklist,
-        next_step=MSG_NEXT_STEP_PILOT_ACCEPTANCE,
+        next_step=MSG_NEXT_STEP_FINAL_RELEASE_GATE,
         capability_matrix=build_local_pilot_capability_matrix(),
         productive_processing_enabled=False,
         has_productive_toggle=False,
@@ -270,10 +277,12 @@ __all__ = (
     "MSG_EXPORT_PREVIEW_NOT_DATEV",
     "MSG_FILENAME_NOT_TRUTH",
     "MSG_LOCAL_PILOT_SANDBOX",
+    "MSG_NEXT_STEP_FINAL_RELEASE_GATE",
     "MSG_NEXT_STEP_PILOT_ACCEPTANCE",
     "MSG_NO_PRIVATE_DEFAULTS",
     "MSG_NO_PRODUCTIVE_TOGGLE",
     "MSG_ORIGINAL_FOLDERS_PROTECTED",
+    "MSG_PILOT_ACCEPTANCE_DONE",
     "MSG_PRODUCTIVE_BLOCKED",
     "MSG_REVIEW_IS_MANUAL",
     "MSG_SAAS_NOT_INCLUDED",
