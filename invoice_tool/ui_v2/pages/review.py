@@ -13,16 +13,14 @@ from dataclasses import dataclass
 import flet as ft
 
 from invoice_tool.ui_v2.components import (
+    collapsible_details,
     compact_entry_row,
     empty_state,
-    focus_panel,
-    make_info_banner,
     page_header,
     page_scaffold,
     secondary_button,
     section_block,
     stacked_list,
-    summary_alert,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingReviewItem, ProcessingRunState
 from invoice_tool.ui_v2.review_workflow import (
@@ -161,36 +159,33 @@ def build_review_page(state: UiV2State) -> ft.Control:
     vm = build_review_page_vm(state)
     queue = build_review_queue_view_model(state.processing_run_state)
     items: list[ft.Control] = [
-        page_header(vm.title, subtitle=vm.subtitle),
-        make_info_banner(
-            f"{MSG_REVIEW_FROM_REAL_RUN} {MSG_REVIEW_NO_FILE_MUTATION} "
-            f"{MSG_UNCLEAR_CASES_STAY_REVIEW} {MSG_BUCKETS_SEPARATED}"
-        ),
+        page_header(vm.title, subtitle="Unklare Fälle aus dem Lauf prüfen."),
     ]
 
     if vm.empty:
-        empty_detail = (
-            f"{vm.empty_detail or EMPTY_REVIEW_DETAIL} {MSG_REVIEW_NO_FILE_MUTATION}"
-        )
         items.append(
-            section_block(
-                "Prüfwarteschlange",
-                focus_panel(
-                    empty_state(
-                        vm.empty_title or EMPTY_REVIEW_TITLE,
-                        detail=empty_detail,
-                        icon=ft.Icons.FACT_CHECK_OUTLINED,
-                    ),
-                ),
+            empty_state(
+                vm.empty_title or EMPTY_REVIEW_TITLE,
+                detail=None,
+                icon=ft.Icons.FACT_CHECK_OUTLINED,
+                compact=True,
             )
         )
-        for note in vm.separation_notes:
-            items.append(summary_alert(note))
+        items.append(
+            collapsible_details(
+                MSG_REVIEW_FROM_REAL_RUN,
+                MSG_REVIEW_NO_FILE_MUTATION,
+                MSG_UNCLEAR_CASES_STAY_REVIEW,
+                MSG_BUCKETS_SEPARATED,
+                *vm.separation_notes,
+                title="Details anzeigen",
+            )
+        )
         items.append(
             section_block(
-                "Prüfaktionen (noch nicht verbunden)",
+                "Prüfaktionen",
                 _action_row(queue),
-                subtitle="Keine Speicherung, keine Dateiänderung, keine PDF-Verarbeitung",
+                subtitle="Noch nicht verbunden",
             )
         )
         return page_scaffold(*items)
@@ -200,31 +195,31 @@ def build_review_page(state: UiV2State) -> ft.Control:
         fields: list[tuple[str, str]] = [
             ("Dokument-ID", detail.document_id),
             ("Grund", detail.reason),
-            ("Vorgeschlagener Status", detail.suggested_status),
-            ("Nachweis", detail.evidence_summary),
+            ("Status", detail.suggested_status),
             ("Nächster Schritt", detail.next_action_hint),
         ]
         if detail.source_run_id:
             fields.append(("Lauf-ID", detail.source_run_id))
-        if detail.severity and detail.severity != detail.suggested_status:
-            fields.append(("Schwere", detail.severity))
         review_rows.append(compact_entry_row(detail.document_label, *fields))
 
     items.append(
         section_block(
             f"{vm.review_count} Dokument(e) zur Prüfung",
             stacked_list(*review_rows),
-            subtitle="Aus dem aktuellen Laufstatus — ohne Dateiänderung",
         )
     )
-    for note in vm.separation_notes:
-        items.append(summary_alert(note))
-    items.append(make_info_banner(MSG_REVIEW_NO_FILE_MUTATION))
+    items.append(
+        collapsible_details(
+            MSG_REVIEW_NO_FILE_MUTATION,
+            *vm.separation_notes,
+            title="Details anzeigen",
+        )
+    )
     items.append(
         section_block(
-            "Prüfaktionen (noch nicht verbunden)",
+            "Prüfaktionen",
             _action_row(queue),
-            subtitle="Keine Speicherung, keine Dateiänderung, keine PDF-Verarbeitung",
+            subtitle="Noch nicht verbunden",
         )
     )
     return page_scaffold(*items)

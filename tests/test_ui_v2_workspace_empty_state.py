@@ -82,9 +82,9 @@ def test_workspace_empty_state_says_no_run_occurred() -> None:
     assert EMPTY_NO_RUN_STATUS in copy.status_line
     assert EMPTY_NO_RESULTS_TITLE in copy.status_line
     assert copy.results_title == EMPTY_NO_RUN_TITLE
-    assert EMPTY_NO_RUN_DETAIL in (copy.results_detail or "")
+    assert EMPTY_NO_RUN_TITLE == "Noch kein Laufergebnis."
     assert "Sandbox-Modus: vorbereitet" in (copy.results_detail or "")
-    assert "Noch kein Verarbeitungslauf" in (copy.results_title or "")
+    assert "Noch kein Laufergebnis" in (copy.results_title or "")
     assert "echten Lauf" in (copy.results_detail or "")
     assert "Eingangs- und Ausgabeordner" in (copy.results_detail or "")
     assert "Prüfbereich" in (copy.results_detail or "")

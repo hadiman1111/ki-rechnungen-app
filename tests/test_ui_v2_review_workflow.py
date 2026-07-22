@@ -58,7 +58,7 @@ def test_review_page_empty_state_is_honest() -> None:
     assert vm.empty is True
     assert vm.empty_title == EMPTY_REVIEW_TITLE
     assert vm.empty_detail == EMPTY_REVIEW_DETAIL
-    assert vm.empty_title == "Noch keine Prüffälle vorhanden."
+    assert vm.empty_title == "Keine Prüffälle vorhanden."
     assert vm.empty_detail == "Prüffälle entstehen erst aus einem echten Verarbeitungslauf."
     assert MSG_REVIEW_FROM_REAL_RUN in vm.honest_copy
     assert MSG_REVIEW_NO_FILE_MUTATION in vm.honest_copy

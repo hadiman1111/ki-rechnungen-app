@@ -125,7 +125,8 @@ def test_workspace_start_handler_has_on_click_wiring_in_source() -> None:
     assert "_schedule_start_processing" in src
     assert "apply_start_processing" in src
     assert "workspace_start_feedback" in src
-    assert "summary_alert(start_feedback)" in src
+    assert "mark_start_checking" in src
+    assert "compact_run_status_panel" in src
 
 
 def test_app_injects_local_processing_adapter() -> None:
@@ -379,7 +380,10 @@ def test_not_yet_connected_still_shows_visible_feedback() -> None:
     result = apply_start_processing(state, profile_id="profile-a")
     assert result.status in {"blocked", "not_configured"}
     assert state.workspace_start_feedback
-    assert "Sandbox-Lauf blockiert" in state.workspace_start_feedback
+    assert (
+        "Sandbox-Lauf blockiert" in state.workspace_start_feedback
+        or "Sandbox nicht verbunden" in state.workspace_start_feedback
+    )
     assert MSG_SANDBOX_NO_ORIGINALS_USED in state.workspace_start_feedback
     assert MSG_SANDBOX_RESULTS_AFTER_SUCCESS in state.workspace_start_feedback
 

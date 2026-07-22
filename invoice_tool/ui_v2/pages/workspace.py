@@ -14,9 +14,9 @@ from typing import Callable, Literal
 import flet as ft
 from invoice_tool.ui_v2.adapters.folder_picker_adapter import choose_target_folder
 from invoice_tool.ui_v2.components import (
-    compact_checklist_block,
-    compact_hint_block,
+    collapsible_details,
     compact_info_row,
+    compact_run_status_panel,
     compact_status_banner,
     dense_card,
     display_path_value,
@@ -28,9 +28,7 @@ from invoice_tool.ui_v2.components import (
     make_destination_list_row,
     make_ergebnis_row,
     make_full_width_panel,
-    make_metadata_row,
     make_section_label,
-    make_settings_panel,
     make_tab_bar,
     make_workspace_folder_selection_panel,
     make_workspace_run_panel,
@@ -122,7 +120,6 @@ from invoice_tool.ui_v2.run_result_display import (
     MSG_RESULTS_SECTION,
     MSG_REVIEW_DETAILS_HINT,
     MSG_REVIEW_SUMMARY_SECTION,
-    MSG_RUN_SUMMARY_SECTION,
     RunResultDisplayShellVM,
     build_run_result_display_shell,
 )
@@ -132,8 +129,12 @@ from invoice_tool.ui_v2.view_models import ResultSummaryVM, UiV2ReadOnlySnapshot
 ErgebnisAction = Literal["neue-konfiguration", "konfiguration-bearbeiten"]
 
 # Honest empty-state copy (generic product UI-v2 — no private/demo run data).
-EMPTY_NO_RUN_TITLE = "Noch kein Verarbeitungslauf in dieser Oberfläche."
+EMPTY_NO_RUN_TITLE = "Noch kein Laufergebnis."
 EMPTY_NO_RUN_DETAIL = (
+    "Ordner wählen und Sandbox-Lauf starten. Ergebnisse erscheinen erst nach "
+    "einem erfolgreichen Lauf. Unklare Fälle bleiben zur Prüfung."
+)
+EMPTY_NO_RUN_DETAIL_EXPANDED = (
     "Wähle Eingangs- und Ausgabeordner explizit und starte eine Verarbeitung erst, "
     "wenn Dry-Run und produktive Ausführung freigegeben sind. "
     "Ergebnisse erscheinen hier erst nach einem echten Lauf. "
@@ -145,10 +146,17 @@ EMPTY_NO_RUN_DETAIL = (
 EMPTY_NO_RESULTS_TITLE = "Keine Ergebnisse vorhanden"
 EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
 EMPTY_NO_RUN_STATUS = "Kein Lauf gestartet"
+EMPTY_RESULT_COMPACT_TITLE = "Noch kein Laufergebnis."
 START_CTA_LABEL = "Sandbox-Lauf starten"
 ADAPTER_NOT_CONNECTED_HINT = MSG_BLOCKED_ADAPTER
 
 # Preferred CTA feedback copy — always visible after click (no silent no-op).
+MSG_RUN_STATUS_READY = "Bereit"
+MSG_RUN_STATUS_CHECKING = "Prüfung läuft …"
+MSG_RUN_STATUS_BLOCKED = "Blockiert"
+MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED = "Sandbox nicht verbunden"
+MSG_RUN_STATUS_COMPLETED = "Abgeschlossen"
+MSG_RUN_STATUS_FAILED = "Fehler"
 MSG_SANDBOX_STARTED = "Sandbox-Lauf gestartet."
 MSG_SANDBOX_BLOCKED_FOLDERS = (
     "Sandbox-Lauf blockiert: Bitte Eingangsordner und Ausgangsordner prüfen."
@@ -157,11 +165,14 @@ MSG_SANDBOX_BLOCKED_PRODUCTIVE = (
     "Sandbox-Lauf blockiert: Produktive Verarbeitung ist nicht freigegeben."
 )
 MSG_SANDBOX_BLOCKED_CORE_BRIDGE = (
-    "Sandbox-Lauf blockiert: Die echte Verarbeitung ist in Track B noch nicht "
-    "sicher verbunden."
+    "Echte Verarbeitung noch nicht sicher verbunden."
 )
 MSG_SANDBOX_BRIDGE_NOT_CONNECTED = (
-    "Sandbox-Ausführung ist noch nicht mit der Verarbeitung verbunden."
+    "Sandbox nicht verbunden: Die echte Verarbeitung ist in Track B noch nicht "
+    "sicher angebunden."
+)
+MSG_SANDBOX_NEXT_CORE_BRIDGE = (
+    "Nächster technischer Schritt: sichere Core-Bridge für Sandbox/Dry-Run."
 )
 MSG_SANDBOX_NO_ORIGINALS_USED = "Keine Originalordner wurden verwendet."
 MSG_SANDBOX_RESULTS_AFTER_SUCCESS = (
@@ -172,6 +183,9 @@ MSG_SANDBOX_BLOCKED_PROFILE = (
 )
 MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
 MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
+MSG_EXPORT_DISCLAIMER_COMPACT = (
+    "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
+)
 
 # Explicit folder selection copy — no private/default paths.
 EMPTY_INPUT_FOLDER_TEXT = "Kein Eingangsordner gewählt."
@@ -182,7 +196,8 @@ FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
 RUN_REPORT_SECTION_LABEL = "Ergebnisbericht"
 EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
 EXPORT_ACTION_LABEL = "Ergebnisvorschau exportieren"
-START_FEEDBACK_SECTION_LABEL = "Sandbox-Start"
+START_FEEDBACK_SECTION_LABEL = "Laufstatus"
+ONBOARDING_SECTION_LABEL_COMPACT = "Pilotstatus"
 
 # Honest sandbox readiness copy — no productive toggle, no folder create/scan.
 SANDBOX_COPIED_RUN = MSG_SANDBOX_COPIED_RUN
@@ -412,21 +427,25 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
         _refresh()
 
     rows: list[ft.Control] = [
-        make_metadata_row("Status", report.status_label),
-        make_metadata_row("Lauf-ID", report.run_id or "—"),
+        compact_info_row("Status", report.status_label),
+        compact_info_row("Lauf-ID", report.run_id or "—"),
     ]
     for label, value in _report_item_lines(report):
-        rows.append(make_metadata_row(label, value))
-    rows.append(make_metadata_row("Zusammenfassung", report.user_summary.detail))
+        rows.append(compact_info_row(label, value))
+    rows.append(compact_info_row("Zusammenfassung", report.user_summary.detail))
     panel_controls: list[ft.Control] = [
         make_section_label(RUN_REPORT_SECTION_LABEL),
-        make_settings_panel(*rows),
-        helper_text(MSG_EXPORT_IS_PREVIEW),
-        helper_text(MSG_EXPORT_FROM_REAL_RUN),
-        helper_text(MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS),
-        helper_text(MSG_PLANNED_DESTINATION_HINT),
-        helper_text(MSG_CLARITY_BUCKETS_SEPARATED),
-        helper_text(MSG_CLARITY_FILENAME_NOT_TRUTH),
+        dense_card(*rows),
+        helper_text(MSG_EXPORT_DISCLAIMER_COMPACT),
+        collapsible_details(
+            MSG_EXPORT_IS_PREVIEW,
+            MSG_EXPORT_FROM_REAL_RUN,
+            MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
+            MSG_PLANNED_DESTINATION_HINT,
+            MSG_CLARITY_BUCKETS_SEPARATED,
+            MSG_CLARITY_FILENAME_NOT_TRUTH,
+            title="Export-Details anzeigen",
+        ),
     ]
     if report.export_available:
         export_field = ft.TextField(
@@ -621,8 +640,49 @@ def prepare_sandbox_intent_for_cta(state: UiV2State) -> None:
             state.workspace_sandbox_root = derived
 
 
-def build_start_button_feedback(result: ProcessingRunState) -> str:
-    """Map ProcessingRunState into preferred German CTA feedback (always visible)."""
+@dataclass(frozen=True)
+class StartInteractionFeedback:
+    """Structured start-button feedback — primary line + secondary details."""
+
+    interaction_status: str
+    status_label: str
+    primary: str
+    details: tuple[str, ...]
+    tone: str
+
+    @property
+    def combined(self) -> str:
+        parts = [self.primary, *self.details]
+        return " ".join(part for part in parts if part).strip()
+
+
+_DEFAULT_SAFETY_DETAILS = (
+    MSG_SANDBOX_NO_ORIGINALS_USED,
+    MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+    MSG_SANDBOX_NEXT_CORE_BRIDGE,
+)
+
+
+def _feedback(
+    *,
+    interaction_status: str,
+    status_label: str,
+    primary: str,
+    details: tuple[str, ...] = (),
+    tone: str = "blocked",
+) -> StartInteractionFeedback:
+    cleaned = tuple(dict.fromkeys(item for item in details if str(item or "").strip()))
+    return StartInteractionFeedback(
+        interaction_status=interaction_status,
+        status_label=status_label,
+        primary=primary.strip(),
+        details=cleaned,
+        tone=tone,
+    )
+
+
+def build_start_interaction_feedback(result: ProcessingRunState) -> StartInteractionFeedback:
+    """Map ProcessingRunState into compact primary + secondary details."""
 
     message = (result.message or "").strip()
     status = result.status
@@ -631,53 +691,83 @@ def build_start_button_feedback(result: ProcessingRunState) -> str:
     blob = f"{message} {errors}".lower()
 
     if status == "completed":
-        parts = [MSG_SANDBOX_STARTED, MSG_SANDBOX_COMPLETED, MSG_SANDBOX_NO_ORIGINALS_USED]
-        if message:
-            parts.append(message)
-        return " ".join(parts)
+        return _feedback(
+            interaction_status="completed",
+            status_label=MSG_RUN_STATUS_COMPLETED,
+            primary=MSG_SANDBOX_COMPLETED,
+            details=(MSG_SANDBOX_STARTED, MSG_SANDBOX_NO_ORIGINALS_USED, message),
+            tone="completed",
+        )
 
     if status in {"running", "ready"}:
-        return f"{MSG_SANDBOX_STARTED} {message}".strip()
+        return _feedback(
+            interaction_status="checking",
+            status_label=MSG_RUN_STATUS_CHECKING,
+            primary=message or MSG_SANDBOX_STARTED,
+            details=_DEFAULT_SAFETY_DETAILS,
+            tone="checking",
+        )
 
     unbound = (
         "sandbox_core_runner_unbound" in errors
         or MSG_SANDBOX_RUNNER_UNBOUND in message
         or "noch nicht mit der verarbeitung verbunden" in blob
         or "noch nicht sicher verbunden" in blob
+        or "noch nicht sicher angebunden" in blob
         or (status == "failed" and gate == "ready_for_sandbox_execution")
     )
     if unbound or status == "failed":
-        if unbound or "sandbox" in blob or "core" in blob or "verbunden" in blob:
-            return (
-                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
-                f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-            ).strip()
-        return (
-            f"{MSG_SANDBOX_FAILED} {message} "
-            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        if unbound or "sandbox" in blob or "core" in blob or "verbunden" in blob or "angebunden" in blob:
+            return _feedback(
+                interaction_status="sandbox_not_connected",
+                status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
+                primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+                details=(
+                    MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
+                    MSG_SANDBOX_NO_ORIGINALS_USED,
+                    MSG_SANDBOX_NEXT_CORE_BRIDGE,
+                    MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+                ),
+                tone="sandbox_not_connected",
+            )
+        return _feedback(
+            interaction_status="failed",
+            status_label=MSG_RUN_STATUS_FAILED,
+            primary=f"{MSG_SANDBOX_FAILED} {message}".strip(),
+            details=_DEFAULT_SAFETY_DETAILS,
+            tone="failed",
+        )
 
     if (
         gate in {"blocked_productive_execution", "productive_blocked"}
         or MSG_PRODUCTIVE_NOT_RELEASED in message
         or ("produktive" in blob and "nicht freigegeben" in blob)
     ):
-        return (
-            f"{MSG_SANDBOX_BLOCKED_PRODUCTIVE} {MSG_SANDBOX_NO_ORIGINALS_USED} "
-            f"{MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        return _feedback(
+            interaction_status="blocked",
+            status_label=MSG_RUN_STATUS_BLOCKED,
+            primary=MSG_SANDBOX_BLOCKED_PRODUCTIVE,
+            details=_DEFAULT_SAFETY_DETAILS,
+            tone="blocked",
+        )
 
-    # Adapter / core-bridge gaps (exact adapter marker — avoid matching "Verarbeitungsadapter").
     if (
         MSG_BLOCKED_ADAPTER in message
         or "noch nicht angebunden" in blob
         or "lauf-adapter" in blob
     ):
-        detail = message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE
-        return (
-            f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
-            f"{detail} {MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        return _feedback(
+            interaction_status="sandbox_not_connected",
+            status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
+            primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+            details=(
+                message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
+                MSG_SANDBOX_NO_ORIGINALS_USED,
+                MSG_SANDBOX_NEXT_CORE_BRIDGE,
+                MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+            ),
+            tone="sandbox_not_connected",
+        )
 
     missing_folders = (
         MSG_MISSING_INPUT in message
@@ -689,32 +779,74 @@ def build_start_button_feedback(result: ProcessingRunState) -> str:
         or (status == "not_configured" and "ordner" in blob)
     )
     if missing_folders:
-        detail = message or MSG_SANDBOX_BLOCKED_FOLDERS
-        return (
-            f"{MSG_SANDBOX_BLOCKED_FOLDERS} {detail} "
-            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        return _feedback(
+            interaction_status="blocked",
+            status_label=MSG_RUN_STATUS_BLOCKED,
+            primary=MSG_SANDBOX_BLOCKED_FOLDERS,
+            details=(message or MSG_SANDBOX_BLOCKED_FOLDERS, *_DEFAULT_SAFETY_DETAILS),
+            tone="blocked",
+        )
 
     if "profil" in blob or "konfiguration" in blob or status == "not_configured":
-        detail = message or MSG_SANDBOX_BLOCKED_PROFILE
-        return (
-            f"{MSG_SANDBOX_BLOCKED_PROFILE} {detail} "
-            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        return _feedback(
+            interaction_status="blocked",
+            status_label=MSG_RUN_STATUS_BLOCKED,
+            primary=MSG_SANDBOX_BLOCKED_PROFILE,
+            details=(message or MSG_SANDBOX_BLOCKED_PROFILE, *_DEFAULT_SAFETY_DETAILS),
+            tone="blocked",
+        )
 
     if status == "blocked":
-        detail = message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE
-        return (
-            f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
-            f"{detail} {MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-        ).strip()
+        return _feedback(
+            interaction_status="sandbox_not_connected",
+            status_label=MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED,
+            primary=MSG_SANDBOX_BRIDGE_NOT_CONNECTED,
+            details=(
+                message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE,
+                MSG_SANDBOX_NO_ORIGINALS_USED,
+                MSG_SANDBOX_NEXT_CORE_BRIDGE,
+                MSG_SANDBOX_RESULTS_AFTER_SUCCESS,
+            ),
+            tone="sandbox_not_connected",
+        )
 
-    # Fallback — never silent: always surface adapter/run message.
     detail = message or EMPTY_NO_RUN_STATUS
-    return (
-        f"Sandbox-Lauf blockiert: {detail} "
-        f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
-    ).strip()
+    return _feedback(
+        interaction_status="blocked",
+        status_label=MSG_RUN_STATUS_BLOCKED,
+        primary=f"Sandbox-Lauf blockiert: {detail}",
+        details=_DEFAULT_SAFETY_DETAILS,
+        tone="blocked",
+    )
+
+
+def build_start_button_feedback(result: ProcessingRunState) -> str:
+    """Map ProcessingRunState into preferred German CTA feedback (always visible)."""
+
+    return build_start_interaction_feedback(result).combined
+
+
+def mark_start_checking(state: UiV2State) -> None:
+    """Immediately surface checking state before the adapter returns."""
+
+    state.workspace_run_interaction_status = "checking"
+    state.workspace_start_feedback_primary = MSG_RUN_STATUS_CHECKING
+    state.workspace_start_feedback = MSG_RUN_STATUS_CHECKING
+    state.workspace_start_feedback_details = [
+        MSG_SANDBOX_NO_ORIGINALS_USED,
+        MSG_SANDBOX_NEXT_CORE_BRIDGE,
+    ]
+    state.processing_run_state = ProcessingRunState(
+        status="running",
+        message=MSG_RUN_STATUS_CHECKING,
+        run_id=state.processing_run_state.run_id,
+        results=tuple(state.processing_run_state.results or ()),
+        review_items=tuple(state.processing_run_state.review_items or ()),
+        errors=tuple(state.processing_run_state.errors or ()),
+        execution_gate=state.processing_run_state.execution_gate,
+        dry_run_gate=state.processing_run_state.dry_run_gate,
+        core_dry_run_status=state.processing_run_state.core_dry_run_status,
+    )
 
 
 def build_processing_run_request(
@@ -773,6 +905,7 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
     Still no productive execution and no original-folder mutation.
     """
 
+    mark_start_checking(state)
     prepare_sandbox_intent_for_cta(state)
     request = build_processing_run_request(
         state,
@@ -780,7 +913,8 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
         user_confirmed_start=True,
     )
     result = state.processing_service.start_run(request)
-    feedback = build_start_button_feedback(result)
+    interaction = build_start_interaction_feedback(result)
+    feedback = interaction.combined
     # Keep adapter status/results; surface preferred German CTA copy in message.
     state.processing_run_state = ProcessingRunState(
         status=result.status,
@@ -793,6 +927,9 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
         dry_run_gate=result.dry_run_gate,
         core_dry_run_status=result.core_dry_run_status,
     )
+    state.workspace_run_interaction_status = interaction.interaction_status
+    state.workspace_start_feedback_primary = interaction.primary
+    state.workspace_start_feedback_details = list(interaction.details)
     state.workspace_start_feedback = feedback
     return state.processing_run_state
 
@@ -900,7 +1037,7 @@ def workspace_honesty_copy(
         status_line = f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}."
         if proc.message and proc.message not in {MSG_IDLE, ""}:
             status_line = f"{proc.message} {EMPTY_NO_RESULTS_TITLE}."
-        detail = EMPTY_NO_RUN_DETAIL
+        detail = EMPTY_NO_RUN_DETAIL_EXPANDED
         if policy_hint:
             detail = f"{policy_hint} {detail}"
 
@@ -982,6 +1119,9 @@ def _schedule_start_processing(
     profile_id: str | None,
 ) -> Callable[[ft.ControlEvent], None]:
     def _handler(_event: ft.ControlEvent) -> None:
+        # Immediate visible transition before the adapter finishes.
+        mark_start_checking(state)
+        refresh()
         apply_start_processing(state, profile_id=profile_id)
         refresh()
 
@@ -1123,9 +1263,10 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             tab_blocks.append(
                 make_full_width_panel(
                     empty_state(
-                        honesty.results_title or EMPTY_NO_RUN_TITLE,
-                        detail=honesty.results_detail or EMPTY_NO_RUN_DETAIL,
+                        EMPTY_RESULT_COMPACT_TITLE,
+                        detail=None,
                         icon=ft.Icons.INBOX_OUTLINED,
+                        compact=True,
                     )
                 )
             )
@@ -1166,86 +1307,100 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 )
             tab_blocks.append(make_full_width_panel(ft.Column(result_rows, spacing=0)))
 
+    interaction_status = (state.workspace_run_interaction_status or "idle").strip() or "idle"
+    primary_feedback = (state.workspace_start_feedback_primary or "").strip()
+    if not primary_feedback and state.processing_run_state.status != "idle":
+        primary_feedback = (state.processing_run_state.message or "").strip()
+    detail_feedback = list(state.workspace_start_feedback_details or [])
+    if interaction_status == "idle" and not primary_feedback:
+        status_label = MSG_RUN_STATUS_READY
+        primary_feedback = "Ordner wählen und Sandbox-Lauf starten."
+        tone = "ready"
+        detail_feedback = [
+            MSG_SANDBOX_NO_ORIGINALS_USED,
+            MSG_SANDBOX_NEXT_CORE_BRIDGE,
+            *list(honesty.sandbox_readiness_lines[:3]),
+        ]
+    elif interaction_status == "checking":
+        status_label = MSG_RUN_STATUS_CHECKING
+        primary_feedback = primary_feedback or MSG_RUN_STATUS_CHECKING
+        tone = "checking"
+    elif interaction_status == "sandbox_not_connected":
+        status_label = MSG_RUN_STATUS_SANDBOX_NOT_CONNECTED
+        primary_feedback = primary_feedback or MSG_SANDBOX_BRIDGE_NOT_CONNECTED
+        tone = "sandbox_not_connected"
+    elif interaction_status == "completed":
+        status_label = MSG_RUN_STATUS_COMPLETED
+        tone = "completed"
+    elif interaction_status == "failed":
+        status_label = MSG_RUN_STATUS_FAILED
+        tone = "failed"
+    else:
+        status_label = MSG_RUN_STATUS_BLOCKED
+        tone = "blocked"
+
+    # Secondary workflow / sandbox lines stay collapsed — not a permanent bullet wall.
+    sandbox_detail_lines: list[str] = []
+    for line in (
+        *honesty.sandbox_readiness_lines,
+        readiness.dry_gate_message if readiness.dry_gate_blocked else None,
+        MSG_PRODUCTIVE_HOLD if readiness.productive_hold else None,
+        *run_shell.blocked_hints,
+        honesty.policy_intent_hint
+        if honesty.policy_intent_status in {"incomplete", "blocked"}
+        else None,
+        *detail_feedback,
+    ):
+        text = str(line or "").strip()
+        if text and text not in sandbox_detail_lines and text != primary_feedback:
+            sandbox_detail_lines.append(text)
+
+    run_status_panel = compact_run_status_panel(
+        status_label=status_label,
+        primary_reason=primary_feedback,
+        details=tuple(sandbox_detail_lines),
+        tone=tone,
+        details_title="Details anzeigen",
+    )
+
     onboarding_panel = ft.Column(
         [
             compact_status_banner(
                 "Lokale Pilotversion",
                 onboarding.compact_status_items,
-                detail=MSG_SAAS_NOT_INCLUDED,
             ),
-            compact_checklist_block(
-                tuple((item.done, item.label) for item in onboarding.checklist),
-            ),
-            dense_card(
-                compact_info_row("Nächster Schritt", onboarding.next_step),
+            collapsible_details(
+                MSG_SAAS_NOT_INCLUDED,
+                onboarding.next_step,
+                *[item.label for item in onboarding.checklist],
+                title="Pilot-Details anzeigen",
             ),
         ],
-        spacing=4,
+        spacing=2,
         tight=True,
     )
 
     items: list[ft.Control] = [
         page_header(
             "Arbeitsbereich",
-            subtitle="Dokumente auswählen, verarbeiten und Ergebnisse prüfen.",
+            subtitle="Ordner wählen, Sandbox starten, Ergebnis prüfen.",
         ),
-        make_context_strip(("Profil", profile_name), ("Erkennungsmodell", scan_model)),
-        make_section_label(onboarding.section_label),
+        make_context_strip(("Profil", profile_name), ("Modell", scan_model)),
+        make_section_label(ONBOARDING_SECTION_LABEL_COMPACT),
         onboarding_panel,
         make_section_label(FOLDER_SELECTION_SECTION_LABEL),
         folder_selection_panel,
-        make_section_label(MSG_RUN_SUMMARY_SECTION),
+        make_section_label(START_FEEDBACK_SECTION_LABEL),
+        run_status_panel,
         make_context_strip(
-            ("Status", readiness.run_status_label),
-            ("Meldung", readiness.run_message),
             ("Eingang", "gewählt" if readiness.input_folder_selected else "fehlt"),
             ("Ausgabe", "gewählt" if readiness.output_folder_selected else "fehlt"),
-        ),
-        make_context_strip(
             ("Ergebnisse", str(readiness.result_count)),
             ("Prüffälle", str(readiness.review_count)),
-            ("Fehler", str(readiness.error_count)),
-            (
-                "Dry-Gate",
-                "blockiert" if readiness.dry_gate_blocked else "nicht bewertet",
-            ),
         ),
+        run_panel,
     ]
     items.extend(_build_run_report_panel(state, run_report))
-    items.append(make_section_label("Workflow"))
-    sandbox_hint_lines = list(honesty.sandbox_readiness_lines)
-    if readiness.dry_gate_blocked and readiness.dry_gate_message:
-        sandbox_hint_lines.append(readiness.dry_gate_message)
-    if readiness.productive_hold and MSG_PRODUCTIVE_HOLD not in (honesty.status_line or ""):
-        sandbox_hint_lines.append(MSG_PRODUCTIVE_HOLD)
-    if honesty.status_line:
-        sandbox_hint_lines.append(honesty.status_line)
-    for hint in run_shell.blocked_hints:
-        if hint and hint not in (honesty.status_line or ""):
-            sandbox_hint_lines.append(hint)
-    if (
-        not has_real_results
-        and honesty.policy_intent_hint
-        and honesty.policy_intent_hint not in (honesty.status_line or "")
-        and honesty.policy_intent_status in {"incomplete", "blocked"}
-    ):
-        sandbox_hint_lines.append(honesty.policy_intent_hint)
-    if (
-        not has_real_results
-        and state.processing_run_state.status in {"blocked", "not_configured"}
-        and state.processing_run_state.message
-    ):
-        # Surface contract feedback after CTA without inventing result rows.
-        if state.processing_run_state.message not in (honesty.status_line or ""):
-            sandbox_hint_lines.append(state.processing_run_state.message)
-    # One compact hint block instead of many stacked warning cards.
-    deduped_hints: list[str] = []
-    for line in sandbox_hint_lines:
-        text = str(line or "").strip()
-        if text and text not in deduped_hints:
-            deduped_hints.append(text)
-    if deduped_hints:
-        items.append(compact_hint_block(*deduped_hints, title="Sandbox / Laufstatus"))
     if run_shell.review.has_items:
         items.append(
             summary_alert(
@@ -1256,24 +1411,15 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     if run_shell.errors.has_items:
         items.append(
             summary_alert(
-                f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count}. "
-                f"{MSG_CLARITY_BUCKETS_SEPARATED}"
+                f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count}."
             )
         )
     if has_real_results and contract_display:
         items.append(make_section_label(MSG_RESULTS_SECTION))
-    # CTA feedback must sit next to the start button — never silent after click.
-    start_feedback = (state.workspace_start_feedback or "").strip()
-    if not start_feedback and state.processing_run_state.status != "idle":
-        start_feedback = (state.processing_run_state.message or "").strip()
-    if start_feedback:
-        items.append(make_section_label(START_FEEDBACK_SECTION_LABEL))
-        items.append(summary_alert(start_feedback))
     items.extend(
         [
-            run_panel,
             tab_bar,
-            ft.Column(tab_blocks, spacing=10),
+            ft.Column(tab_blocks, spacing=4),
         ]
     )
 

@@ -248,16 +248,17 @@ def test_state_export_run_report_sets_feedback(tmp_path: Path) -> None:
 
 
 def test_settings_export_section_points_to_workspace_report() -> None:
+    from invoice_tool.ui_v2.pages.settings import EXPORT_SECTION_DETAIL_EXPANDED
+
     vm = build_settings_page_vm(UiV2State())
     export_sections = [section for section in vm.sections if section.title == "Export"]
     assert len(export_sections) == 1
     assert export_sections[0].detail == EXPORT_SECTION_DETAIL
-    assert "Arbeitsbereich" in EXPORT_SECTION_DETAIL
-    assert "erkannt" in EXPORT_SECTION_DETAIL
-    assert "unklar" in EXPORT_SECTION_DETAIL
-    assert "fehlgeschlagen" in EXPORT_SECTION_DETAIL
-    assert MSG_EXPORT_IS_PREVIEW in EXPORT_SECTION_DETAIL
+    assert EXPORT_SECTION_DETAIL == "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
     assert "DATEV" in EXPORT_SECTION_DETAIL
+    assert "Arbeitsbereich" in EXPORT_SECTION_DETAIL_EXPANDED
+    assert "erkannt" in EXPORT_SECTION_DETAIL_EXPANDED
+    assert MSG_EXPORT_IS_PREVIEW in EXPORT_SECTION_DETAIL_EXPANDED
 
 
 def test_module_has_no_processing_core_imports() -> None:

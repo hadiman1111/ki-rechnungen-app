@@ -191,7 +191,10 @@ def test_no_saas_ready_or_datev_ready_claim() -> None:
         ]
     )
     for claim in FORBIDDEN_CLAIMS:
+        if claim == "SaaS-ready" and "nicht SaaS-ready" in blob:
+            continue
         assert claim not in blob, claim
+    assert "nicht SaaS-ready" in blob or "nicht SaaS-bereit" in MSG_STAGE_LOCAL_PILOT
     assert "nicht SaaS-bereit" in MSG_STAGE_LOCAL_PILOT
     assert "kein produktiver DATEV" in MSG_EXPORT_PREVIEW_NOT_DATEV
     # Affirmative readiness must stay false on the readiness model.

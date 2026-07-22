@@ -49,7 +49,7 @@ def test_profiles_page_source_contains_generic_policy_copy() -> None:
     assert "MSG_PAYMENT_BUSINESS_PER_PROFILE" in src
     assert "MSG_WITHOUT_EVIDENCE_REVIEW" in src
     assert "build_profiles_page_policy_panel_vm" in src
-    assert "Profil-Policy Readiness" in src
+    assert "Regeln ordnen Dokumente zu" in src
 
 
 def test_profiles_page_shows_empty_state_honestly() -> None:

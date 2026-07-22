@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import flet as ft
 
 from invoice_tool.ui_v2.components import (
+    collapsible_details,
     compact_capability_matrix,
-    compact_hint_block,
     compact_info_row,
     compact_status_banner,
     dense_card,
@@ -49,30 +49,24 @@ from invoice_tool.ui_v2.onboarding import (
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
-SETTINGS_SUBTITLE = "Allgemeine Programmeinstellungen und kompakte Readiness-Hinweise."
+SETTINGS_SUBTITLE = "Lokale Pilot-Einstellungen und Status."
 PRODUCTIVE_EXECUTION_NOTICE = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 DRY_RUN_UNAVAILABLE_NOTICE = MSG_DRY_RUN_UNAVAILABLE
 PRODUCT_NEUTRAL_NOTICE = (
     "Diese Einstellungen sind produktneutral und enthalten keine privaten Standardwerte."
 )
-READINESS_BANNER = (
-    f"{MSG_LOCAL_PILOT_SANDBOX} "
-    f"{MSG_CLARITY_PRODUCTIVE_NOT_RELEASED} "
-    f"{MSG_SAAS_NOT_INCLUDED} "
-    "Track-B Einstellungen sind vorbereitet; produktive lokale Ausführung "
-    "ist noch nicht aktiviert."
+PRODUCT_STATUS_ONE_LINE = (
+    "Lokale Pilotversion · nicht SaaS-ready · produktiv gesperrt"
 )
+READINESS_BANNER = PRODUCT_STATUS_ONE_LINE
 NO_AUTOMATIC_FOLDER_SCAN = "Kein automatischer Ordner-Scan."
 NO_PRIVATE_DEFAULTS = "Keine privaten Standardwerte."
 
 EXPORT_SECTION_DETAIL = (
-    "Laufergebnisse exportieren Sie im Arbeitsbereich als lokalen JSON-/CSV-Bericht "
-    "(erkannt / unklar / fehlgeschlagen / Zielhinweise / Zusammenfassung). "
-    f"{MSG_CLARITY_EXPORT_PREVIEW} "
-    f"{MSG_CLARITY_BUCKETS_SEPARATED} "
-    "Kein Cloud-Sync, keine Originalmutation."
+    "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
 )
-STATUS_SECTION_DETAIL = (
+STATUS_SECTION_DETAIL = PRODUCT_STATUS_ONE_LINE
+STATUS_SECTION_DETAIL_EXPANDED = (
     f"{MSG_LOCAL_PILOT_SANDBOX} "
     f"{MSG_ORIGINAL_FOLDERS_PROTECTED} "
     f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
@@ -82,6 +76,13 @@ STATUS_SECTION_DETAIL = (
     f"{MSG_SAAS_NOT_INCLUDED} "
     f"{MSG_CLARITY_FILENAME_NOT_TRUTH} "
     f"{MSG_STAGE_LOCAL_PILOT}"
+)
+EXPORT_SECTION_DETAIL_EXPANDED = (
+    "Laufergebnisse exportieren Sie im Arbeitsbereich als lokalen JSON-/CSV-Bericht "
+    "(erkannt / unklar / fehlgeschlagen / Zielhinweise / Zusammenfassung). "
+    f"{MSG_CLARITY_EXPORT_PREVIEW} "
+    f"{MSG_CLARITY_BUCKETS_SEPARATED} "
+    "Kein Cloud-Sync, keine Originalmutation."
 )
 
 SETTINGS_SECTIONS = (
@@ -193,9 +194,8 @@ def build_settings_page(state: UiV2State) -> ft.Control:
     controls: list[ft.Control] = [
         page_header(vm.title, subtitle=vm.subtitle),
         compact_status_banner(
-            "Lokale Pilotversion",
+            PRODUCT_STATUS_ONE_LINE,
             vm.compact_status_items,
-            detail=MSG_SAAS_NOT_INCLUDED,
         ),
         make_section_label("Status"),
         dense_card(
@@ -203,13 +203,12 @@ def build_settings_page(state: UiV2State) -> ft.Control:
             compact_info_row("Dry-Run", "Nicht verfügbar"),
             compact_info_row("Standardwerte", NO_PRIVATE_DEFAULTS),
             compact_info_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
-            compact_info_row("Persistenz", "Keine Speicherung in diesem Schritt"),
         ),
-        compact_hint_block(
+        collapsible_details(
             vm.productive_execution_notice,
             vm.dry_run_notice,
             vm.product_neutral_notice,
-            title="Status-Hinweise",
+            title="Status-Details anzeigen",
         ),
     ]
 
@@ -218,11 +217,9 @@ def build_settings_page(state: UiV2State) -> ft.Control:
         if section.title == "Produktstatus":
             controls.append(
                 dense_card(
-                    compact_info_row("Produktstufe", MSG_STAGE_LOCAL_PILOT),
-                    compact_info_row("Produktive Ausführung", "Nicht freigegeben"),
+                    compact_info_row("Produktstatus", PRODUCT_STATUS_ONE_LINE),
                     compact_info_row("Export", MSG_EXPORT_PREVIEW_NOT_DATEV),
                     compact_info_row("Originalordner", MSG_ORIGINAL_FOLDERS_PROTECTED),
-                    compact_info_row("Modus", section.status),
                 )
             )
             controls.append(
@@ -232,23 +229,28 @@ def build_settings_page(state: UiV2State) -> ft.Control:
                 )
             )
             controls.append(
-                compact_hint_block(
+                collapsible_details(
+                    STATUS_SECTION_DETAIL_EXPANDED,
                     MSG_SAAS_NOT_INCLUDED,
                     NO_PRIVATE_DEFAULTS,
                     NO_AUTOMATIC_FOLDER_SCAN,
-                    title="Produktgrenzen",
+                    title="Produktgrenzen anzeigen",
                 )
             )
         elif section.title == "Export":
             controls.append(
                 dense_card(
-                    compact_info_row("Status", "Arbeitsbereich — lokaler Laufbericht"),
+                    compact_info_row("Export", EXPORT_SECTION_DETAIL),
                     compact_info_row("Cloud-Sync", "Nein"),
                     compact_info_row("Originalmutation", "Nein"),
-                    compact_info_row("Modus", SECTION_STATUS_READINESS),
                 )
             )
-            controls.append(compact_hint_block(section.detail, title="Export"))
+            controls.append(
+                collapsible_details(
+                    EXPORT_SECTION_DETAIL_EXPANDED,
+                    title="Export-Details anzeigen",
+                )
+            )
         else:
             controls.append(
                 dense_card(
@@ -256,7 +258,9 @@ def build_settings_page(state: UiV2State) -> ft.Control:
                     compact_info_row("Modus", section.status),
                 )
             )
-            controls.append(compact_hint_block(section.detail, title=section.title))
+            controls.append(
+                collapsible_details(section.detail, title=f"{section.title}-Details")
+            )
 
     controls.extend(build_policy_editor_controls_panel(vm.policy_editor))
     return page_scaffold(*controls)

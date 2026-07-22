@@ -18,7 +18,7 @@ from invoice_tool.ui_v2.adapters.profile_write_adapter import (
     save_profile_changes,
 )
 from invoice_tool.ui_v2.components import (
-    compact_hint_block,
+    collapsible_details,
     compact_info_row,
     compact_list_item,
     dense_card,
@@ -30,7 +30,6 @@ from invoice_tool.ui_v2.components import (
     list_detail_split,
     list_panel,
     make_create_list_marker,
-    make_info_banner,
     make_metadata_block,
     make_metadata_row,
     make_panel_close_button,
@@ -319,19 +318,20 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
                 primary=True,
             ),
         ),
-        make_info_banner(policy_panel.banner),
-        make_section_label("Profil-Policy Readiness"),
-        compact_hint_block(
-            MSG_PROFILES_CONTAIN_RULES,
-            MSG_PAYMENT_BUSINESS_PER_PROFILE,
-            MSG_WITHOUT_EVIDENCE_REVIEW,
-            title="Profil-Hinweise",
-        ),
         dense_card(
+            compact_info_row(
+                "Hinweis",
+                "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
+            ),
             compact_info_row("Regeln", policy_panel.rules_profile_specific_label),
             compact_info_row("Readiness", policy_panel.selected_readiness_label),
             compact_info_row("Defaults", policy_panel.no_private_default_label),
-            compact_info_row("Aktionen", policy_panel.actions_label),
+        ),
+        collapsible_details(
+            MSG_PROFILES_CONTAIN_RULES,
+            MSG_PAYMENT_BUSINESS_PER_PROFILE,
+            MSG_WITHOUT_EVIDENCE_REVIEW,
+            title="Profil-Details anzeigen",
         ),
     ]
 

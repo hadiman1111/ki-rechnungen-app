@@ -46,6 +46,9 @@ SECTION_SUMMARY = "Welche Zusammenfassung bekommt der Nutzer?"
 MSG_NO_RUN_PAYLOAD = "Noch kein Laufergebnis zum Berichten vorhanden."
 MSG_EXPORT_FROM_REAL_RUN = MSG_CLARITY_EXPORT_FROM_REAL_RUN
 MSG_EXPORT_IS_PREVIEW = MSG_CLARITY_EXPORT_PREVIEW
+MSG_EXPORT_DISCLAIMER_COMPACT = (
+    "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
+)
 MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS = (
     "Der Export verändert keine Originalbelege und startet keine Verarbeitung."
 )

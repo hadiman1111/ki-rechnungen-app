@@ -21,7 +21,7 @@ from invoice_tool.ui_v2.processing_state import (
     ProcessingRunState,
 )
 
-EMPTY_REVIEW_TITLE = "Noch keine Prüffälle vorhanden."
+EMPTY_REVIEW_TITLE = "Keine Prüffälle vorhanden."
 MSG_REVIEW_FROM_REAL_RUN = "Prüffälle entstehen erst aus einem echten Verarbeitungslauf."
 MSG_REVIEW_NO_FILE_MUTATION = "Diese Ansicht verändert keine Dateien."
 EMPTY_REVIEW_DETAIL = MSG_REVIEW_FROM_REAL_RUN

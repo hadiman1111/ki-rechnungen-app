@@ -76,7 +76,7 @@ def test_workspace_onboarding_uses_compact_status_not_large_table() -> None:
     assert panel.compact_status_items == ONBOARDING_COMPACT_STATUS_ITEMS
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "compact_status_banner" in src
-    assert "compact_checklist_block" in src
+    assert "collapsible_details" in src
     # Large repeated Status metadata-table for onboarding is gone.
     assert 'make_metadata_row("Status", line)' not in src
 
@@ -163,8 +163,15 @@ def test_no_saas_ready_or_productive_export_claims() -> None:
         ]
     ).lower()
     for claim in FORBIDDEN_CLAIMS:
+        # Honest negation "nicht SaaS-ready" is required in the compact product line.
+        if claim.lower() == "saas-ready" and "nicht saas-ready" in settings_blob:
+            continue
         assert claim.lower() not in blob, claim
+        if claim.lower() == "saas-ready":
+            assert "nicht saas-ready" in settings_blob
+            continue
         assert claim.lower() not in settings_blob, claim
+    assert "nicht saas-ready" in settings_blob
     assert readiness.saas_ready is False
     assert readiness.datev_productive_export_ready is False
     assert readiness.has_productive_toggle is False
@@ -220,8 +227,9 @@ def test_overlap_prevention_uses_label_above_fields() -> None:
     assert "hint_text=EXPORT_PATH_HINT" in workspace_src or "hint_text=vm.export_path_hint" in draft_src
     assert 'label=vm.rename_field_hint' not in draft_src
     assert "hint_text=vm.rename_field_hint" in draft_src
-    assert "compact_hint_block" in PROFILES.read_text(encoding="utf-8")
-    assert "compact_hint_block" in CONFIGS.read_text(encoding="utf-8")
+    assert "dense_card" in PROFILES.read_text(encoding="utf-8")
+    assert "dense_card" in CONFIGS.read_text(encoding="utf-8")
+    assert "Regeln ordnen Dokumente zu" in CONFIGS.read_text(encoding="utf-8")
 
 
 def test_compact_helpers_exist() -> None:
@@ -233,6 +241,8 @@ def test_compact_helpers_exist() -> None:
         "compact_capability_matrix",
         "compact_checklist_block",
         "dense_card",
+        "compact_run_status_panel",
+        "collapsible_details",
     ):
         assert f"def {name}" in src
 

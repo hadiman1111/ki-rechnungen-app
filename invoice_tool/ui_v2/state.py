@@ -99,6 +99,10 @@ class UiV2State:
     workspace_export_feedback_error: bool = False
     # Last CTA feedback for the workspace start/sandbox button (always visible after click).
     workspace_start_feedback: str = ""
+    # Compact run-interaction state for manual-test UX (idle → checking → blocked/…).
+    workspace_run_interaction_status: str = "idle"
+    workspace_start_feedback_primary: str = ""
+    workspace_start_feedback_details: list[str] = field(default_factory=list)
 
     # Bounded UI-v2 processing contract (default: not connected — no PDF IO).
     # Live Track-B UI injects LocalProcessingAdapter in app.build_ui_v2.

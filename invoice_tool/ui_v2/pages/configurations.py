@@ -19,7 +19,7 @@ from invoice_tool.ui_v2.adapters.configuration_write_adapter import (
 )
 from invoice_tool.ui_v2.adapters.folder_picker_adapter import choose_target_folder
 from invoice_tool.ui_v2.components import (
-    compact_hint_block,
+    collapsible_details,
     compact_info_row,
     compact_list_item,
     dense_card,
@@ -34,7 +34,6 @@ from invoice_tool.ui_v2.components import (
     make_accent_cta_button,
     make_create_list_marker,
     make_form_status_toggle,
-    make_info_banner,
     make_matching_rule_display,
     make_metadata_block,
     make_metadata_row,
@@ -352,22 +351,20 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             subtitle="Lege fest, welche Dokumente zusammengehören, wie sie benannt und in welchen Ordner sie gespeichert werden.",
             trailing=action_button("Neue Konfiguration", on_click=lambda _e: _start_create(), primary=True),
         ),
-        make_info_banner(config_policy_panel.banner),
-        make_section_label("Konfiguration ↔ Profil-Policy"),
-        compact_hint_block(
-            MSG_CONFIGS_APPLY_RULES,
-            MSG_UNCLEAR_NOT_AUTO,
-            MSG_TARGETS_AFTER_SAFE_CONFIG,
-            title="Konfigurations-Hinweise",
-        ),
         dense_card(
+            compact_info_row(
+                "Hinweis",
+                "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
+            ),
             compact_info_row("Profil", config_policy_panel.linked_profile_label),
             compact_info_row("Policy", config_policy_panel.linked_policy_status),
             compact_info_row("Unklar", config_policy_panel.unmatched_concept_label),
-            compact_info_row(
-                "Ausführung",
-                "Kein produktiver Lauf — Zielorte erst nach sicherer Konfiguration.",
-            ),
+        ),
+        collapsible_details(
+            MSG_CONFIGS_APPLY_RULES,
+            MSG_UNCLEAR_NOT_AUTO,
+            MSG_TARGETS_AFTER_SAFE_CONFIG,
+            title="Konfigurations-Details anzeigen",
         ),
     ]
 

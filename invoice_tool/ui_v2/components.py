@@ -99,7 +99,7 @@ def page_header(title: str, *, subtitle: str | None = None, trailing: ft.Control
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.START,
     )
-    return ft.Container(margin=ft.Margin.only(bottom=28), content=header_row)
+    return ft.Container(margin=ft.Margin.only(bottom=12), content=header_row)
 
 
 def page_heading(title: str, *, subtitle: str | None = None) -> ft.Column:
@@ -120,7 +120,12 @@ def section_header(text: str, *, subtitle: str | None = None) -> ft.Column:
     return ft.Column(items, spacing=SPACE_XS)
 
 
-def page_scaffold(*controls: ft.Control, scroll: bool = True, expand_last: bool = False) -> ft.Container:
+def page_scaffold(
+    *controls: ft.Control,
+    scroll: bool = True,
+    expand_last: bool = False,
+    dense: bool = True,
+) -> ft.Container:
     """Canvas-backed page area — white surfaces come from individual panels."""
     items: list[ft.Control] = []
     for index, control in enumerate(controls):
@@ -128,14 +133,16 @@ def page_scaffold(*controls: ft.Control, scroll: bool = True, expand_last: bool 
             items.append(ft.Container(key="ui-v2-page-fill", expand=True, content=control))
         else:
             items.append(control)
+    pad = SPACE_LG if dense else PAGE_PADDING
+    gap = SPACE_MD if dense else SPACE_XXL
     return ft.Container(
         expand=True,
         bgcolor=COLOR_CANVAS,
-        padding=ft.Padding.only(left=PAGE_PADDING, top=PAGE_PADDING, bottom=PAGE_PADDING, right=PAGE_PADDING - 4),
+        padding=ft.Padding.only(left=pad, top=pad, bottom=pad, right=max(pad - 4, SPACE_SM)),
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
         content=ft.Column(
             items,
-            spacing=SPACE_XXL,
+            spacing=gap,
             expand=expand_last,
             scroll=ft.ScrollMode.AUTO if expand_last else (ft.ScrollMode.ALWAYS if scroll else ft.ScrollMode.HIDDEN),
         ),
@@ -600,12 +607,101 @@ def compact_hint_block(*hints: str, title: str = "Hinweise") -> ft.Container:
             ft.Text(f"· {hint}", size=FONT_SIZE_HELPER, color=COLOR_TEXT_SECONDARY)
         )
     return ft.Container(
-        margin=ft.Margin.only(bottom=8),
-        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        margin=ft.Margin.only(bottom=6),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
         border=ft.Border.all(1, COLOR_BORDER),
         border_radius=RADIUS_CARD,
         bgcolor=COLOR_SURFACE,
-        content=ft.Column(lines, spacing=3, tight=True),
+        content=ft.Column(lines, spacing=2, tight=True),
+    )
+
+
+def collapsible_details(
+    *lines: str,
+    title: str = "Details anzeigen",
+    initially_expanded: bool = False,
+) -> ft.Control:
+    """Hide secondary help / technical lines behind a compact disclosure."""
+
+    cleaned = [str(line).strip() for line in lines if str(line or "").strip()]
+    if not cleaned:
+        return ft.Container(height=0)
+    body = ft.Column(
+        [
+            ft.Text(f"· {line}", size=FONT_SIZE_HELPER, color=COLOR_TEXT_SECONDARY)
+            for line in cleaned
+        ],
+        spacing=2,
+        tight=True,
+    )
+    # Flet 0.85 uses `expanded`; newer Flet uses `initially_expanded`.
+    tile_kwargs: dict = {
+        "title": ft.Text(
+            title, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED, weight=ft.FontWeight.W_600
+        ),
+        "controls": [ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
+        "dense": True,
+        "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
+        "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
+    }
+    try:
+        return ft.ExpansionTile(**tile_kwargs, initially_expanded=initially_expanded)
+    except TypeError:
+        return ft.ExpansionTile(**tile_kwargs, expanded=initially_expanded)
+
+
+def compact_run_status_panel(
+    *,
+    status_label: str,
+    primary_reason: str,
+    details: tuple[str, ...] | list[str] = (),
+    tone: str = "neutral",
+    details_title: str = "Details anzeigen",
+) -> ft.Container:
+    """Prominent but dense run-interaction status — primary reason + optional details."""
+
+    tones = {
+        "checking": (COLOR_PRIMARY_SUBTLE, COLOR_PRIMARY, ft.Icons.HOURGLASS_TOP_ROUNDED),
+        "blocked": (COLOR_WARNING_SOFT, COLOR_WARNING, ft.Icons.BLOCK_FLIPPED),
+        "sandbox_not_connected": (COLOR_WARNING_SOFT, COLOR_WARNING, ft.Icons.LINK_OFF_ROUNDED),
+        "failed": (COLOR_ERROR_SOFT, COLOR_ERROR, ft.Icons.ERROR_OUTLINE),
+        "completed": (COLOR_SUCCESS_SOFT, COLOR_SUCCESS, ft.Icons.CHECK_CIRCLE_OUTLINE),
+        "ready": (COLOR_PRIMARY_SUBTLE, COLOR_PRIMARY, ft.Icons.PLAY_CIRCLE_OUTLINE),
+        "idle": (COLOR_SURFACE_ALT, COLOR_TEXT_MUTED, ft.Icons.INFO_OUTLINE),
+        "neutral": (COLOR_SURFACE_ALT, COLOR_TEXT_SECONDARY, ft.Icons.INFO_OUTLINE),
+    }
+    bg, fg, icon = tones.get(tone, tones["neutral"])
+    body: list[ft.Control] = [
+        ft.Row(
+            [
+                ft.Icon(icon, size=16, color=fg),
+                ft.Text(
+                    status_label,
+                    size=FONT_SIZE_METADATA,
+                    weight=ft.FontWeight.W_700,
+                    color=fg,
+                ),
+            ],
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        ft.Text(
+            primary_reason,
+            size=FONT_SIZE_BODY,
+            color=COLOR_TEXT_PRIMARY,
+            weight=ft.FontWeight.W_600,
+        ),
+    ]
+    detail_lines = [str(item).strip() for item in details if str(item or "").strip()]
+    if detail_lines:
+        body.append(collapsible_details(*detail_lines, title=details_title))
+    return ft.Container(
+        margin=ft.Margin.only(bottom=6),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border=ft.Border.all(1, fg),
+        border_radius=RADIUS_CARD,
+        bgcolor=bg,
+        content=ft.Column(body, spacing=4, tight=True),
     )
 
 
@@ -2069,32 +2165,56 @@ def empty_state(
     *,
     detail: str | None = None,
     icon: str | None = ft.Icons.INBOX_OUTLINED,
+    compact: bool = True,
 ) -> ft.Container:
-    """Centered empty state — accent icon circle."""
+    """Centered empty state — accent icon circle (compact by default)."""
     body: list[ft.Control] = []
     if icon:
+        size = 36 if compact else 52
         body.append(
             ft.Container(
-                width=52,
-                height=52,
+                width=size,
+                height=size,
                 bgcolor=COLOR_ACCENT_FAINT,
                 border=ft.Border.all(1, COLOR_PRIMARY_SUBTLE),
-                border_radius=26,
+                border_radius=size // 2,
                 alignment=ft.Alignment.CENTER,
-                content=ft.Icon(icon, size=22, color=COLOR_PRIMARY),
+                content=ft.Icon(icon, size=16 if compact else 22, color=COLOR_PRIMARY),
             )
         )
-    body.append(ft.Text(title, size=15, color=COLOR_TEXT_PRIMARY, weight=ft.FontWeight.W_700, text_align=ft.TextAlign.CENTER))
+    body.append(
+        ft.Text(
+            title,
+            size=13 if compact else 15,
+            color=COLOR_TEXT_PRIMARY,
+            weight=ft.FontWeight.W_700,
+            text_align=ft.TextAlign.CENTER,
+        )
+    )
     if detail:
         body.append(
             ft.Container(
-                width=340,
-                content=ft.Text(detail, size=FONT_SIZE_BODY, color=COLOR_TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                width=320 if compact else 340,
+                content=ft.Text(
+                    detail,
+                    size=FONT_SIZE_HELPER if compact else FONT_SIZE_BODY,
+                    color=COLOR_TEXT_MUTED,
+                    text_align=ft.TextAlign.CENTER,
+                    max_lines=3 if compact else None,
+                ),
             )
         )
     return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=SPACE_XL, vertical=SPACE_3XL),
-        content=ft.Column(body, spacing=14, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(
+            horizontal=SPACE_MD if compact else SPACE_XL,
+            vertical=SPACE_MD if compact else SPACE_3XL,
+        ),
+        content=ft.Column(
+            body,
+            spacing=6 if compact else 14,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            tight=True,
+        ),
     )
 
 

@@ -222,12 +222,18 @@ def build_saas_draft_list_panel(
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         wrap=True,
     )
+    from invoice_tool.ui_v2.components import collapsible_details
+
     rows: list[ft.Control] = [
         header,
-        helper_text(vm.scope_label),
-        helper_text(vm.separation_help),
         helper_text(vm.no_cloud_help),
         helper_text(vm.selected_label),
+        collapsible_details(
+            vm.scope_label,
+            vm.separation_help,
+            vm.empty_help if not vm.rows else "",
+            title="Entwurf-Details anzeigen",
+        ),
     ]
 
     if not vm.rows:
@@ -270,7 +276,9 @@ def build_saas_draft_list_panel(
         rows.append(ft.Row(actions, spacing=SPACE_SM, wrap=True))
 
     if on_rename is not None or on_delete is not None:
-        rows.append(helper_text(vm.delete_warn))
+        rows.append(
+            collapsible_details(vm.delete_warn, title="Löschhinweis anzeigen")
+        )
         if vm.delete_confirm_pending:
             rows.append(
                 inline_warning(
@@ -302,7 +310,12 @@ def build_saas_draft_list_panel(
             rows.append(ft.Row(manage_actions, spacing=SPACE_SM, wrap=True))
 
     if on_export is not None or on_import is not None:
-        rows.append(helper_text(vm.import_export_help))
+        rows.append(
+            collapsible_details(
+                vm.import_export_help,
+                title="Import/Export-Hinweise anzeigen",
+            )
+        )
         export_field: ft.TextField | None = None
         import_field: ft.TextField | None = None
         if on_export is not None:

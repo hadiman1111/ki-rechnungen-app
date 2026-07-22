@@ -54,7 +54,7 @@ def test_configurations_page_source_contains_generic_policy_relationship() -> No
     assert "MSG_UNCLEAR_NOT_AUTO" in src
     assert "MSG_TARGETS_AFTER_SAFE_CONFIG" in src
     assert "build_configurations_page_policy_panel_vm" in src
-    assert "Konfiguration ↔ Profil-Policy" in src
+    assert "Regeln ordnen Dokumente zu" in src
 
 
 def test_configurations_page_no_processing_core_import() -> None:
