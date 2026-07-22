@@ -29,7 +29,9 @@ from invoice_tool.ui_v2.processing_state import (
 )
 
 MSG_SANDBOX_RUNNER_UNBOUND = (
-    "Sandbox-Ausführungsgrenze: Live-Core-Runner ist nicht gebunden. "
+    "Sandbox-Ausführung ist noch nicht mit der Verarbeitung verbunden. "
+    "Sandbox-Lauf blockiert: Die echte Verarbeitung ist in Track B noch nicht "
+    "sicher verbunden. "
     f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS} {MSG_CLARITY_PRODUCTIVE_NOT_RELEASED}"
 )
 MSG_SANDBOX_EXECUTION_COMPLETED = (

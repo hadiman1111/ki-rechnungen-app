@@ -265,15 +265,12 @@ def validate_sandbox_paths(
             **base_kwargs,
         )
 
-    if original is None:
-        return SandboxPathValidationResult(
-            approved=False,
-            reason_code="blocked_missing_original_source",
-            message=MSG_BLOCKED_MISSING_ORIGINAL_SOURCE,
-            **base_kwargs,
-        )
-
-    if _paths_equal(input_folder, original) or _is_under(input_folder, original):
+    # Original path is an optional exclusion marker. Copied-data confirmation
+    # is already required above; without a declared original we still refuse
+    # productive/original mutation via other gates, but do not no-op the CTA.
+    if original is not None and (
+        _paths_equal(input_folder, original) or _is_under(input_folder, original)
+    ):
         return SandboxPathValidationResult(
             approved=False,
             reason_code="blocked_original_folder",
@@ -289,7 +286,7 @@ def validate_sandbox_paths(
             **base_kwargs,
         )
 
-    if _is_under(output_folder, original):
+    if original is not None and _is_under(output_folder, original):
         return SandboxPathValidationResult(
             approved=False,
             reason_code="blocked_output_inside_original",

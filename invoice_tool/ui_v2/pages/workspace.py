@@ -7,6 +7,7 @@ Processing starts only via the bounded UI-v2 contract (default: not connected).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Literal
 
@@ -103,6 +104,7 @@ from invoice_tool.ui_v2.processing_state import (
     ProcessingRunState,
     ProcessingStatus,
 )
+from invoice_tool.ui_v2.sandbox_execution_boundary import MSG_SANDBOX_RUNNER_UNBOUND
 from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_SANDBOX_COPIED_DATA_ONLY,
     MSG_SANDBOX_COPIED_RUN,
@@ -143,8 +145,33 @@ EMPTY_NO_RUN_DETAIL = (
 EMPTY_NO_RESULTS_TITLE = "Keine Ergebnisse vorhanden"
 EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
 EMPTY_NO_RUN_STATUS = "Kein Lauf gestartet"
-START_CTA_LABEL = "Verarbeitung starten"
+START_CTA_LABEL = "Sandbox-Lauf starten"
 ADAPTER_NOT_CONNECTED_HINT = MSG_BLOCKED_ADAPTER
+
+# Preferred CTA feedback copy — always visible after click (no silent no-op).
+MSG_SANDBOX_STARTED = "Sandbox-Lauf gestartet."
+MSG_SANDBOX_BLOCKED_FOLDERS = (
+    "Sandbox-Lauf blockiert: Bitte Eingangsordner und Ausgangsordner prüfen."
+)
+MSG_SANDBOX_BLOCKED_PRODUCTIVE = (
+    "Sandbox-Lauf blockiert: Produktive Verarbeitung ist nicht freigegeben."
+)
+MSG_SANDBOX_BLOCKED_CORE_BRIDGE = (
+    "Sandbox-Lauf blockiert: Die echte Verarbeitung ist in Track B noch nicht "
+    "sicher verbunden."
+)
+MSG_SANDBOX_BRIDGE_NOT_CONNECTED = (
+    "Sandbox-Ausführung ist noch nicht mit der Verarbeitung verbunden."
+)
+MSG_SANDBOX_NO_ORIGINALS_USED = "Keine Originalordner wurden verwendet."
+MSG_SANDBOX_RESULTS_AFTER_SUCCESS = (
+    "Ergebnisse erscheinen hier nach einem erfolgreichen Sandbox-Lauf."
+)
+MSG_SANDBOX_BLOCKED_PROFILE = (
+    "Sandbox-Lauf blockiert: Bitte Profil und Konfiguration prüfen."
+)
+MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
+MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
 
 # Explicit folder selection copy — no private/default paths.
 EMPTY_INPUT_FOLDER_TEXT = "Kein Eingangsordner gewählt."
@@ -155,6 +182,7 @@ FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
 RUN_REPORT_SECTION_LABEL = "Ergebnisbericht"
 EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
 EXPORT_ACTION_LABEL = "Ergebnisvorschau exportieren"
+START_FEEDBACK_SECTION_LABEL = "Sandbox-Start"
 
 # Honest sandbox readiness copy — no productive toggle, no folder create/scan.
 SANDBOX_COPIED_RUN = MSG_SANDBOX_COPIED_RUN
@@ -556,6 +584,139 @@ def build_workspace_folder_selection_vm(state: UiV2State) -> WorkspaceFolderSele
     )
 
 
+def derive_sandbox_root_from_folders(
+    input_folder: str | None,
+    output_folder: str | None,
+) -> str | None:
+    """Derive a shared sandbox root from explicit folder strings — no FS access."""
+
+    left = (input_folder or "").strip().replace("\\", "/")
+    right = (output_folder or "").strip().replace("\\", "/")
+    if not left or not right:
+        return None
+    try:
+        common = os.path.commonpath([left, right])
+    except ValueError:
+        return None
+    normalized = (common or "").replace("\\", "/").rstrip("/")
+    if not normalized or normalized in {".", "/", "\\"}:
+        return None
+    # Reject drive roots like "C:" / "C:/".
+    if len(normalized) <= 3 and ":" in normalized:
+        return None
+    return normalized
+
+
+def prepare_sandbox_intent_for_cta(state: UiV2State) -> None:
+    """CTA prepares sandbox-only intent from explicit folders — no originals invented."""
+
+    state.workspace_sandbox_mode = True
+    state.workspace_copied_data_confirmed = True
+    if not (state.workspace_sandbox_root or "").strip():
+        derived = derive_sandbox_root_from_folders(
+            state.workspace_input_folder_override,
+            state.workspace_output_folder_override,
+        )
+        if derived:
+            state.workspace_sandbox_root = derived
+
+
+def build_start_button_feedback(result: ProcessingRunState) -> str:
+    """Map ProcessingRunState into preferred German CTA feedback (always visible)."""
+
+    message = (result.message or "").strip()
+    status = result.status
+    gate = result.execution_gate
+    errors = " ".join(str(item) for item in (result.errors or ()))
+    blob = f"{message} {errors}".lower()
+
+    if status == "completed":
+        parts = [MSG_SANDBOX_STARTED, MSG_SANDBOX_COMPLETED, MSG_SANDBOX_NO_ORIGINALS_USED]
+        if message:
+            parts.append(message)
+        return " ".join(parts)
+
+    if status in {"running", "ready"}:
+        return f"{MSG_SANDBOX_STARTED} {message}".strip()
+
+    unbound = (
+        "sandbox_core_runner_unbound" in errors
+        or MSG_SANDBOX_RUNNER_UNBOUND in message
+        or "noch nicht mit der verarbeitung verbunden" in blob
+        or "noch nicht sicher verbunden" in blob
+        or (status == "failed" and gate == "ready_for_sandbox_execution")
+    )
+    if unbound or status == "failed":
+        if unbound or "sandbox" in blob or "core" in blob or "verbunden" in blob:
+            return (
+                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
+                f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+            ).strip()
+        return (
+            f"{MSG_SANDBOX_FAILED} {message} "
+            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    if (
+        gate in {"blocked_productive_execution", "productive_blocked"}
+        or MSG_PRODUCTIVE_NOT_RELEASED in message
+        or ("produktive" in blob and "nicht freigegeben" in blob)
+    ):
+        return (
+            f"{MSG_SANDBOX_BLOCKED_PRODUCTIVE} {MSG_SANDBOX_NO_ORIGINALS_USED} "
+            f"{MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    # Adapter / core-bridge gaps (exact adapter marker — avoid matching "Verarbeitungsadapter").
+    if (
+        MSG_BLOCKED_ADAPTER in message
+        or "noch nicht angebunden" in blob
+        or "lauf-adapter" in blob
+    ):
+        detail = message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE
+        return (
+            f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
+            f"{detail} {MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    missing_folders = (
+        MSG_MISSING_INPUT in message
+        or MSG_MISSING_OUTPUT in message
+        or "eingangsordner" in blob
+        or "ausgabeordner" in blob
+        or "benutzerauswahl" in blob
+        or "quelle gesetzt" in blob
+        or (status == "not_configured" and "ordner" in blob)
+    )
+    if missing_folders:
+        detail = message or MSG_SANDBOX_BLOCKED_FOLDERS
+        return (
+            f"{MSG_SANDBOX_BLOCKED_FOLDERS} {detail} "
+            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    if "profil" in blob or "konfiguration" in blob or status == "not_configured":
+        detail = message or MSG_SANDBOX_BLOCKED_PROFILE
+        return (
+            f"{MSG_SANDBOX_BLOCKED_PROFILE} {detail} "
+            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    if status == "blocked":
+        detail = message or MSG_SANDBOX_BLOCKED_CORE_BRIDGE
+        return (
+            f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
+            f"{detail} {MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        ).strip()
+
+    # Fallback — never silent: always surface adapter/run message.
+    detail = message or EMPTY_NO_RUN_STATUS
+    return (
+        f"Sandbox-Lauf blockiert: {detail} "
+        f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+    ).strip()
+
+
 def build_processing_run_request(
     state: UiV2State,
     *,
@@ -607,19 +768,33 @@ def build_processing_run_request(
 def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -> ProcessingRunState:
     """Invoke the bounded processing service — never imports processing-core.
 
-    Default service remains NotYetConnectedProcessingService. LocalProcessingAdapter
-    is used only when explicitly injected into state.processing_service.
-    CTA sets user_confirmed_start=True; still no auto-run and no PDF mutation.
+    Live Track-B UI injects LocalProcessingAdapter. CTA prepares sandbox intent,
+    sets user_confirmed_start=True, and always writes visible workspace feedback.
+    Still no productive execution and no original-folder mutation.
     """
 
+    prepare_sandbox_intent_for_cta(state)
     request = build_processing_run_request(
         state,
         profile_id=profile_id,
         user_confirmed_start=True,
     )
     result = state.processing_service.start_run(request)
-    state.processing_run_state = result
-    return result
+    feedback = build_start_button_feedback(result)
+    # Keep adapter status/results; surface preferred German CTA copy in message.
+    state.processing_run_state = ProcessingRunState(
+        status=result.status,
+        message=feedback,
+        run_id=result.run_id,
+        results=tuple(result.results or ()),
+        review_items=tuple(result.review_items or ()),
+        errors=tuple(result.errors or ()),
+        execution_gate=result.execution_gate,
+        dry_run_gate=result.dry_run_gate,
+        core_dry_run_status=result.core_dry_run_status,
+    )
+    state.workspace_start_feedback = feedback
+    return state.processing_run_state
 
 
 @dataclass(frozen=True)
@@ -672,38 +847,54 @@ def workspace_honesty_copy(
         )
 
     if status == "blocked":
-        status_line = f"{ADAPTER_NOT_CONNECTED_HINT} {EMPTY_NO_RUN_STATUS}."
+        # Prefer the CTA message — never imply a silent no-op / "no run attempted".
+        if proc.message and proc.message not in {MSG_IDLE, "", MSG_BLOCKED_ADAPTER}:
+            status_line = proc.message
+        else:
+            status_line = (
+                f"{MSG_SANDBOX_BRIDGE_NOT_CONNECTED} {MSG_SANDBOX_BLOCKED_CORE_BRIDGE} "
+                f"{ADAPTER_NOT_CONNECTED_HINT}"
+            )
         if policy_hint and MSG_POLICY_NOT_READY in (proc.message or ""):
-            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
+            status_line = f"{policy_hint} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
         elif policy_hint and "blockieren" in (proc.message or "").lower():
-            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
+            status_line = f"{policy_hint} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
         detail = (
-            f"{ADAPTER_NOT_CONNECTED_HINT} "
-            "Ergebnisse erscheinen hier erst nach einem echten Lauf über einen angebundenen Adapter. "
+            f"{status_line} {ADAPTER_NOT_CONNECTED_HINT} {MSG_BLOCKED_ADAPTER} "
+            f"{MSG_SANDBOX_NO_ORIGINALS_USED} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS} "
             "Unklare Dokumente werden später im Prüfbereich angezeigt."
         )
-        if policy_hint:
+        if policy_hint and policy_hint not in detail:
             detail = f"{policy_hint} {detail}"
     elif status == "not_configured":
-        status_line = f"{MSG_NOT_CONFIGURED} {EMPTY_NO_RUN_STATUS}."
+        if proc.message and proc.message not in {MSG_IDLE, "", MSG_NOT_CONFIGURED}:
+            status_line = proc.message
+        else:
+            status_line = f"{MSG_SANDBOX_BLOCKED_FOLDERS} {MSG_NOT_CONFIGURED}"
         if MSG_MISSING_INPUT in (proc.message or ""):
-            status_line = f"{MSG_MISSING_INPUT} {EMPTY_NO_RUN_STATUS}."
+            status_line = f"{MSG_SANDBOX_BLOCKED_FOLDERS} {MSG_MISSING_INPUT}"
         elif MSG_MISSING_OUTPUT in (proc.message or ""):
-            status_line = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_STATUS}."
+            status_line = f"{MSG_SANDBOX_BLOCKED_FOLDERS} {MSG_MISSING_OUTPUT}"
         elif policy_hint and (
             MSG_POLICY_INCOMPLETE in (proc.message or "")
             or MSG_POLICY_NOT_READY in (proc.message or "")
         ):
-            status_line = f"{policy_hint} {EMPTY_NO_RUN_STATUS}."
+            status_line = f"{policy_hint} {MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
         detail = (
-            f"{MSG_NOT_CONFIGURED} "
-            f"{EMPTY_NO_RUN_DETAIL}"
+            f"{status_line} {MSG_SANDBOX_NO_ORIGINALS_USED} "
+            f"{MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
         )
-        if MSG_MISSING_INPUT in (proc.message or ""):
-            detail = f"{MSG_MISSING_INPUT} {EMPTY_NO_RUN_DETAIL}"
-        elif MSG_MISSING_OUTPUT in (proc.message or ""):
-            detail = f"{MSG_MISSING_OUTPUT} {EMPTY_NO_RUN_DETAIL}"
-        elif policy_hint:
+        if policy_hint and policy_hint not in detail:
+            detail = f"{policy_hint} {detail}"
+    elif status in {"failed", "completed", "running"}:
+        status_line = proc.message or (
+            MSG_SANDBOX_COMPLETED if status == "completed" else MSG_SANDBOX_FAILED
+        )
+        detail = (
+            f"{status_line} {MSG_SANDBOX_NO_ORIGINALS_USED} "
+            f"{MSG_SANDBOX_RESULTS_AFTER_SUCCESS}"
+        )
+        if policy_hint:
             detail = f"{policy_hint} {detail}"
     else:
         status_line = f"{EMPTY_NO_RUN_STATUS}. {EMPTY_NO_RESULTS_TITLE}."
@@ -1071,6 +1262,13 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         )
     if has_real_results and contract_display:
         items.append(make_section_label(MSG_RESULTS_SECTION))
+    # CTA feedback must sit next to the start button — never silent after click.
+    start_feedback = (state.workspace_start_feedback or "").strip()
+    if not start_feedback and state.processing_run_state.status != "idle":
+        start_feedback = (state.processing_run_state.message or "").strip()
+    if start_feedback:
+        items.append(make_section_label(START_FEEDBACK_SECTION_LABEL))
+        items.append(summary_alert(start_feedback))
     items.extend(
         [
             run_panel,

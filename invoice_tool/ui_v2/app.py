@@ -19,6 +19,7 @@ from invoice_tool.ui_v2.pages.profiles import build_profiles_page
 from invoice_tool.ui_v2.pages.review import build_review_page
 from invoice_tool.ui_v2.pages.settings import build_settings_page
 from invoice_tool.ui_v2.pages.workspace import build_workspace_page
+from invoice_tool.ui_v2.processing_contract import make_local_processing_adapter
 from invoice_tool.ui_v2.shell import ShellHandles, build_shell, replace_content, set_active_nav
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.theme import APP_MIN_WIDTH, COLOR_PAGE_BG
@@ -51,6 +52,8 @@ def build_ui_v2(page: ft.Page) -> None:
     state = UiV2State(
         active_nav_id=NAV_WORKSPACE,
         selected_profile_id=resolve_active_profile_id(),
+        # Track-B live UI: bounded LocalProcessingAdapter (sandbox-gated, no core import).
+        processing_service=make_local_processing_adapter(),
     )
     state.page = page
 
