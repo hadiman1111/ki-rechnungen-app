@@ -11,7 +11,7 @@ Prompt **3/34**
 ## 3. HEAD before/after
 
 - Before: `c96fc128eb5b53f528c9f901270ff1f1b2a3426d`
-- After: *(gesetzt nach Commit)*
+- After: 
 
 ## 4. Diagnosis
 
