@@ -32,6 +32,17 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
     MSG_CLARITY_SANDBOX_COPIED_RUN,
 )
+from invoice_tool.ui_v2.onboarding import (
+    MSG_EXPORT_PREVIEW_NOT_DATEV,
+    MSG_LOCAL_PILOT_SANDBOX,
+    MSG_ORIGINAL_FOLDERS_PROTECTED,
+    MSG_SAAS_NOT_INCLUDED,
+    MSG_STAGE_LOCAL_PILOT,
+    CapabilityMatrixItem,
+    LocalPilotReadinessViewModel,
+    build_local_pilot_capability_matrix,
+    build_local_pilot_readiness,
+)
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
@@ -42,8 +53,9 @@ PRODUCT_NEUTRAL_NOTICE = (
     "Diese Einstellungen sind produktneutral und enthalten keine privaten Standardwerte."
 )
 READINESS_BANNER = (
-    f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
+    f"{MSG_LOCAL_PILOT_SANDBOX} "
     f"{MSG_CLARITY_PRODUCTIVE_NOT_RELEASED} "
+    f"{MSG_SAAS_NOT_INCLUDED} "
     "Track-B Einstellungen sind vorbereitet; produktive lokale Ausführung "
     "ist noch nicht aktiviert."
 )
@@ -58,10 +70,15 @@ EXPORT_SECTION_DETAIL = (
     "Kein Cloud-Sync, keine Originalmutation."
 )
 STATUS_SECTION_DETAIL = (
+    f"{MSG_LOCAL_PILOT_SANDBOX} "
+    f"{MSG_ORIGINAL_FOLDERS_PROTECTED} "
     f"{MSG_CLARITY_SANDBOX_COPIED_RUN} "
     f"{MSG_CLARITY_NO_ORIGINAL_FOLDERS} "
     f"{MSG_CLARITY_PRODUCTIVE_NOT_RELEASED} "
-    f"{MSG_CLARITY_FILENAME_NOT_TRUTH}"
+    f"{MSG_EXPORT_PREVIEW_NOT_DATEV} "
+    f"{MSG_SAAS_NOT_INCLUDED} "
+    f"{MSG_CLARITY_FILENAME_NOT_TRUTH} "
+    f"{MSG_STAGE_LOCAL_PILOT}"
 )
 
 SETTINGS_SECTIONS = (
@@ -114,6 +131,10 @@ class SettingsPageVM:
     sections: tuple[SettingsSectionVM, ...]
     has_productive_toggle: bool
     policy_editor: PolicyEditorControlsVM
+    capability_matrix: tuple[CapabilityMatrixItem, ...]
+    pilot_readiness: LocalPilotReadinessViewModel
+    saas_ready: bool
+    datev_productive_export_ready: bool
 
 
 def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
@@ -139,6 +160,7 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
         folder_scan_notice=NO_AUTOMATIC_FOLDER_SCAN,
         product_neutral_notice=PRODUCT_NEUTRAL_NOTICE,
     )
+    pilot = build_local_pilot_readiness()
     return SettingsPageVM(
         title="Einstellungen",
         subtitle=SETTINGS_SUBTITLE,
@@ -152,6 +174,10 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
         sections=sections,
         has_productive_toggle=False,
         policy_editor=build_policy_editor_controls_vm(),
+        capability_matrix=build_local_pilot_capability_matrix(),
+        pilot_readiness=pilot,
+        saas_ready=False,
+        datev_productive_export_ready=False,
     )
 
 
@@ -178,14 +204,22 @@ def build_settings_page(state: UiV2State) -> ft.Control:
         if section.title == "Produktstatus":
             controls.append(
                 make_settings_panel(
+                    make_metadata_row("Produktstufe", MSG_STAGE_LOCAL_PILOT),
                     make_metadata_row("Dry-Run", "Nicht verfügbar bis Core-Grenze existiert"),
                     make_metadata_row("Hinweis", vm.dry_run_notice),
                     make_metadata_row("Produktive Ausführung", "Nicht freigegeben"),
                     make_metadata_row("Hinweis", vm.productive_execution_notice),
+                    make_metadata_row("SaaS", MSG_SAAS_NOT_INCLUDED),
+                    make_metadata_row("Export", MSG_EXPORT_PREVIEW_NOT_DATEV),
+                    make_metadata_row("Originalordner", MSG_ORIGINAL_FOLDERS_PROTECTED),
                     make_metadata_row("Standardwerte", NO_PRIVATE_DEFAULTS),
                     make_metadata_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
                     make_metadata_row("Hinweis", vm.product_neutral_notice),
                     make_metadata_row("Modus", section.status),
+                    *(
+                        make_metadata_row(item.label, item.status_label)
+                        for item in vm.capability_matrix
+                    ),
                 )
             )
         elif section.title == "Export":

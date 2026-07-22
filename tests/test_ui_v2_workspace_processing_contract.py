@@ -273,6 +273,26 @@ def test_default_state_idle_has_no_fake_results() -> None:
     assert copy.adapter_hint == ADAPTER_NOT_CONNECTED_HINT
 
 
+def test_workspace_onboarding_panel_is_local_pilot_only() -> None:
+    from invoice_tool.ui_v2.onboarding import (
+        MSG_LOCAL_PILOT_SANDBOX,
+        MSG_ORIGINAL_FOLDERS_PROTECTED,
+        MSG_PRODUCTIVE_BLOCKED,
+        MSG_SAAS_NOT_INCLUDED,
+    )
+    from invoice_tool.ui_v2.pages.workspace import build_workspace_onboarding_panel_vm
+
+    panel = build_workspace_onboarding_panel_vm(UiV2State())
+    blob = " ".join(panel.status_lines) + " " + panel.next_step
+    assert MSG_LOCAL_PILOT_SANDBOX in blob
+    assert MSG_PRODUCTIVE_BLOCKED in blob
+    assert MSG_ORIGINAL_FOLDERS_PROTECTED in blob
+    assert MSG_SAAS_NOT_INCLUDED in blob
+    assert panel.has_productive_toggle is False
+    assert panel.implies_saas_ready is False
+    assert len(panel.checklist) == 6
+
+
 def test_workspace_sandbox_readiness_copy_is_honest() -> None:
     state = UiV2State()
     assert state.workspace_sandbox_mode is False

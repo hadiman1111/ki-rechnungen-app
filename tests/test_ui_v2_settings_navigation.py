@@ -77,6 +77,13 @@ def test_settings_page_shows_productive_execution_not_enabled() -> None:
     assert vm.has_productive_toggle is False
     assert PRODUCTIVE_EXECUTION_NOTICE in vm.productive_execution_notice
     assert "noch nicht freigegeben" in vm.productive_execution_notice
+    assert vm.saas_ready is False
+    assert vm.datev_productive_export_ready is False
+    assert any(item.key == "productive_processing" for item in vm.capability_matrix)
+    assert any(
+        item.key == "saas_login_tenant_billing" and item.status == "not_included"
+        for item in vm.capability_matrix
+    )
 
 
 def test_settings_page_no_private_defaults() -> None:

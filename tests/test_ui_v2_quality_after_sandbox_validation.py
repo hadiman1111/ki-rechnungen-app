@@ -251,6 +251,7 @@ def test_no_processing_core_imports_in_clarity_and_quality_modules() -> None:
         UI_V2_ROOT / "review_workflow.py",
         UI_V2_ROOT / "sandbox_processing_gate.py",
         UI_V2_ROOT / "copied_real_data_validation.py",
+        UI_V2_ROOT / "onboarding.py",
         UI_V2_ROOT / "pages" / "workspace.py",
         UI_V2_ROOT / "pages" / "settings.py",
         UI_V2_ROOT / "pages" / "review.py",

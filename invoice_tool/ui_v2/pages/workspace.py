@@ -41,6 +41,13 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_FILENAME_NOT_TRUTH,
     MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
 )
+from invoice_tool.ui_v2.onboarding import (
+    MSG_NEXT_STEP_PILOT_ACCEPTANCE,
+    TRACK_B_ONBOARDING_STATUS_LINES,
+    LocalPilotReadinessViewModel,
+    OnboardingChecklistItem,
+    build_local_pilot_readiness,
+)
 from invoice_tool.ui_v2.export_reporting import (
     MSG_DESTINATIONS_EMPTY,
     MSG_EXPORT_FROM_REAL_RUN,
@@ -149,6 +156,44 @@ SANDBOX_PRODUCTIVE_BLOCKED = MSG_SANDBOX_PRODUCTIVE_BLOCKED
 SANDBOX_EXECUTION_WIRED = MSG_SANDBOX_EXECUTION_WIRED
 SANDBOX_CORE_DRY_ABSENT = MSG_SANDBOX_CORE_DRY_ABSENT
 SANDBOX_READINESS_LINES = WORKSPACE_SANDBOX_READINESS_LINES
+
+# Local pilot onboarding panel (Prompt 10) — packaging/status only.
+ONBOARDING_SECTION_LABEL = "Lokale Pilotversion / Onboarding"
+ONBOARDING_STATUS_LINES = TRACK_B_ONBOARDING_STATUS_LINES
+ONBOARDING_NEXT_STEP = MSG_NEXT_STEP_PILOT_ACCEPTANCE
+
+
+@dataclass(frozen=True)
+class WorkspaceOnboardingPanelVM:
+    """Pure onboarding/status panel for workspace — no GUI, no FS, no run."""
+
+    section_label: str
+    status_lines: tuple[str, ...]
+    checklist: tuple[OnboardingChecklistItem, ...]
+    next_step: str
+    readiness: LocalPilotReadinessViewModel
+    implies_saas_ready: bool
+    implies_productive_export: bool
+    has_productive_toggle: bool
+
+
+def build_workspace_onboarding_panel_vm(
+    state: UiV2State | None = None,
+) -> WorkspaceOnboardingPanelVM:
+    """Build honest local-pilot onboarding for the workspace entry surface."""
+
+    _ = state  # reserved for future safe checklist progress only
+    readiness = build_local_pilot_readiness()
+    return WorkspaceOnboardingPanelVM(
+        section_label=ONBOARDING_SECTION_LABEL,
+        status_lines=ONBOARDING_STATUS_LINES,
+        checklist=readiness.checklist,
+        next_step=ONBOARDING_NEXT_STEP,
+        readiness=readiness,
+        implies_saas_ready=False,
+        implies_productive_export=False,
+        has_productive_toggle=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -760,6 +805,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     folder_selection = build_workspace_folder_selection_vm(state)
     run_shell = build_workspace_run_result_shell(state)
     readiness = build_workspace_readiness_display_vm(state)
+    onboarding = build_workspace_onboarding_panel_vm(state)
     run_report = build_workspace_run_report_vm(state)
     contract_results = tuple(state.processing_run_state.results or ())
     snapshot_display = _display_results(workspace.results)
@@ -910,12 +956,30 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 )
             tab_blocks.append(make_full_width_panel(ft.Column(result_rows, spacing=0)))
 
+    onboarding_panel = make_settings_panel(
+        *(
+            make_metadata_row("Status", line)
+            for line in onboarding.status_lines
+        ),
+        make_metadata_row("Checkliste", ""),
+        *(
+            make_metadata_row(
+                "☐" if not item.done else "☑",
+                item.label,
+            )
+            for item in onboarding.checklist
+        ),
+        make_metadata_row("Nächster Schritt", onboarding.next_step),
+    )
+
     items: list[ft.Control] = [
         page_header(
             "Arbeitsbereich",
             subtitle="Dokumente auswählen, verarbeiten und Ergebnisse prüfen.",
         ),
         make_context_strip(("Profil", profile_name), ("Erkennungsmodell", scan_model)),
+        make_section_label(onboarding.section_label),
+        onboarding_panel,
         make_section_label(FOLDER_SELECTION_SECTION_LABEL),
         folder_selection_panel,
         make_section_label(MSG_RUN_SUMMARY_SECTION),
