@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CONFIGURATION_COVERAGE_AND_USER_GUIDANCE_01`
 2. **Masterplan position:** Prompt 23/34
 3. **HEAD before:** `01c0716a28d11efe40ea15a538434327ce6eae3c`  
-   **HEAD after:** 
+   **HEAD after:** `2046b702c3a3dcbd9ab8d12b46bdeab30e378f99`
 4. **Baseline:** Prompt 22 matching ready; coverage gaps disclosed; Unklar with precise reasons but weak user guidance.
 5. **Files changed:**
    - `invoice_tool/ui_v2/configuration_guidance.py` (new)
