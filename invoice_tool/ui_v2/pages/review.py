@@ -47,12 +47,17 @@ from invoice_tool.ui_v2.review_components import (
 from invoice_tool.ui_v2.preview_export import (
     MSG_FIELD_AMOUNT,
     MSG_FIELD_AMOUNT_FORMAT,
+    MSG_FIELD_AMOUNT_REASON,
+    MSG_FIELD_ART_REASON,
     MSG_FIELD_BUSINESS_CATEGORY,
     MSG_FIELD_CONFIGURATION,
     MSG_FIELD_COUNTERPARTY_NAME,
+    MSG_FIELD_DOCUMENT_ART,
     MSG_FIELD_DOCUMENT_DIRECTION,
     MSG_FIELD_FILENAME_PATTERN,
     MSG_FIELD_MISSING_PLACEHOLDERS,
+    MSG_FIELD_PAYMENT_FIELD,
+    MSG_FIELD_PAYMENT_FIELD_REASON,
     MSG_FIELD_PLACEHOLDER_VALUES,
     resolve_preview_naming,
 )
@@ -171,6 +176,17 @@ class ReviewDetailItemVM:
     placeholder_values: tuple[tuple[str, str | None], ...] = ()
     missing_placeholders: tuple[str, ...] = ()
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = ()
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = ()
+    payment_field_candidates: tuple[dict[str, object], ...] = ()
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = ()
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,6 +254,17 @@ class ReviewSelectedDetailVM:
     placeholder_values: tuple[tuple[str, str | None], ...] = ()
     missing_placeholders: tuple[str, ...] = ()
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = ()
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = ()
+    payment_field_candidates: tuple[dict[str, object], ...] = ()
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = ()
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -330,6 +357,17 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         placeholder_values=tuple(item.placeholder_values or ()),
         missing_placeholders=tuple(item.missing_placeholders or ()),
         amount_format=item.amount_format,
+        amount_candidates=tuple(item.amount_candidates or ()),
+        selected_amount=item.selected_amount,
+        selected_amount_reason=item.selected_amount_reason,
+        rejected_amount_candidates=tuple(item.rejected_amount_candidates or ()),
+        payment_field_candidates=tuple(item.payment_field_candidates or ()),
+        selected_payment_field=item.selected_payment_field,
+        selected_payment_field_reason=item.selected_payment_field_reason,
+        document_art_candidates=tuple(item.document_art_candidates or ()),
+        selected_art=item.selected_art,
+        selected_art_reason=item.selected_art_reason,
+        art_ambiguity=bool(item.art_ambiguity),
     )
 
 
@@ -447,6 +485,17 @@ def _build_selected_detail(
             placeholder_values=tuple(detail.placeholder_values or ()),
             missing_placeholders=tuple(detail.missing_placeholders or ()),
             amount_format=detail.amount_format,
+            amount_candidates=tuple(detail.amount_candidates or ()),
+            selected_amount=detail.selected_amount,
+            selected_amount_reason=detail.selected_amount_reason,
+            rejected_amount_candidates=tuple(detail.rejected_amount_candidates or ()),
+            payment_field_candidates=tuple(detail.payment_field_candidates or ()),
+            selected_payment_field=detail.selected_payment_field,
+            selected_payment_field_reason=detail.selected_payment_field_reason,
+            document_art_candidates=tuple(detail.document_art_candidates or ()),
+            selected_art=detail.selected_art,
+            selected_art_reason=detail.selected_art_reason,
+            art_ambiguity=bool(detail.art_ambiguity),
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
@@ -519,6 +568,36 @@ def _build_selected_detail(
             naming.missing_placeholders or detail.missing_placeholders or ()
         ),
         amount_format=naming.amount_format or detail.amount_format,
+        amount_candidates=tuple(
+            naming.amount_candidates or detail.amount_candidates or ()
+        ),
+        selected_amount=naming.selected_amount or detail.selected_amount or detail.amount,
+        selected_amount_reason=(
+            naming.selected_amount_reason or detail.selected_amount_reason
+        ),
+        rejected_amount_candidates=tuple(
+            naming.rejected_amount_candidates
+            or detail.rejected_amount_candidates
+            or ()
+        ),
+        payment_field_candidates=tuple(
+            naming.payment_field_candidates or detail.payment_field_candidates or ()
+        ),
+        selected_payment_field=(
+            naming.selected_payment_field
+            or detail.selected_payment_field
+            or detail.payment_account
+        ),
+        selected_payment_field_reason=(
+            naming.selected_payment_field_reason
+            or detail.selected_payment_field_reason
+        ),
+        document_art_candidates=tuple(
+            naming.document_art_candidates or detail.document_art_candidates or ()
+        ),
+        selected_art=naming.selected_art or detail.selected_art,
+        selected_art_reason=naming.selected_art_reason or detail.selected_art_reason,
+        art_ambiguity=bool(naming.art_ambiguity or detail.art_ambiguity),
     )
 
 
@@ -857,8 +936,41 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 insert_at, (MSG_FIELD_COUNTERPARTY_NAME, name_label)
             )
             insert_at += 1
-        if detail.amount:
-            detail_fields.insert(insert_at, (MSG_FIELD_AMOUNT, detail.amount))
+        amount_value = detail.selected_amount or detail.amount
+        if amount_value:
+            detail_fields.insert(insert_at, (MSG_FIELD_AMOUNT, amount_value))
+            insert_at += 1
+        if detail.selected_amount_reason:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_AMOUNT_REASON, detail.selected_amount_reason)
+            )
+            insert_at += 1
+        payment_value = detail.selected_payment_field or detail.payment_account
+        if payment_value:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_PAYMENT_FIELD, payment_value)
+            )
+            insert_at += 1
+        elif detail.selected_payment_field_reason:
+            detail_fields.insert(insert_at, (MSG_FIELD_PAYMENT_FIELD, "—"))
+            insert_at += 1
+        if detail.selected_payment_field_reason:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_PAYMENT_FIELD_REASON,
+                    detail.selected_payment_field_reason,
+                ),
+            )
+            insert_at += 1
+        art_value = detail.selected_art or detail.document_type
+        if art_value:
+            detail_fields.insert(insert_at, (MSG_FIELD_DOCUMENT_ART, art_value))
+            insert_at += 1
+        if detail.selected_art_reason:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_ART_REASON, detail.selected_art_reason)
+            )
             insert_at += 1
         if detail.missing_fields:
             detail_fields.insert(

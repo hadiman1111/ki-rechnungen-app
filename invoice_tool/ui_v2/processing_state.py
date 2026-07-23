@@ -162,6 +162,24 @@ class ProcessingPlannedDestination:
     placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
     missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
     amount_format: str | None = None
+    # Prompt 21/34 — amount / payment / art candidate transparency.
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)

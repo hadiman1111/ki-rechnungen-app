@@ -131,6 +131,23 @@ class SuggestedFilenameFields:
     filename_pattern: str | None = None
     matched_configuration_name: str | None = None
     matched_configuration_id: str | None = None
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,6 +183,23 @@ class SuggestedFilenameMappingResult:
     placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
     missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 def sanitize_suggested_filename(name: str | None) -> str | None:
@@ -219,6 +253,24 @@ def _assert_no_forbidden_keys(extra: Mapping[str, Any] | None) -> None:
             )
 
 
+def _candidate_meta(fields: SuggestedFilenameFields) -> dict[str, Any]:
+    return {
+        "amount_candidates": tuple(fields.amount_candidates or ()),
+        "selected_amount": fields.selected_amount or format_amount_comma(fields.amount),
+        "selected_amount_reason": fields.selected_amount_reason,
+        "rejected_amount_candidates": tuple(fields.rejected_amount_candidates or ()),
+        "payment_field_candidates": tuple(fields.payment_field_candidates or ()),
+        "selected_payment_field": fields.selected_payment_field
+        or fields.payment_field
+        or fields.payment_account,
+        "selected_payment_field_reason": fields.selected_payment_field_reason,
+        "document_art_candidates": tuple(fields.document_art_candidates or ()),
+        "selected_art": fields.selected_art or fields.art,
+        "selected_art_reason": fields.selected_art_reason,
+        "art_ambiguity": bool(fields.art_ambiguity),
+    }
+
+
 def _canonical_fallback(
     fields: SuggestedFilenameFields,
     *,
@@ -247,6 +299,7 @@ def _canonical_fallback(
         "matched_configuration_confidence": (
             match.matched_configuration_confidence if match else None
         ),
+        **_candidate_meta(fields),
     }
     if not has_core:
         planned = sanitize_suggested_filename(fields.planned_basename)
@@ -430,10 +483,21 @@ def map_suggested_filename(
     source_name = _clean_optional(fields.source_filename)
     supplier = _supplier_token(fields)
     invoice_date = _clean_optional(fields.invoice_date)
-    amount = _clean_optional(fields.amount)
+    amount = _clean_optional(fields.selected_amount) or _clean_optional(fields.amount)
     amount_comma = format_amount_comma(amount)
     document_type = _clean_optional(fields.document_type)
-    payment_account = _clean_optional(fields.payment_account)
+    payment_account = (
+        _clean_optional(fields.selected_payment_field)
+        or _clean_optional(fields.payment_account)
+        or _clean_optional(fields.payment_field)
+    )
+    payment_field = (
+        _clean_optional(fields.selected_payment_field)
+        or _clean_optional(fields.payment_field)
+        or payment_account
+    )
+    art_token = _clean_optional(fields.selected_art) or _clean_optional(fields.art)
+    candidate_meta = _candidate_meta(fields)
 
     has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
     match: ConfigurationMatchResult | None = None
@@ -448,12 +512,12 @@ def map_suggested_filename(
                     "Explizites Dateinamensmuster am Mapping-Input."
                 ),
                 matched_configuration_confidence="medium",
-                matched_payment_field=_clean_optional(fields.payment_field),
+                matched_payment_field=payment_field,
             )
         else:
             match = match_active_configuration(
-                payment_field=fields.payment_field,
-                payment_account=fields.payment_account,
+                payment_field=payment_field,
+                payment_account=payment_account,
                 raw_text_head=fields.raw_text_head,
                 configurations=configurations,
                 unmatched=unmatched,
@@ -464,10 +528,10 @@ def map_suggested_filename(
         placeholders = build_configuration_placeholder_values(
             pattern=config_pattern,
             invoice_date=invoice_date,
-            art=fields.art,
+            art=art_token,
             supplier=supplier,
             amount=amount,
-            payment_field=fields.payment_field
+            payment_field=payment_field
             or (match.matched_payment_field if match else None),
             document_direction=fields.document_direction,
             document_type=document_type,
@@ -558,10 +622,13 @@ def map_suggested_filename(
                 placeholder_values=rendered.placeholder_values,
                 missing_placeholders=rendered.missing_placeholders,
                 amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+                **candidate_meta,
             )
         reason = rendered.naming_reason
         if match and match.matched_configuration_reason:
             reason = f"{match.matched_configuration_reason} {reason}".strip()
+        if fields.selected_art_reason and fields.art_ambiguity:
+            reason = f"{reason} {fields.selected_art_reason}".strip()
         return SuggestedFilenameMappingResult(
             suggested_filename=suggested,
             filename_source=source,
@@ -607,6 +674,7 @@ def map_suggested_filename(
             placeholder_values=rendered.placeholder_values,
             missing_placeholders=rendered.missing_placeholders,
             amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+            **candidate_meta,
         )
 
     # No configuration pattern → demoted canonical fallback.

@@ -135,16 +135,24 @@ def map_art_placeholder(
     explicit = str(art or "").strip().lower()
     if explicit in _ART_FROM_DIRECTION:
         return _ART_FROM_DIRECTION[explicit]
-    if explicit in {"er", "ar", "ep", "ai", "private", "d"}:
+    if explicit in {"er", "ar", "ep", "ai", "private", "d", "storno", "stornorechnung"}:
+        if explicit in {"storno", "stornorechnung"}:
+            return "storno"
         return explicit
     direction = str(document_direction or "").strip()
     mapped = _ART_FROM_DIRECTION.get(direction) or _ART_FROM_DIRECTION.get(
         direction.lower()
     )
     if mapped:
+        # Storno remains visible even when direction maps to er.
+        doc_type_early = str(document_type or "").strip().lower()
+        if doc_type_early in {"storno", "stornorechnung", "credit_note", "avoir"}:
+            return "storno"
         return mapped
     doc_type = str(document_type or "").strip().lower()
-    if doc_type in {"rechnung", "invoice", "facture", "storno", "credit_note"}:
+    if doc_type in {"storno", "stornorechnung", "credit_note", "avoir"}:
+        return "storno"
+    if doc_type in {"rechnung", "invoice", "facture"}:
         return "er"
     return None
 

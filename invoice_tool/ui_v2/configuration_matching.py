@@ -281,11 +281,54 @@ def match_active_configuration(
 
     return _unmatched_result(
         unmatched_candidate,
-        reason=(
-            "Keine eindeutige aktive Konfiguration für payment_field/"
-            "payment_account/Text — konfiguriertes Unklar/Fallback verwendet."
+        reason=_precise_unmatched_reason(
+            payment_field=payment_field,
+            payment_account=payment_account,
+            active=active,
         ),
         confidence="low" if unmatched_candidate and unmatched_candidate.filename_pattern else "none",
+    )
+
+
+def _precise_unmatched_reason(
+    *,
+    payment_field: str | None,
+    payment_account: str | None,
+    active: Sequence[ConfigurationCandidate],
+) -> str:
+    """Explain Unklar fallback precisely for review/manifest."""
+
+    signal = str(payment_field or payment_account or "").strip()
+    if not signal:
+        return (
+            "payment_field fehlt — keine Zahlungsart erkannt; "
+            "konfiguriertes Unklar/Fallback verwendet."
+        )
+    signal_l = signal.lower()
+    active_values = {
+        normalize_for_matching(value)
+        for config in active
+        for value in config.matching_values
+    }
+    if signal_l in {"paypal"}:
+        return (
+            "payment_field paypal erkannt, keine aktive PayPal-Konfiguration "
+            "gematcht — Unklar/Fallback verwendet."
+        )
+    if signal_l in {"card", "credit_card", "card_generic"}:
+        return (
+            "payment_field card (Kreditkarte generisch) erkannt; kein AMEX-Nachweis "
+            "und keine passende aktive Konfiguration — Unklar/Fallback "
+            "(nicht American Express)."
+        )
+    if signal_l in {"amex", "american express"} and "amex" not in active_values:
+        return (
+            "payment_field amex erkannt, aber keine aktive American-Express-"
+            "Konfiguration verfügbar — Unklar/Fallback verwendet."
+        )
+    return (
+        f"payment_field „{signal}“ erkannt, aber keine aktive Konfiguration "
+        "erfüllt die Bedingungen — Unklar/Fallback verwendet."
     )
 
 

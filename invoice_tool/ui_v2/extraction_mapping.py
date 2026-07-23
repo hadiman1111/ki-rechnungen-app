@@ -14,12 +14,16 @@ from pathlib import Path
 from typing import Iterable
 
 from invoice_tool.normalization import (
-    parse_amount_from_text,
     parse_invoice_date_from_text,
 )
 from invoice_tool.ui_v2.core_dry_run_contract import (
     is_explicit_copied_sandbox_test_path,
     path_has_forbidden_productive_marker,
+)
+from invoice_tool.ui_v2.invoice_field_candidates import (
+    select_document_art_candidates,
+    select_invoice_amount_candidates,
+    select_payment_field_candidates,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingPlannedDestination
 from invoice_tool.ui_v2.suggested_filename_mapping import (
@@ -58,18 +62,6 @@ _SKIP_SUPPLIER_LINE_RE = re.compile(
 _DATE_ONLY_RE = re.compile(
     r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$|^\d{4}-\d{2}-\d{2}$"
 )
-_PAYMENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bpaypal\b", re.I), "paypal"),
-    (re.compile(r"\bkreditkarte|credit\s*card|carte\s*bancaire\b", re.I), "card"),
-    (re.compile(r"\büberweisung|bank\s*transfer|virement\b", re.I), "transfer"),
-    (re.compile(r"\bapple\s*pay\b", re.I), "apple_pay"),
-)
-_DOC_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bstornorechnung|credit\s*note|avoir\b", re.I), "storno"),
-    (re.compile(r"\brechnung|invoice|facture\b", re.I), "rechnung"),
-)
-
-
 @dataclass(frozen=True)
 class LocalExtractionResult:
     """Local naming-oriented extraction for one sandbox PDF."""
@@ -87,6 +79,17 @@ class LocalExtractionResult:
     ok: bool = False
     # First text chunk only — for safe direction heuristics (no private hardcodes).
     raw_text_head: str | None = None
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = ()
+    rejected_amount_candidates: tuple[dict[str, object], ...] = ()
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    payment_field_candidates: tuple[dict[str, object], ...] = ()
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = ()
+    art_ambiguity: bool = False
 
 
 def _norm_path(path: Path | str | None) -> Path | None:
@@ -124,20 +127,6 @@ def read_pdf_text_layer(path: Path, *, max_pages: int = 2) -> str:
         for index in range(limit):
             chunks.append(document.load_page(index).get_text("text"))
     return "\n".join(chunks)
-
-
-def _guess_document_type(text: str) -> str | None:
-    for pattern, label in _DOC_TYPE_PATTERNS:
-        if pattern.search(text):
-            return label
-    return None
-
-
-def _guess_payment_account(text: str) -> str | None:
-    for pattern, label in _PAYMENT_PATTERNS:
-        if pattern.search(text):
-            return label
-    return None
 
 
 def guess_supplier_from_local_text(text: str) -> str | None:
@@ -218,9 +207,12 @@ def extract_local_fields_from_pdf(path: Path | str) -> LocalExtractionResult:
 
     supplier = guess_supplier_from_local_text(cleaned)
     invoice_date = parse_invoice_date_from_text(cleaned)
-    amount = parse_amount_from_text(cleaned)
-    document_type = _guess_document_type(cleaned)
-    payment_account = _guess_payment_account(cleaned)
+    amount_sel = select_invoice_amount_candidates(cleaned)
+    payment_sel = select_payment_field_candidates(cleaned)
+    art_sel = select_document_art_candidates(cleaned)
+    amount = amount_sel.selected_amount
+    document_type = art_sel.document_type
+    payment_account = payment_sel.selected_payment_field
     ok = bool(supplier or invoice_date or amount)
     return LocalExtractionResult(
         source_filename=pdf_path.name,
@@ -235,6 +227,23 @@ def extract_local_fields_from_pdf(path: Path | str) -> LocalExtractionResult:
         warnings=tuple(warnings),
         ok=ok,
         raw_text_head=cleaned[:1200],
+        selected_amount=amount_sel.selected_amount,
+        selected_amount_reason=amount_sel.selected_amount_reason,
+        amount_candidates=tuple(c.to_dict() for c in amount_sel.amount_candidates),
+        rejected_amount_candidates=tuple(
+            c.to_dict() for c in amount_sel.rejected_amount_candidates
+        ),
+        selected_payment_field=payment_sel.selected_payment_field,
+        selected_payment_field_reason=payment_sel.selected_payment_field_reason,
+        payment_field_candidates=tuple(
+            c.to_dict() for c in payment_sel.payment_field_candidates
+        ),
+        selected_art=art_sel.selected_art,
+        selected_art_reason=art_sel.selected_art_reason,
+        document_art_candidates=tuple(
+            c.to_dict() for c in art_sel.document_art_candidates
+        ),
+        art_ambiguity=bool(art_sel.art_ambiguity),
     )
 
 
@@ -250,6 +259,9 @@ def _planned_with_suggestion(
             amount=extraction.amount,
             document_type=extraction.document_type,
             payment_account=extraction.payment_account,
+            payment_field=extraction.selected_payment_field
+            or extraction.payment_account,
+            art=extraction.selected_art,
             source_filename=planned.document_name or extraction.source_filename,
             planned_basename=Path(planned.planned_path).name if planned.planned_path else None,
             target_folder=str(Path(planned.planned_path).parent) if planned.planned_path else None,
@@ -260,6 +272,17 @@ def _planned_with_suggestion(
             routing_category=planned.business_category,
             document_direction=planned.document_direction,
             raw_text_head=extraction.raw_text_head,
+            selected_amount=extraction.selected_amount,
+            selected_amount_reason=extraction.selected_amount_reason,
+            amount_candidates=extraction.amount_candidates,
+            rejected_amount_candidates=extraction.rejected_amount_candidates,
+            selected_payment_field=extraction.selected_payment_field,
+            selected_payment_field_reason=extraction.selected_payment_field_reason,
+            payment_field_candidates=extraction.payment_field_candidates,
+            selected_art=extraction.selected_art,
+            selected_art_reason=extraction.selected_art_reason,
+            document_art_candidates=extraction.document_art_candidates,
+            art_ambiguity=extraction.art_ambiguity,
         ),
         review_required=True,
     )
@@ -300,6 +323,17 @@ def _planned_with_suggestion(
         placeholder_values=mapping.placeholder_values,
         missing_placeholders=mapping.missing_placeholders,
         amount_format=mapping.amount_format,
+        amount_candidates=mapping.amount_candidates,
+        selected_amount=mapping.selected_amount,
+        selected_amount_reason=mapping.selected_amount_reason,
+        rejected_amount_candidates=mapping.rejected_amount_candidates,
+        payment_field_candidates=mapping.payment_field_candidates,
+        selected_payment_field=mapping.selected_payment_field,
+        selected_payment_field_reason=mapping.selected_payment_field_reason,
+        document_art_candidates=mapping.document_art_candidates,
+        selected_art=mapping.selected_art,
+        selected_art_reason=mapping.selected_art_reason,
+        art_ambiguity=mapping.art_ambiguity,
     )
 
 

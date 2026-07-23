@@ -111,6 +111,11 @@ MSG_FIELD_DOCUMENT_DIRECTION = "Rechnungsart"
 MSG_FIELD_BUSINESS_CATEGORY = "Zuordnung"
 MSG_FIELD_COUNTERPARTY_NAME = "Name"
 MSG_FIELD_AMOUNT = "Betrag"
+MSG_FIELD_AMOUNT_REASON = "Betrag Quelle/Grund"
+MSG_FIELD_PAYMENT_FIELD = "Zahlungsfeld"
+MSG_FIELD_PAYMENT_FIELD_REASON = "Zahlungsfeld Quelle/Grund"
+MSG_FIELD_DOCUMENT_ART = "Art/Dokumenttyp"
+MSG_FIELD_ART_REASON = "Art Quelle/Grund"
 MSG_NAMING_NOT_FINAL = "Benennung noch nicht final"
 MSG_SUGGESTED_PREVIEW_ONLY = (
     "Vorschlagsname nur als Preview — finale Freigabe erforderlich; "
@@ -187,6 +192,23 @@ class PreviewNamingDecision:
     placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
     missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -230,6 +252,23 @@ class PreviewExportItem:
     placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
     missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -374,6 +413,17 @@ def _meta_from_planned(
             "placeholder_values": (),
             "missing_placeholders": (),
             "amount_format": None,
+            "amount_candidates": (),
+            "selected_amount": None,
+            "selected_amount_reason": None,
+            "rejected_amount_candidates": (),
+            "payment_field_candidates": (),
+            "selected_payment_field": None,
+            "selected_payment_field_reason": None,
+            "document_art_candidates": (),
+            "selected_art": None,
+            "selected_art_reason": None,
+            "art_ambiguity": False,
         }
     fields = tuple(planned.suggested_filename_fields or ())
     return {
@@ -403,6 +453,18 @@ def _meta_from_planned(
         "placeholder_values": tuple(planned.placeholder_values or ()),
         "missing_placeholders": tuple(planned.missing_placeholders or ()),
         "amount_format": planned.amount_format,
+        "amount_candidates": tuple(planned.amount_candidates or ()),
+        "selected_amount": planned.selected_amount or planned.amount,
+        "selected_amount_reason": planned.selected_amount_reason,
+        "rejected_amount_candidates": tuple(planned.rejected_amount_candidates or ()),
+        "payment_field_candidates": tuple(planned.payment_field_candidates or ()),
+        "selected_payment_field": planned.selected_payment_field
+        or planned.payment_account,
+        "selected_payment_field_reason": planned.selected_payment_field_reason,
+        "document_art_candidates": tuple(planned.document_art_candidates or ()),
+        "selected_art": planned.selected_art,
+        "selected_art_reason": planned.selected_art_reason,
+        "art_ambiguity": bool(planned.art_ambiguity),
     }
 
 
@@ -434,6 +496,19 @@ def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "placeholder_values": tuple(meta.get("placeholder_values") or ()),
         "missing_placeholders": tuple(meta.get("missing_placeholders") or ()),
         "amount_format": meta.get("amount_format"),
+        "amount_candidates": tuple(meta.get("amount_candidates") or ()),
+        "selected_amount": meta.get("selected_amount"),
+        "selected_amount_reason": meta.get("selected_amount_reason"),
+        "rejected_amount_candidates": tuple(
+            meta.get("rejected_amount_candidates") or ()
+        ),
+        "payment_field_candidates": tuple(meta.get("payment_field_candidates") or ()),
+        "selected_payment_field": meta.get("selected_payment_field"),
+        "selected_payment_field_reason": meta.get("selected_payment_field_reason"),
+        "document_art_candidates": tuple(meta.get("document_art_candidates") or ()),
+        "selected_art": meta.get("selected_art"),
+        "selected_art_reason": meta.get("selected_art_reason"),
+        "art_ambiguity": bool(meta.get("art_ambiguity") or False),
     }
 
 
@@ -809,7 +884,11 @@ def _readme_text(
             "- Manifest fields: `matched_configuration_name`, "
             "`matched_configuration_pattern`, `filename_pattern`, "
             "`rendered_filename`, `placeholder_values`, `missing_placeholders`, "
-            "`amount_format`, `filename_source`, `canonical_filename` (fallback), "
+            "`amount_format`, `amount_candidates`, `selected_amount`, "
+            "`selected_amount_reason`, `payment_field_candidates`, "
+            "`selected_payment_field`, `selected_payment_field_reason`, "
+            "`document_art_candidates`, `selected_art`, `selected_art_reason`, "
+            "`filename_source`, `canonical_filename` (fallback), "
             "`naming_reason`, `naming_confidence`, `suggested_filename`",
             "",
             "## Safety",
@@ -879,6 +958,33 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             )
         if item.amount_format:
             lines.append(f"  - {MSG_FIELD_AMOUNT_FORMAT}: `{item.amount_format}`")
+        if item.selected_amount or item.amount:
+            lines.append(
+                f"  - {MSG_FIELD_AMOUNT}: `{item.selected_amount or item.amount}`"
+            )
+        if item.selected_amount_reason:
+            lines.append(
+                f"  - {MSG_FIELD_AMOUNT_REASON}: {item.selected_amount_reason}"
+            )
+        if item.selected_payment_field is not None or item.payment_account:
+            lines.append(
+                f"  - {MSG_FIELD_PAYMENT_FIELD}: `"
+                f"{item.selected_payment_field or item.payment_account or '—'}`"
+            )
+        elif item.selected_payment_field_reason:
+            lines.append(f"  - {MSG_FIELD_PAYMENT_FIELD}: `—`")
+        if item.selected_payment_field_reason:
+            lines.append(
+                f"  - {MSG_FIELD_PAYMENT_FIELD_REASON}: "
+                f"{item.selected_payment_field_reason}"
+            )
+        if item.selected_art or item.document_type:
+            lines.append(
+                f"  - {MSG_FIELD_DOCUMENT_ART}: `"
+                f"{item.selected_art or item.document_type}`"
+            )
+        if item.selected_art_reason:
+            lines.append(f"  - {MSG_FIELD_ART_REASON}: {item.selected_art_reason}")
         if item.canonical_filename:
             lines.append(f"  - canonical_filename (Fallback): `{item.canonical_filename}`")
         if item.filename_template_version:
@@ -904,8 +1010,6 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(f"  - {MSG_FIELD_COUNTERPARTY_NAME}: `{name}`")
         if item.invoice_date:
             lines.append(f"  - invoice_date: `{item.invoice_date}`")
-        if item.amount:
-            lines.append(f"  - {MSG_FIELD_AMOUNT}: `{item.amount}`")
         if item.missing_fields:
             lines.append(
                 "  - fehlende Felder: `"
@@ -961,6 +1065,12 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "supplier",
             "invoice_date",
             "amount",
+            "selected_amount",
+            "selected_amount_reason",
+            "selected_payment_field",
+            "selected_payment_field_reason",
+            "selected_art",
+            "selected_art_reason",
             "missing_fields",
             "document_type",
             "payment_account",
@@ -1002,6 +1112,12 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.supplier or "",
                 item.invoice_date or "",
                 item.amount or "",
+                item.selected_amount or item.amount or "",
+                item.selected_amount_reason or "",
+                item.selected_payment_field or "",
+                item.selected_payment_field_reason or "",
+                item.selected_art or "",
+                item.selected_art_reason or "",
                 "|".join(item.missing_fields or ()),
                 item.document_type or "",
                 item.payment_account or "",
@@ -1073,6 +1189,19 @@ def _manifest_payload(
                 },
                 "missing_placeholders": list(item.missing_placeholders or ()),
                 "amount_format": item.amount_format,
+                "amount_candidates": list(item.amount_candidates or ()),
+                "selected_amount": item.selected_amount or item.amount,
+                "selected_amount_reason": item.selected_amount_reason,
+                "rejected_amount_candidates": list(
+                    item.rejected_amount_candidates or ()
+                ),
+                "payment_field_candidates": list(item.payment_field_candidates or ()),
+                "selected_payment_field": item.selected_payment_field,
+                "selected_payment_field_reason": item.selected_payment_field_reason,
+                "document_art_candidates": list(item.document_art_candidates or ()),
+                "selected_art": item.selected_art,
+                "selected_art_reason": item.selected_art_reason,
+                "art_ambiguity": bool(item.art_ambiguity),
                 "canonical_filename": item.canonical_filename,
                 "filename_template_version": item.filename_template_version,
                 "document_direction": item.document_direction,
@@ -1299,6 +1428,19 @@ def write_preview_export_package(
                         placeholder_values=naming.placeholder_values,
                         missing_placeholders=naming.missing_placeholders,
                         amount_format=naming.amount_format,
+                        amount_candidates=naming.amount_candidates,
+                        selected_amount=naming.selected_amount,
+                        selected_amount_reason=naming.selected_amount_reason,
+                        rejected_amount_candidates=naming.rejected_amount_candidates,
+                        payment_field_candidates=naming.payment_field_candidates,
+                        selected_payment_field=naming.selected_payment_field,
+                        selected_payment_field_reason=(
+                            naming.selected_payment_field_reason
+                        ),
+                        document_art_candidates=naming.document_art_candidates,
+                        selected_art=naming.selected_art,
+                        selected_art_reason=naming.selected_art_reason,
+                        art_ambiguity=naming.art_ambiguity,
                     )
                 )
                 continue
@@ -1356,6 +1498,19 @@ def write_preview_export_package(
                     placeholder_values=naming.placeholder_values,
                     missing_placeholders=naming.missing_placeholders,
                     amount_format=naming.amount_format,
+                    amount_candidates=naming.amount_candidates,
+                    selected_amount=naming.selected_amount,
+                    selected_amount_reason=naming.selected_amount_reason,
+                    rejected_amount_candidates=naming.rejected_amount_candidates,
+                    payment_field_candidates=naming.payment_field_candidates,
+                    selected_payment_field=naming.selected_payment_field,
+                    selected_payment_field_reason=(
+                        naming.selected_payment_field_reason
+                    ),
+                    document_art_candidates=naming.document_art_candidates,
+                    selected_art=naming.selected_art,
+                    selected_art_reason=naming.selected_art_reason,
+                    art_ambiguity=naming.art_ambiguity,
                 )
             )
 
@@ -1500,6 +1655,11 @@ def preview_export_ui_copy() -> tuple[str, ...]:
         MSG_FIELD_BUSINESS_CATEGORY,
         MSG_FIELD_COUNTERPARTY_NAME,
         MSG_FIELD_AMOUNT,
+        MSG_FIELD_AMOUNT_REASON,
+        MSG_FIELD_PAYMENT_FIELD,
+        MSG_FIELD_PAYMENT_FIELD_REASON,
+        MSG_FIELD_DOCUMENT_ART,
+        MSG_FIELD_ART_REASON,
         MSG_FIELD_NAMING_REASON,
         MSG_FIELD_PLANNED_TARGET,
         MSG_NAMING_NOT_FINAL,
@@ -1545,6 +1705,11 @@ __all__ = (
     "FORBIDDEN_POSITIVE_CLAIM_MARKERS",
     "MSG_FIELD_AMOUNT",
     "MSG_FIELD_AMOUNT_FORMAT",
+    "MSG_FIELD_AMOUNT_REASON",
+    "MSG_FIELD_PAYMENT_FIELD",
+    "MSG_FIELD_PAYMENT_FIELD_REASON",
+    "MSG_FIELD_DOCUMENT_ART",
+    "MSG_FIELD_ART_REASON",
     "MSG_FIELD_BUSINESS_CATEGORY",
     "MSG_FIELD_CONFIGURATION",
     "MSG_FIELD_COUNTERPARTY_NAME",

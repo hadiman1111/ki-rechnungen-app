@@ -123,6 +123,23 @@ class ReviewItemViewModel:
     placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
     missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
     amount_format: str | None = None
+    amount_candidates: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    selected_amount: str | None = None
+    selected_amount_reason: str | None = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    payment_field_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_payment_field: str | None = None
+    selected_payment_field_reason: str | None = None
+    document_art_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    selected_art: str | None = None
+    selected_art_reason: str | None = None
+    art_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,6 +240,17 @@ def build_review_item_view_model(
     placeholder_values: tuple[tuple[str, str | None], ...] = ()
     missing_placeholders: tuple[str, ...] = ()
     amount_format = None
+    amount_candidates: tuple[dict[str, object], ...] = ()
+    selected_amount = None
+    selected_amount_reason = None
+    rejected_amount_candidates: tuple[dict[str, object], ...] = ()
+    payment_field_candidates: tuple[dict[str, object], ...] = ()
+    selected_payment_field = None
+    selected_payment_field_reason = None
+    document_art_candidates: tuple[dict[str, object], ...] = ()
+    selected_art = None
+    selected_art_reason = None
+    art_ambiguity = False
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -268,6 +296,24 @@ def build_review_item_view_model(
         placeholder_values = tuple(planned.placeholder_values or ())
         missing_placeholders = tuple(planned.missing_placeholders or ())
         amount_format = (planned.amount_format or "").strip() or None
+        amount_candidates = tuple(planned.amount_candidates or ())
+        selected_amount = (planned.selected_amount or planned.amount or "").strip() or None
+        selected_amount_reason = (
+            (planned.selected_amount_reason or "").strip() or None
+        )
+        rejected_amount_candidates = tuple(planned.rejected_amount_candidates or ())
+        payment_field_candidates = tuple(planned.payment_field_candidates or ())
+        selected_payment_field = (
+            (planned.selected_payment_field or planned.payment_account or "").strip()
+            or None
+        )
+        selected_payment_field_reason = (
+            (planned.selected_payment_field_reason or "").strip() or None
+        )
+        document_art_candidates = tuple(planned.document_art_candidates or ())
+        selected_art = (planned.selected_art or "").strip() or None
+        selected_art_reason = (planned.selected_art_reason or "").strip() or None
+        art_ambiguity = bool(planned.art_ambiguity)
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -311,6 +357,17 @@ def build_review_item_view_model(
         placeholder_values=placeholder_values,
         missing_placeholders=missing_placeholders,
         amount_format=amount_format,
+        amount_candidates=amount_candidates,
+        selected_amount=selected_amount,
+        selected_amount_reason=selected_amount_reason,
+        rejected_amount_candidates=rejected_amount_candidates,
+        payment_field_candidates=payment_field_candidates,
+        selected_payment_field=selected_payment_field,
+        selected_payment_field_reason=selected_payment_field_reason,
+        document_art_candidates=document_art_candidates,
+        selected_art=selected_art,
+        selected_art_reason=selected_art_reason,
+        art_ambiguity=art_ambiguity,
     )
 
 
