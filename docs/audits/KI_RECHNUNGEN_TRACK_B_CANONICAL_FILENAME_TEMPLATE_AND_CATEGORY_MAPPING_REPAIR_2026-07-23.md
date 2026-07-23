@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CANONICAL_FILENAME_TEMPLATE_AND_CATEGORY_MAPPING_REPAIR_01`
 2. **Masterplan position:** Prompt 19/34
 3. **HEAD before:** `6efa0a955d1d9fc7eba183200a8e82986d3962f4`  
-   **HEAD after:** *(filled after commit/push)*
+   **HEAD after:** `83c3a552a56b1a85485b85de93f80d80d388ec91`
 4. **User observation:** Prompt-18-Namen ohne Rechnungsart/Zuordnung (z. B. `260523_Böttcher_AG_84.39.pdf`).
 5. **Baseline:** Prompt 18 extraction/suggested-filename mapping ready; Muster `{date}_{supplier}_{amount}`.
 6. **Required pattern:** `<YYMMDD>_<DOCUMENT_DIRECTION>_<BUSINESS_CATEGORY>_<COUNTERPARTY_NAME>_<AMOUNT>.pdf`
