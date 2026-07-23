@@ -340,6 +340,11 @@ def _planned_with_suggestion(
         condition_results=mapping.condition_results,
         alternative_matches=mapping.alternative_matches,
         missing_configuration_rule=mapping.missing_configuration_rule,
+        configuration_coverage_status=mapping.configuration_coverage_status,
+        missing_configuration_type=mapping.missing_configuration_type,
+        user_guidance=mapping.user_guidance,
+        suggested_configuration_action=mapping.suggested_configuration_action,
+        guidance_severity=mapping.guidance_severity,
     )
 
 

@@ -22,6 +22,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from invoice_tool.ui_v2.configuration_guidance import (
+    MSG_FIELD_CONFIGURATION_COVERAGE,
+    MSG_FIELD_GUIDANCE_SEVERITY,
+    MSG_FIELD_MISSING_CONFIGURATION_TYPE,
+    MSG_FIELD_SUGGESTED_ACTION,
+    MSG_FIELD_USER_GUIDANCE,
+    SAFE_NEXT_ACTIONS,
+    ensure_guidance_fields,
+)
 from invoice_tool.ui_v2.core_dry_run_contract import (
     is_explicit_copied_sandbox_test_path,
     path_has_forbidden_productive_marker,
@@ -37,6 +46,9 @@ from invoice_tool.ui_v2.review_preview_state import (
     get_review_preview_ui,
     review_item_key,
 )
+
+# Stable aliases for review UI / tests (Prompt 23/34).
+MSG_FIELD_SUGGESTED_CONFIGURATION_ACTION = MSG_FIELD_SUGGESTED_ACTION
 
 PREVIEW_EXPORT_KIND = "track_b_preview_export_package"
 PREVIEW_EXPORT_SCHEMA_VERSION = 1
@@ -224,6 +236,11 @@ class PreviewNamingDecision:
     condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
     alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +311,11 @@ class PreviewExportItem:
     condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
     alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -455,9 +477,15 @@ def _meta_from_planned(
             "condition_results": (),
             "alternative_matches": (),
             "missing_configuration_rule": None,
+            "configuration_coverage_status": None,
+            "missing_configuration_type": None,
+            "user_guidance": None,
+            "suggested_configuration_action": None,
+            "guidance_severity": None,
+            "source_filename": None,
         }
     fields = tuple(planned.suggested_filename_fields or ())
-    return {
+    base = {
         "naming_confidence": planned.naming_confidence,
         "supplier": planned.supplier,
         "invoice_date": planned.invoice_date,
@@ -504,7 +532,14 @@ def _meta_from_planned(
         "condition_results": tuple(planned.condition_results or ()),
         "alternative_matches": tuple(planned.alternative_matches or ()),
         "missing_configuration_rule": planned.missing_configuration_rule,
+        "configuration_coverage_status": planned.configuration_coverage_status,
+        "missing_configuration_type": planned.missing_configuration_type,
+        "user_guidance": planned.user_guidance,
+        "suggested_configuration_action": planned.suggested_configuration_action,
+        "guidance_severity": planned.guidance_severity,
+        "source_filename": planned.document_name,
     }
+    return {**base, **ensure_guidance_fields(base)}
 
 
 def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
@@ -556,6 +591,7 @@ def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "condition_results": tuple(meta.get("condition_results") or ()),
         "alternative_matches": tuple(meta.get("alternative_matches") or ()),
         "missing_configuration_rule": meta.get("missing_configuration_rule"),
+        **ensure_guidance_fields(meta),
     }
 
 
@@ -936,7 +972,21 @@ def _readme_text(
             "`selected_payment_field`, `selected_payment_field_reason`, "
             "`document_art_candidates`, `selected_art`, `selected_art_reason`, "
             "`filename_source`, `canonical_filename` (fallback), "
-            "`naming_reason`, `naming_confidence`, `suggested_filename`",
+            "`naming_reason`, `naming_confidence`, `suggested_filename`, "
+            "`configuration_coverage_status`, `missing_configuration_type`, "
+            "`user_guidance`, `suggested_configuration_action`, `guidance_severity`",
+            "",
+            "## Configuration coverage guidance",
+            "",
+            "- PayPal erkannt, aber keine aktive PayPal-Konfiguration vorhanden.",
+            "- Kreditkarte erkannt, aber AMEX nicht belegt; keine passende "
+            "Nicht-AMEX-Karten-Konfiguration vorhanden.",
+            "- Zahlungsfeld nicht sicher erkannt; Konfiguration konnte deshalb "
+            "nicht eindeutig gewählt werden.",
+            "- Sichere nächste Schritte: "
+            + "; ".join(SAFE_NEXT_ACTIONS)
+            + ".",
+            "- Keine automatische Erstellung/Änderung von Nutzerkonfigurationen.",
             "",
             "## Safety",
             "",
@@ -1013,6 +1063,22 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
         if item.unmatched_reasons:
             lines.append(
                 "  - unmatched_reasons: " + " | ".join(item.unmatched_reasons)
+            )
+        if item.configuration_coverage_status:
+            coverage = item.configuration_coverage_status
+            if item.missing_configuration_type:
+                coverage = f"{coverage} ({item.missing_configuration_type})"
+            lines.append(f"  - {MSG_FIELD_CONFIGURATION_COVERAGE}: {coverage}")
+        if item.user_guidance:
+            lines.append(f"  - {MSG_FIELD_USER_GUIDANCE}: {item.user_guidance}")
+        if item.suggested_configuration_action:
+            lines.append(
+                f"  - {MSG_FIELD_SUGGESTED_CONFIGURATION_ACTION}: "
+                f"{item.suggested_configuration_action}"
+            )
+        if item.user_guidance or item.suggested_configuration_action:
+            lines.append(
+                "  - Sichere nächste Schritte: " + "; ".join(SAFE_NEXT_ACTIONS)
             )
         if item.matched_configuration_pattern or item.filename_pattern:
             lines.append(
@@ -1135,6 +1201,11 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "matched_configuration_reason",
             "available_configurations",
             "missing_configuration_rule",
+            "configuration_coverage_status",
+            "missing_configuration_type",
+            "user_guidance",
+            "suggested_configuration_action",
+            "guidance_severity",
             "filename_pattern",
             "placeholder_values",
             "missing_placeholders",
@@ -1188,6 +1259,11 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                     for c in (item.available_configurations or ())
                 ),
                 item.missing_configuration_rule or "",
+                item.configuration_coverage_status or "",
+                item.missing_configuration_type or "",
+                item.user_guidance or "",
+                item.suggested_configuration_action or "",
+                item.guidance_severity or "",
                 item.filename_pattern or "",
                 placeholder_text,
                 "|".join(item.missing_placeholders or ()),
@@ -1282,6 +1358,11 @@ def _manifest_payload(
                 "condition_results": list(item.condition_results or ()),
                 "alternative_matches": list(item.alternative_matches or ()),
                 "missing_configuration_rule": item.missing_configuration_rule,
+                "configuration_coverage_status": item.configuration_coverage_status,
+                "missing_configuration_type": item.missing_configuration_type,
+                "user_guidance": item.user_guidance,
+                "suggested_configuration_action": item.suggested_configuration_action,
+                "guidance_severity": item.guidance_severity,
                 "filename_pattern": item.filename_pattern,
                 "placeholder_values": {
                     key: value for key, value in (item.placeholder_values or ())
@@ -1548,6 +1629,15 @@ def write_preview_export_package(
                         condition_results=naming.condition_results,
                         alternative_matches=naming.alternative_matches,
                         missing_configuration_rule=naming.missing_configuration_rule,
+                        configuration_coverage_status=(
+                            naming.configuration_coverage_status
+                        ),
+                        missing_configuration_type=naming.missing_configuration_type,
+                        user_guidance=naming.user_guidance,
+                        suggested_configuration_action=(
+                            naming.suggested_configuration_action
+                        ),
+                        guidance_severity=naming.guidance_severity,
                     )
                 )
                 continue
@@ -1626,6 +1716,13 @@ def write_preview_export_package(
                     condition_results=naming.condition_results,
                     alternative_matches=naming.alternative_matches,
                     missing_configuration_rule=naming.missing_configuration_rule,
+                    configuration_coverage_status=naming.configuration_coverage_status,
+                    missing_configuration_type=naming.missing_configuration_type,
+                    user_guidance=naming.user_guidance,
+                    suggested_configuration_action=(
+                        naming.suggested_configuration_action
+                    ),
+                    guidance_severity=naming.guidance_severity,
                 )
             )
 

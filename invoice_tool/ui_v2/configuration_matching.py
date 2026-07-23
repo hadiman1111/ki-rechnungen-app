@@ -14,6 +14,9 @@ from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from invoice_tool.configuration_model import Configuration, pattern_to_template
 from invoice_tool.matching import normalize_for_matching
+from invoice_tool.ui_v2.configuration_guidance import (
+    derive_configuration_coverage_guidance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +133,16 @@ class ConfigurationMatchResult:
     def transparency_fields(self) -> dict[str, Any]:
         """Fields to propagate into mapping / export / review."""
 
+        guidance = derive_configuration_coverage_guidance(
+            selected_payment_field=self.matched_payment_field,
+            payment_account=self.matched_payment_field,
+            matched_configuration_name=self.matched_configuration_name,
+            evaluated_configuration_candidates=self.evaluated_configuration_candidates,
+            unmatched_reasons=self.unmatched_reasons,
+            is_unmatched_fallback=self.is_unmatched_fallback,
+            matched_configuration_reason=self.matched_configuration_reason,
+            missing_configuration_rule=self.missing_configuration_rule,
+        )
         return {
             "matched_configuration_name": self.matched_configuration_name,
             "matched_configuration_id": self.matched_configuration_id,
@@ -144,6 +157,7 @@ class ConfigurationMatchResult:
             "condition_results": tuple(self.condition_results),
             "alternative_matches": tuple(self.alternative_matches),
             "missing_configuration_rule": self.missing_configuration_rule,
+            **guidance.to_export_fields(),
         }
 
 
@@ -693,6 +707,7 @@ def _unmatched_result(
     evaluated: tuple[dict[str, object], ...],
     unmatched_reasons: tuple[str, ...],
     missing_configuration_rule: str | None,
+    detected_payment_field: str | None = None,
 ) -> ConfigurationMatchResult:
     if unmatched is None:
         return ConfigurationMatchResult(
@@ -703,6 +718,7 @@ def _unmatched_result(
             matched_configuration_confidence="none",
             is_unmatched_fallback=True,
             unmatched_reason=reason,
+            matched_payment_field=detected_payment_field,
             available_configurations=available,
             evaluated_configuration_candidates=evaluated,
             unmatched_reasons=unmatched_reasons or (reason,),
@@ -717,7 +733,7 @@ def _unmatched_result(
         matched_configuration_confidence=confidence,
         is_unmatched_fallback=True,
         unmatched_reason=reason,
-        matched_payment_field=None,
+        matched_payment_field=detected_payment_field,
         available_configurations=available,
         evaluated_configuration_candidates=evaluated
         + (
@@ -857,6 +873,8 @@ def match_active_configuration(
             missing_configuration_rule=None,
         )
 
+    detected_payment = (payment_field or payment_account or "").strip() or None
+
     if not any(item.active for item in active) and unmatched_candidate is None:
         return ConfigurationMatchResult(
             matched_configuration_name=None,
@@ -868,6 +886,7 @@ def match_active_configuration(
             matched_configuration_confidence="none",
             is_unmatched_fallback=True,
             unmatched_reason="no_active_configuration_or_unmatched",
+            matched_payment_field=detected_payment,
             available_configurations=available,
             evaluated_configuration_candidates=evaluated,
             unmatched_reasons=unmatched_reasons
@@ -890,6 +909,7 @@ def match_active_configuration(
         evaluated=evaluated,
         unmatched_reasons=unmatched_reasons + (reason,),
         missing_configuration_rule=missing_rule,
+        detected_payment_field=detected_payment,
     )
 
 

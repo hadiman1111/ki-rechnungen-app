@@ -190,6 +190,12 @@ class ProcessingPlannedDestination:
     condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
     alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
     missing_configuration_rule: str | None = None
+    # Prompt 23/34 — configuration coverage guidance (no auto config mutation).
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)

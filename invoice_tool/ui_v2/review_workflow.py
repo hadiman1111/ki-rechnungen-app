@@ -150,6 +150,11 @@ class ReviewItemViewModel:
     condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
     alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,11 @@ def build_review_item_view_model(
     condition_results: tuple[dict[str, object], ...] = ()
     alternative_matches: tuple[dict[str, object], ...] = ()
     missing_configuration_rule = None
+    configuration_coverage_status = None
+    missing_configuration_type = None
+    user_guidance = None
+    suggested_configuration_action = None
+    guidance_severity = None
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -340,6 +350,17 @@ def build_review_item_view_model(
         missing_configuration_rule = (
             (planned.missing_configuration_rule or "").strip() or None
         )
+        configuration_coverage_status = (
+            (planned.configuration_coverage_status or "").strip() or None
+        )
+        missing_configuration_type = (
+            (planned.missing_configuration_type or "").strip() or None
+        )
+        user_guidance = (planned.user_guidance or "").strip() or None
+        suggested_configuration_action = (
+            (planned.suggested_configuration_action or "").strip() or None
+        )
+        guidance_severity = (planned.guidance_severity or "").strip() or None
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -400,6 +421,11 @@ def build_review_item_view_model(
         condition_results=condition_results,
         alternative_matches=alternative_matches,
         missing_configuration_rule=missing_configuration_rule,
+        configuration_coverage_status=configuration_coverage_status,
+        missing_configuration_type=missing_configuration_type,
+        user_guidance=user_guidance,
+        suggested_configuration_action=suggested_configuration_action,
+        guidance_severity=guidance_severity,
     )
 
 

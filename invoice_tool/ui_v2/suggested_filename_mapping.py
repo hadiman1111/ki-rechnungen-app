@@ -33,6 +33,9 @@ from invoice_tool.ui_v2.configuration_filename_renderer import (
     format_amount_comma,
     render_configuration_filename_pattern,
 )
+from invoice_tool.ui_v2.configuration_guidance import (
+    derive_configuration_coverage_guidance,
+)
 from invoice_tool.ui_v2.configuration_matching import (
     ConfigurationCandidate,
     ConfigurationMatchResult,
@@ -210,6 +213,11 @@ class SuggestedFilenameMappingResult:
     condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
     alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 def sanitize_suggested_filename(name: str | None) -> str | None:
@@ -294,13 +302,51 @@ def _empty_match_transparency() -> dict[str, Any]:
         "condition_results": (),
         "alternative_matches": (),
         "missing_configuration_rule": None,
+        "configuration_coverage_status": None,
+        "missing_configuration_type": None,
+        "user_guidance": None,
+        "suggested_configuration_action": None,
+        "guidance_severity": None,
     }
 
 
-def _match_transparency(match: ConfigurationMatchResult | None) -> dict[str, Any]:
+def _match_transparency(
+    match: ConfigurationMatchResult | None,
+    *,
+    selected_payment_field: str | None = None,
+    payment_account: str | None = None,
+    absent_pattern_slots: Sequence[str] | None = None,
+    document_type: str | None = None,
+    supplier: str | None = None,
+    source_filename: str | None = None,
+    payment_field_candidates: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     if match is None:
-        return _empty_match_transparency()
-    return match.transparency_fields()
+        base = _empty_match_transparency()
+    else:
+        base = match.transparency_fields()
+    guidance = derive_configuration_coverage_guidance(
+        selected_payment_field=selected_payment_field
+        or (match.matched_payment_field if match else None),
+        payment_account=payment_account,
+        payment_field_candidates=payment_field_candidates,
+        matched_configuration_name=base.get("matched_configuration_name"),
+        evaluated_configuration_candidates=base.get(
+            "evaluated_configuration_candidates"
+        )
+        or (),
+        unmatched_reasons=base.get("unmatched_reasons") or (),
+        absent_pattern_slots=absent_pattern_slots,
+        document_type=document_type,
+        supplier=supplier,
+        source_filename=source_filename,
+        is_unmatched_fallback=(
+            match.is_unmatched_fallback if match is not None else True
+        ),
+        matched_configuration_reason=base.get("matched_configuration_reason"),
+        missing_configuration_rule=base.get("missing_configuration_rule"),
+    )
+    return {**base, **guidance.to_export_fields()}
 
 
 def _canonical_fallback(
@@ -319,8 +365,21 @@ def _canonical_fallback(
     payment_account = _clean_optional(fields.payment_account)
 
     has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
+    payment_signal = (
+        _clean_optional(fields.selected_payment_field)
+        or _clean_optional(fields.payment_field)
+        or payment_account
+    )
     match_meta = {
-        **_match_transparency(match),
+        **_match_transparency(
+            match,
+            selected_payment_field=payment_signal,
+            payment_account=payment_account,
+            document_type=document_type,
+            supplier=supplier,
+            source_filename=source_name,
+            payment_field_candidates=fields.payment_field_candidates,
+        ),
         **_candidate_meta(fields),
     }
     if not has_core:
@@ -652,7 +711,16 @@ def map_suggested_filename(
                 missing_placeholders=rendered.missing_placeholders,
                 amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
                 **{
-                    **_match_transparency(match),
+                    **_match_transparency(
+                        match,
+                        selected_payment_field=payment_field,
+                        payment_account=payment_account,
+                        absent_pattern_slots=rendered.missing_placeholders,
+                        document_type=document_type,
+                        supplier=supplier,
+                        source_filename=source_name,
+                        payment_field_candidates=fields.payment_field_candidates,
+                    ),
                     "matched_configuration_pattern": config_pattern,
                 },
                 **candidate_meta,
@@ -697,7 +765,16 @@ def map_suggested_filename(
             missing_placeholders=rendered.missing_placeholders,
             amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
             **{
-                **_match_transparency(match),
+                **_match_transparency(
+                    match,
+                    selected_payment_field=payment_field,
+                    payment_account=payment_account,
+                    absent_pattern_slots=rendered.missing_placeholders,
+                    document_type=document_type,
+                    supplier=supplier,
+                    source_filename=source_name,
+                    payment_field_candidates=fields.payment_field_candidates,
+                ),
                 "matched_configuration_pattern": config_pattern,
             },
             **candidate_meta,

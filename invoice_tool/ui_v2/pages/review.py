@@ -57,6 +57,9 @@ from invoice_tool.ui_v2.preview_export import (
     MSG_FIELD_EVALUATED_CANDIDATES,
     MSG_FIELD_MATCHING_REASON,
     MSG_FIELD_MISSING_CONFIGURATION_RULE,
+    MSG_FIELD_CONFIGURATION_COVERAGE,
+    MSG_FIELD_USER_GUIDANCE,
+    MSG_FIELD_SUGGESTED_CONFIGURATION_ACTION,
     MSG_FIELD_DOCUMENT_ART,
     MSG_FIELD_DOCUMENT_DIRECTION,
     MSG_FIELD_FILENAME_PATTERN,
@@ -198,6 +201,11 @@ class ReviewDetailItemVM:
     condition_results: tuple[dict[str, object], ...] = ()
     alternative_matches: tuple[dict[str, object], ...] = ()
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -282,6 +290,11 @@ class ReviewSelectedDetailVM:
     condition_results: tuple[dict[str, object], ...] = ()
     alternative_matches: tuple[dict[str, object], ...] = ()
     missing_configuration_rule: str | None = None
+    configuration_coverage_status: str | None = None
+    missing_configuration_type: str | None = None
+    user_guidance: str | None = None
+    suggested_configuration_action: str | None = None
+    guidance_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,6 +406,11 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         condition_results=tuple(item.condition_results or ()),
         alternative_matches=tuple(item.alternative_matches or ()),
         missing_configuration_rule=item.missing_configuration_rule,
+        configuration_coverage_status=item.configuration_coverage_status,
+        missing_configuration_type=item.missing_configuration_type,
+        user_guidance=item.user_guidance,
+        suggested_configuration_action=item.suggested_configuration_action,
+        guidance_severity=item.guidance_severity,
     )
 
 
@@ -529,6 +547,11 @@ def _build_selected_detail(
             condition_results=tuple(detail.condition_results or ()),
             alternative_matches=tuple(detail.alternative_matches or ()),
             missing_configuration_rule=detail.missing_configuration_rule,
+            configuration_coverage_status=detail.configuration_coverage_status,
+            missing_configuration_type=detail.missing_configuration_type,
+            user_guidance=detail.user_guidance,
+            suggested_configuration_action=detail.suggested_configuration_action,
+            guidance_severity=detail.guidance_severity,
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
@@ -651,6 +674,19 @@ def _build_selected_detail(
         missing_configuration_rule=(
             naming.missing_configuration_rule or detail.missing_configuration_rule
         ),
+        configuration_coverage_status=(
+            naming.configuration_coverage_status
+            or detail.configuration_coverage_status
+        ),
+        missing_configuration_type=(
+            naming.missing_configuration_type or detail.missing_configuration_type
+        ),
+        user_guidance=naming.user_guidance or detail.user_guidance,
+        suggested_configuration_action=(
+            naming.suggested_configuration_action
+            or detail.suggested_configuration_action
+        ),
+        guidance_severity=naming.guidance_severity or detail.guidance_severity,
     )
 
 
@@ -981,6 +1017,32 @@ def build_review_page(state: UiV2State) -> ft.Control:
             detail_fields.insert(
                 insert_at,
                 (MSG_FIELD_EVALUATED_CANDIDATES, "; ".join(parts)),
+            )
+            insert_at += 1
+        if detail.configuration_coverage_status or detail.user_guidance:
+            coverage_txt = detail.configuration_coverage_status or "—"
+            if detail.missing_configuration_type:
+                coverage_txt = (
+                    f"{coverage_txt} ({detail.missing_configuration_type})"
+                )
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_CONFIGURATION_COVERAGE, coverage_txt),
+            )
+            insert_at += 1
+        if detail.user_guidance:
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_USER_GUIDANCE, detail.user_guidance),
+            )
+            insert_at += 1
+        if detail.suggested_configuration_action:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_SUGGESTED_CONFIGURATION_ACTION,
+                    detail.suggested_configuration_action,
+                ),
             )
             insert_at += 1
         pattern_label = (
