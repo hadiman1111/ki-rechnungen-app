@@ -317,7 +317,11 @@ def test_report_does_not_claim_local_pilot_ready() -> None:
     text = render_export_preview_text(report).lower()
     assert MSG_LOCAL_PILOT_NOT_READY.lower() in text
     assert report.claims_local_pilot_ready is False
-    assert "local_pilot_ready" not in text.replace("local-pilot-ready ist nicht erreicht", "")
+    assert "sandbox" in text
+    assert "nicht produktiv" in text
+    # Affirmative Local-Pilot-Ready / SaaS claims must stay absent.
+    assert "local-pilot-ready" not in text
+    assert "local_pilot_ready" not in text
 
 
 def test_report_does_not_claim_saas_ready() -> None:
