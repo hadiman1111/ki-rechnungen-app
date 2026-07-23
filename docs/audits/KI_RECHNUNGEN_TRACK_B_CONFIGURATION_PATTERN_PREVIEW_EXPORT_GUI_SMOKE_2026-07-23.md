@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CONFIGURATION_PATTERN_PREVIEW_EXPORT_GUI_SMOKE_01`
 2. **Masterplan position:** Prompt 25/34
 3. **HEAD before:** `44357c82cdb7f2a14a1e59e234e42d97efb4b628`  
-   **HEAD after:** *(set after commit)*
+   **HEAD after:** `ed31c1130ab4c13d0967f0f0d7cf428b00166759`
 4. **Baseline:** Prompt 24 `TRACK_B_PREVIEW_EXPORT_STATE_FRESHNESS_READY`; Feature-HEAD `f509294ed96cdde86b9326e9f3dc2d9e0db0ad69`; origin/main `44357c82cdb7f2a14a1e59e234e42d97efb4b628`.
 5. **Manual verification source:** Product-Owner UI-v2 Sandbox + Preview Export auf kontrollierten Ordnern; hochgeladene PDFs/Manifest/README/review-items; Agent-Re-Read des neuesten Export-Ordners.
 6. **Latest export folder:** `preview-export-track-b-dry-61ff6af993d7-20260723T123451630008Z`  
