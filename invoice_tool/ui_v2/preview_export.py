@@ -17,7 +17,7 @@ import io
 import json
 import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -44,6 +44,7 @@ from invoice_tool.ui_v2.processing_state import (
 )
 from invoice_tool.ui_v2.review_preview_state import (
     get_review_preview_ui,
+    planned_for_document,
     review_item_key,
 )
 
@@ -119,8 +120,18 @@ MSG_PREVIEW_EXPORT_NO_SOURCE = (
 MSG_PREVIEW_EXPORT_PARTIAL_BLOCKED = (
     "Preview-Export blockiert: unsicherer Teillauf — nichts wurde als fertig markiert."
 )
+MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED = (
+    "PREVIEW_EXPORT_STALE_STATE_BLOCKED: Preview-Export blockiert — "
+    "Export-State weicht vom aktuellen Review-UI-/Run-State ab oder ist intern veraltet."
+)
+MSG_PREVIEW_EXPORT_STALE_SOURCE_BLOCKED = (
+    "PREVIEW_EXPORT_STALE_STATE_BLOCKED: Preview-Export blockiert — "
+    "alter Preview-Export-Ordner darf nicht als Datenquelle dienen."
+)
 MSG_NO_SAAS_READY = "nicht SaaS-ready"
 MSG_NO_PRODUCTION_READY = "nicht production-ready"
+STATE_SOURCE_CURRENT_PROCESSING_RUN = "processing_run_state.current"
+STATE_SOURCE_REVIEW_UI = "review_ui_current_state"
 MSG_FIELD_PREVIEW_FILENAME = "Vorschau-Dateiname"
 MSG_FIELD_NAMING_REASON = "Grund für REVIEW_REQUIRED"
 MSG_FIELD_PLANNED_TARGET = "Geplantes Ziel"
@@ -351,6 +362,19 @@ class PreviewExportRequest:
     dry_run: bool = True
     preview_export: bool = True
     final_write: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewExportExpectation:
+    """Values the Review UI would show for one document — export must match."""
+
+    source_filename: str
+    preview_filename: str
+    rendered_filename: str | None = None
+    selected_amount: str | None = None
+    selected_payment_field: str | None = None
+    selected_art: str | None = None
+    suggested_filename: str | None = None
 
 
 def sanitize_preview_filename(name: str) -> str:
@@ -756,6 +780,208 @@ def preview_export_available(run_state: ProcessingRunState | None) -> bool:
     return (run_state.status or "") == "completed"
 
 
+def _norm_text(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _path_is_previous_preview_export(path: Path | None) -> bool:
+    """True when a path is/inside a previous preview-export-* package."""
+
+    if path is None:
+        return False
+    try:
+        parts = path.resolve().parts
+    except OSError:
+        parts = path.parts
+    for part in parts:
+        if str(part).startswith(PREVIEW_EXPORT_FOLDER_PREFIX):
+            return True
+    return False
+
+
+def build_review_ui_export_expectations(
+    run_state: ProcessingRunState,
+) -> tuple[ReviewExportExpectation, ...]:
+    """Serialize the same preview naming the Review UI uses for this run state."""
+
+    planned_rows = tuple(run_state.planned_destinations or ())
+    expectations: list[ReviewExportExpectation] = []
+    seen: set[str] = set()
+
+    def _add(source_filename: str, *, review_required: bool) -> None:
+        key = _norm_text(source_filename)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        planned = planned_for_document(planned_rows, key)
+        naming = resolve_preview_naming(
+            source_filename=key,
+            review_required=review_required,
+            planned=planned,
+            suggested_filename=(
+                planned.suggested_filename
+                if planned is not None
+                else None
+            )
+            or (planned.rendered_filename if planned is not None else None)
+            or (planned.canonical_filename if planned is not None else None),
+        )
+        expectations.append(
+            ReviewExportExpectation(
+                source_filename=key,
+                preview_filename=naming.preview_filename,
+                rendered_filename=naming.rendered_filename,
+                selected_amount=naming.selected_amount or naming.amount,
+                selected_payment_field=naming.selected_payment_field
+                or naming.payment_account,
+                selected_art=naming.selected_art,
+                suggested_filename=naming.suggested_filename,
+            )
+        )
+
+    for item in run_state.review_items or ():
+        _add(item.document_name, review_required=True)
+    for item in run_state.results or ():
+        _add(item.document_name, review_required=False)
+    for item in run_state.error_items or ():
+        _add(item.document_name, review_required=True)
+    for planned in planned_rows:
+        _add(planned.document_name, review_required=True)
+    return tuple(expectations)
+
+
+def _internal_state_stale_reason(
+    *,
+    preview_filename: str,
+    selected_amount: str | None,
+    selected_art: str | None,
+    suggested_filename: str | None = None,
+) -> str | None:
+    """Detect internal contradictions that prove stale/pre-repair export state."""
+
+    preview = _norm_text(preview_filename)
+    suggested = _norm_text(suggested_filename)
+    haystack = f"{preview} {suggested}".lower()
+    amount = _norm_text(selected_amount)
+    art = _norm_text(selected_art).lower()
+    if art == "storno" and "storno" not in haystack and "er_er" in haystack:
+        return (
+            f"selected_art=storno but preview/suggested filename still uses er_er "
+            f"({preview_filename})"
+        )
+    if amount and amount not in preview and amount not in suggested:
+        # Only flag when a suggested invoice-like name exists but omits the amount.
+        if suggested and any(ch.isdigit() for ch in suggested):
+            return (
+                f"selected_amount={amount} missing from preview/suggested filename "
+                f"({preview_filename})"
+            )
+    return None
+
+
+def validate_export_state_freshness(
+    *,
+    export_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    expectations: tuple[ReviewExportExpectation, ...] | list[ReviewExportExpectation],
+) -> str | None:
+    """Return blocker text when export rows disagree with Review UI expectations."""
+
+    expected_by_name = {
+        _norm_text(item.source_filename): item for item in expectations
+    }
+    for row in export_rows:
+        source = _norm_text(str(row.get("source_filename") or ""))
+        if not source:
+            continue
+        preview = _norm_text(str(row.get("preview_filename") or ""))
+        amount = _norm_text(
+            str(row.get("selected_amount") or row.get("amount") or "")
+        ) or None
+        payment = _norm_text(str(row.get("selected_payment_field") or "")) or None
+        art = _norm_text(str(row.get("selected_art") or "")) or None
+        suggested = _norm_text(str(row.get("suggested_filename") or "")) or None
+        rendered = _norm_text(str(row.get("rendered_filename") or "")) or None
+
+        internal = _internal_state_stale_reason(
+            preview_filename=preview,
+            selected_amount=amount,
+            selected_art=art,
+            suggested_filename=suggested,
+        )
+        if internal:
+            return f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: {internal})"
+
+        expected = expected_by_name.get(source)
+        if expected is None:
+            continue
+        if preview != _norm_text(expected.preview_filename):
+            return (
+                f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: "
+                f"preview_filename export={preview!r} ui={expected.preview_filename!r})"
+            )
+        exp_amount = _norm_text(expected.selected_amount) or None
+        if exp_amount and amount and amount != exp_amount:
+            return (
+                f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: "
+                f"amount export={amount!r} ui={exp_amount!r})"
+            )
+        exp_payment = _norm_text(expected.selected_payment_field) or None
+        if exp_payment and payment and payment != exp_payment:
+            return (
+                f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: "
+                f"payment_field export={payment!r} ui={exp_payment!r})"
+            )
+        exp_art = _norm_text(expected.selected_art) or None
+        if exp_art and art and art != exp_art:
+            return (
+                f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: "
+                f"art export={art!r} ui={exp_art!r})"
+            )
+        exp_rendered = _norm_text(expected.rendered_filename) or None
+        if exp_rendered and rendered and rendered != exp_rendered:
+            return (
+                f"{MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED} ({source}: "
+                f"rendered_filename export={rendered!r} ui={exp_rendered!r})"
+            )
+    return None
+
+
+def refresh_run_state_from_current_sandbox_input(
+    run_state: ProcessingRunState,
+    *,
+    input_root: Path | str | None,
+) -> ProcessingRunState:
+    """Re-apply current local enrichment onto planned destinations (sandbox only).
+
+    Ensures Preview Export cannot keep pre-repair amounts/art from an older
+    in-memory mapping when the controlled input PDFs are still available.
+    Never mutates input files.
+    """
+
+    if run_state is None:
+        return run_state
+    if _path_is_previous_preview_export(_norm_path(input_root)):
+        return run_state
+    planned = tuple(run_state.planned_destinations or ())
+    if not planned:
+        return run_state
+    from invoice_tool.ui_v2.extraction_mapping import (  # noqa: PLC0415
+        enrich_planned_destinations_with_local_extraction,
+    )
+
+    refreshed = enrich_planned_destinations_with_local_extraction(
+        planned,
+        input_folder=input_root,
+    )
+    stamp = datetime.now(timezone.utc).isoformat()
+    return replace(
+        run_state,
+        planned_destinations=refreshed,
+        planned_destination_count=len(refreshed),
+        state_updated_at=stamp,
+    )
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -791,6 +1017,9 @@ def validate_preview_export_paths(
         return MSG_PREVIEW_EXPORT_NEEDS_FOLDERS
     if input_path == output_path:
         return MSG_PREVIEW_EXPORT_SAME_PATH
+    # Never use a previous preview-export package as input/source data.
+    if _path_is_previous_preview_export(input_path):
+        return MSG_PREVIEW_EXPORT_STALE_SOURCE_BLOCKED
     if path_has_forbidden_productive_marker(str(input_path)) or path_has_forbidden_productive_marker(
         str(output_path)
     ):
@@ -1309,13 +1538,25 @@ def _manifest_payload(
     review_count: int,
     error_count: int,
     planned_count: int,
+    state_source: str = STATE_SOURCE_CURRENT_PROCESSING_RUN,
+    source_state_updated_at: str | None = None,
+    state_freshness_checked: bool = True,
+    state_freshness_result: str = "pass",
 ) -> dict[str, Any]:
     copied = [item for item in items if not item.excluded]
     return {
         "kind": PREVIEW_EXPORT_KIND,
         "schema_version": PREVIEW_EXPORT_SCHEMA_VERSION,
         "run_id": run_id,
+        "source_run_id": run_id,
         "generated_at": generated_at,
+        "export_created_at": generated_at,
+        "state_source": state_source,
+        "exported_from_current_state": True,
+        "previous_export_reused": False,
+        "source_state_updated_at": source_state_updated_at,
+        "state_freshness_checked": bool(state_freshness_checked),
+        "state_freshness_result": state_freshness_result,
         "input_root": str(input_root),
         "output_root": str(output_root),
         "export_folder": str(export_folder),
@@ -1429,6 +1670,10 @@ def write_preview_export_package(
     dry_run: bool = True,
     preview_export: bool = True,
     final_write: bool = False,
+    review_expectations: tuple[ReviewExportExpectation, ...]
+    | list[ReviewExportExpectation]
+    | None = None,
+    refresh_from_input: bool = False,
 ) -> PreviewExportResult:
     """Create a dedicated preview-export-* package under controlled output."""
 
@@ -1467,6 +1712,11 @@ def write_preview_export_package(
             ok=False,
             status="blocked",
             error=MSG_PREVIEW_EXPORT_NEEDS_FOLDERS,
+        )
+    if refresh_from_input:
+        run_state = refresh_run_state_from_current_sandbox_input(
+            run_state,
+            input_root=input_path,
         )
     try:
         output_path.mkdir(parents=True, exist_ok=True)
@@ -1525,6 +1775,59 @@ def write_preview_export_package(
             )
         )
 
+    # Pre-resolve naming + freshness guard before any package write.
+    used_names: set[str] = set()
+    naming_resolved: list[
+        tuple[dict[str, Any], Path | None, ProcessingPlannedDestination | None, PreviewNamingDecision, str]
+    ] = []
+    freshness_rows: list[dict[str, Any]] = []
+    for row, source, planned in resolved:
+        naming = resolve_preview_naming(
+            source_filename=row["source_filename"],
+            review_required=bool(row["review_required"]),
+            planned=planned,
+            suggested_filename=(
+                planned.suggested_filename
+                if planned is not None
+                else None
+            )
+            or (planned.rendered_filename if planned is not None else None)
+            or (planned.canonical_filename if planned is not None else None),
+        )
+        preview_name = _unique_preview_name(naming.preview_filename, used_names)
+        naming_resolved.append((row, source, planned, naming, preview_name))
+        freshness_rows.append(
+            {
+                "source_filename": row["source_filename"],
+                "preview_filename": preview_name,
+                "rendered_filename": naming.rendered_filename,
+                "selected_amount": naming.selected_amount or naming.amount,
+                "selected_payment_field": naming.selected_payment_field
+                or naming.payment_account,
+                "selected_art": naming.selected_art,
+                "suggested_filename": naming.suggested_filename,
+            }
+        )
+    expectations = (
+        tuple(review_expectations)
+        if review_expectations is not None
+        else build_review_ui_export_expectations(run_state)
+    )
+    freshness_error = validate_export_state_freshness(
+        export_rows=freshness_rows,
+        expectations=expectations,
+    )
+    if freshness_error:
+        return PreviewExportResult(
+            ok=False,
+            status="blocked",
+            error=freshness_error,
+            recognized_count=run_state.recognized_count,
+            review_count=run_state.review_count,
+            error_count=run_state.error_count,
+            planned_count=run_state.planned_destination_count,
+        )
+
     run_id = (run_state.run_id or "sandbox-run").strip() or "sandbox-run"
     safe_run_id = re.sub(r"[^\w.\-]+", "_", run_id)[:80] or "sandbox-run"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -1548,20 +1851,14 @@ def write_preview_export_package(
 
     written: list[str] = []
     items: list[PreviewExportItem] = []
-    used_names: set[str] = set()
     generated_at = datetime.now(timezone.utc).isoformat()
+    source_state_updated_at = _norm_text(run_state.state_updated_at) or generated_at
 
     try:
         export_folder.mkdir(parents=False, exist_ok=False)
         files_dir.mkdir(parents=False, exist_ok=False)
 
-        for row, source, planned in resolved:
-            naming = resolve_preview_naming(
-                source_filename=row["source_filename"],
-                review_required=bool(row["review_required"]),
-                planned=planned,
-            )
-            preview_name = _unique_preview_name(naming.preview_filename, used_names)
+        for row, source, planned, naming, preview_name in naming_resolved:
             review_reason = row.get("review_reason")
 
             if row["excluded"] or source is None:
@@ -1739,6 +2036,10 @@ def write_preview_export_package(
             review_count=run_state.review_count,
             error_count=run_state.error_count,
             planned_count=run_state.planned_destination_count,
+            state_source=STATE_SOURCE_CURRENT_PROCESSING_RUN,
+            source_state_updated_at=source_state_updated_at,
+            state_freshness_checked=True,
+            state_freshness_result="pass",
         )
         readme_path = export_folder / "README_PREVIEW_EXPORT.md"
         manifest_json = export_folder / "manifest.json"
@@ -1804,13 +2105,42 @@ def write_preview_export_package(
 
 
 def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
-    """UI-v2 helper: write preview-export package from workspace folder overrides."""
+    """UI-v2 helper: write preview-export package from workspace folder overrides.
+
+    Refreshes planned destinations from the current sandbox input with the same
+    enrichment path that feeds the Review UI, then exports that current state.
+    Never reads previous preview-export folders as a data source.
+    """
 
     run_state = getattr(state, "processing_run_state", None)
     input_root = (getattr(state, "workspace_input_folder_override", None) or "").strip()
     output_root = (getattr(state, "workspace_output_folder_override", None) or "").strip()
     bag = get_review_preview_ui(state)
     excluded = frozenset(bag.excluded_from_export_preview_keys)
+
+    # Reject stale previous export folders as input before any write.
+    if _path_is_previous_preview_export(_norm_path(input_root)):
+        err = MSG_PREVIEW_EXPORT_STALE_SOURCE_BLOCKED
+        state.workspace_preview_export_feedback = err
+        state.workspace_preview_export_feedback_error = True
+        state.workspace_export_feedback = err
+        state.workspace_export_feedback_error = True
+        return PreviewExportResult(ok=False, status="blocked", error=err)
+
+    if isinstance(run_state, ProcessingRunState) and input_root:
+        refreshed = refresh_run_state_from_current_sandbox_input(
+            run_state,
+            input_root=input_root,
+        )
+        state.processing_run_state = refreshed
+        run_state = refreshed
+
+    # Expectations from the same current state the Review UI will show after refresh.
+    expectations = (
+        build_review_ui_export_expectations(run_state)
+        if isinstance(run_state, ProcessingRunState)
+        else ()
+    )
 
     result = write_preview_export_package(
         run_state,
@@ -1821,6 +2151,8 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
         dry_run=True,
         preview_export=True,
         final_write=False,
+        review_expectations=expectations,
+        refresh_from_input=False,
     )
 
     if result.ok:
@@ -1934,6 +2266,8 @@ __all__ = (
     "MSG_FIELD_PREVIEW_FILENAME",
     "MSG_FIELD_RENDERED_FILENAME",
     "MSG_NAMING_NOT_FINAL",
+    "MSG_PREVIEW_EXPORT_STALE_SOURCE_BLOCKED",
+    "MSG_PREVIEW_EXPORT_STALE_STATE_BLOCKED",
     "REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_PREFIX",
     "MSG_NAMING_REASON_NO_SUGGESTED",
     "MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE",
@@ -1958,16 +2292,21 @@ __all__ = (
     "PREVIEW_EXPORT_FOLDER_PREFIX",
     "PREVIEW_EXPORT_KIND",
     "PREVIEW_EXPORT_SCHEMA_VERSION",
+    "STATE_SOURCE_CURRENT_PROCESSING_RUN",
+    "STATE_SOURCE_REVIEW_UI",
     "PreviewExportItem",
     "PreviewExportRequest",
     "PreviewExportResult",
     "PreviewNamingDecision",
+    "ReviewExportExpectation",
     "REVIEW_REQUIRED_PREFIX",
     "REVIEW_REQUIRED_SUGGESTED_PREFIX",
     "SUGGESTED_PREFIX",
     "apply_workspace_preview_export",
+    "build_review_ui_export_expectations",
     "preview_export_available",
     "preview_export_ui_copy",
+    "refresh_run_state_from_current_sandbox_input",
     "resolve_preview_naming",
     "review_required_preview_filename",
     "review_required_suggested_preview_filename",
@@ -1975,6 +2314,7 @@ __all__ = (
     "sha256_file",
     "suggested_preview_filename",
     "text_claims_forbidden_maturity",
+    "validate_export_state_freshness",
     "validate_preview_export_paths",
     "write_preview_export_package",
 )

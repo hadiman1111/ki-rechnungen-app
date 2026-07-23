@@ -223,6 +223,8 @@ class ProcessingRunState:
     outcome_kind: OutcomeKind | None = None
     # False when only aggregate counts exist without per-document rows.
     detailed_item_mapping_complete: bool = True
+    # Prompt 24/34 — ISO timestamp when this run state was last built/refreshed.
+    state_updated_at: str | None = None
 
     @property
     def has_results(self) -> bool:
