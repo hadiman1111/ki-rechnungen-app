@@ -1,7 +1,7 @@
 """UI-v2 processing run state — Track B contract only.
 
 No PDF processing, no folder reads, no processing-core imports.
-Results/review items stay empty unless a future adapter injects real data.
+Results/review items stay empty unless a real dry-run / adapter injects data.
 """
 
 from __future__ import annotations
@@ -17,6 +17,21 @@ ProcessingStatus = Literal[
     "completed",
     "failed",
     "blocked",
+]
+
+# Honest outcome buckets for Track-B dry-run result mapping (Prompt 4/34).
+OutcomeKind = Literal[
+    "idle",
+    "empty",
+    "recognized_only",
+    "all_review",
+    "errors_only",
+    "mixed",
+    "failed",
+    "blocked",
+    "not_configured",
+    "ready",
+    "running",
 ]
 
 # Explicit dry / execution gate markers for LocalProcessingAdapter readiness.
@@ -61,6 +76,14 @@ MSG_COMPLETED = "Sandbox-Lauf abgeschlossen."
 MSG_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen."
 MSG_FAILED = "Sandbox-Lauf fehlgeschlagen."
 MSG_SAFETY_PROOF_COMPACT = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
+MSG_PLANNED_DESTINATION_PREVIEW_ONLY = (
+    "Geplante Ziele sind Vorschau — keine Datei wurde geschrieben oder verschoben."
+)
+MSG_EMPTY_DRY_RUN = (
+    "Keine Belege im Sandbox-Eingang — leerer Lauf, kein fingierter Erfolg."
+)
+MSG_ALL_REVIEW_OUTCOME = "Sandbox-Lauf mit Prüffällen"
+MSG_MIXED_OUTCOME = "Sandbox-Lauf mit gemischten Ergebnisbereichen"
 
 
 @dataclass(frozen=True)
@@ -89,6 +112,28 @@ class ProcessingReviewItem:
 
 
 @dataclass(frozen=True)
+class ProcessingErrorItem:
+    """Structured error row from a real dry-run — never invented."""
+
+    document_name: str
+    error_code: str
+    message: str
+    status_label: str = "fehler"
+
+
+@dataclass(frozen=True)
+class ProcessingPlannedDestination:
+    """Data-only planned destination — preview only, never applied."""
+
+    document_name: str
+    planned_path: str
+    destination_label: str | None = None
+    reason: str | None = None
+    applied: bool = False
+    preview_only: bool = True
+
+
+@dataclass(frozen=True)
 class ProcessingRunState:
     """Bounded processing run state for UI-v2 workspace."""
 
@@ -105,6 +150,14 @@ class ProcessingRunState:
     warnings: tuple[str, ...] = field(default_factory=tuple)
     planned_destination_count: int = 0
     safety_proof_summary: str | None = None
+    # Prompt 4/34 richer mapping — optional structured buckets.
+    error_items: tuple[ProcessingErrorItem, ...] = field(default_factory=tuple)
+    planned_destinations: tuple[ProcessingPlannedDestination, ...] = field(
+        default_factory=tuple
+    )
+    outcome_kind: OutcomeKind | None = None
+    # False when only aggregate counts exist without per-document rows.
+    detailed_item_mapping_complete: bool = True
 
     @property
     def has_results(self) -> bool:
@@ -124,6 +177,8 @@ class ProcessingRunState:
 
     @property
     def error_count(self) -> int:
+        if self.error_items:
+            return len(self.error_items)
         return len(self.errors)
 
 

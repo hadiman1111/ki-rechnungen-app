@@ -8,7 +8,7 @@ Processing starts only via the bounded UI-v2 contract (default: not connected).
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Literal
 
 import flet as ft
@@ -103,6 +103,7 @@ from invoice_tool.ui_v2.processing_state import (
     ProcessingRunState,
     ProcessingStatus,
 )
+from invoice_tool.ui_v2.result_mapping import build_result_bucket_summary
 from invoice_tool.ui_v2.sandbox_execution_boundary import MSG_SANDBOX_RUNNER_UNBOUND
 from invoice_tool.ui_v2.sandbox_processing_gate import (
     MSG_SANDBOX_COPIED_DATA_ONLY,
@@ -728,15 +729,19 @@ def _feedback(
 def _count_summary_details(result: ProcessingRunState) -> tuple[str, ...]:
     """Compact recognized/review/error/planned counts from real state only."""
 
-    recognized = len(result.results or ())
-    review = len(result.review_items or ())
-    errors = len(result.errors or ())
-    planned = int(result.planned_destination_count or 0)
+    buckets = build_result_bucket_summary(result)
+    recognized = buckets.recognized_count
+    review = buckets.review_count
+    errors = buckets.error_count
+    planned = buckets.planned_destination_count
     safety = (
         (result.safety_proof_summary or "").strip()
+        or buckets.safety_proof_line
         or MSG_SANDBOX_SAFETY_PROOF
         or MSG_SAFETY_PROOF_COMPACT
     )
+    # Keep exactly two count/safety lines so compact detail budget
+    # (MAX_BLOCKED_DETAIL_LINES) still fits MSG_NO_ORIGINALS_USED.
     return (
         f"Erkannt: {recognized} · Prüfung: {review} · Fehler: {errors} · Geplant: {planned}",
         safety,
@@ -759,14 +764,19 @@ def build_start_interaction_feedback(
     count_details = _count_summary_details(result)
 
     if status == "completed":
+        buckets = build_result_bucket_summary(result)
         with_review = bool(result.review_items) and not result.results
         primary = (
             MSG_SANDBOX_COMPLETED_WITH_REVIEW
-            if with_review or (result.review_items and result.errors)
+            if with_review
+            or buckets.all_review
+            or (result.review_items and result.errors)
             else MSG_SANDBOX_COMPLETED
         )
         if result.review_items and result.results:
             primary = MSG_SANDBOX_COMPLETED_WITH_REVIEW
+        if buckets.empty:
+            primary = f"{MSG_SANDBOX_COMPLETED} — leer"
         return _feedback(
             interaction_status="completed",
             status_label=MSG_RUN_STATUS_COMPLETED,
@@ -963,19 +973,11 @@ def mark_start_checking(state: UiV2State) -> None:
     state.workspace_start_feedback_details = list(
         _compact_details(configuration_label=selection.configuration_display)
     )
-    state.processing_run_state = ProcessingRunState(
+    state.processing_run_state = replace(
+        state.processing_run_state,
         status="running",
         message=MSG_RUN_STATUS_CHECKING,
-        run_id=state.processing_run_state.run_id,
-        results=tuple(state.processing_run_state.results or ()),
-        review_items=tuple(state.processing_run_state.review_items or ()),
-        errors=tuple(state.processing_run_state.errors or ()),
-        execution_gate=state.processing_run_state.execution_gate,
-        dry_run_gate=state.processing_run_state.dry_run_gate,
-        core_dry_run_status=state.processing_run_state.core_dry_run_status,
-        warnings=tuple(state.processing_run_state.warnings or ()),
-        planned_destination_count=state.processing_run_state.planned_destination_count,
-        safety_proof_summary=state.processing_run_state.safety_proof_summary,
+        outcome_kind="running",
     )
 
 
@@ -1094,23 +1096,14 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
             in {"blocked_missing_configuration", "blocked_missing_profile"}
         )
     ):
-        result = ProcessingRunState(
-            status=result.status,
+        result = replace(
+            result,
             message=selection.blocker_message,
-            run_id=result.run_id,
-            results=tuple(result.results or ()),
-            review_items=tuple(result.review_items or ()),
-            errors=tuple(result.errors or ()),
             execution_gate=(
                 "blocked_missing_profile"
                 if selection.resolution == "missing_profile"
                 else result.execution_gate or "blocked_missing_configuration"
             ),
-            dry_run_gate=result.dry_run_gate,
-            core_dry_run_status=result.core_dry_run_status,
-            warnings=tuple(result.warnings or ()),
-            planned_destination_count=result.planned_destination_count,
-            safety_proof_summary=result.safety_proof_summary,
         )
     interaction = build_start_interaction_feedback(
         result,
@@ -1118,20 +1111,10 @@ def apply_start_processing(state: UiV2State, *, profile_id: str | None = None) -
     )
     feedback = interaction.combined
     # Keep adapter status/results; surface preferred German CTA copy in message.
-    state.processing_run_state = ProcessingRunState(
-        status=result.status,
+    state.processing_run_state = replace(
+        result,
         message=feedback,
-        run_id=result.run_id,
-        results=tuple(result.results or ()),
-        review_items=tuple(result.review_items or ()),
-        errors=tuple(result.errors or ()),
-        execution_gate=result.execution_gate,
-        dry_run_gate=result.dry_run_gate,
-        core_dry_run_status=result.core_dry_run_status,
-        warnings=tuple(result.warnings or ()),
-        planned_destination_count=result.planned_destination_count,
-        safety_proof_summary=result.safety_proof_summary
-        or MSG_SANDBOX_SAFETY_PROOF,
+        safety_proof_summary=result.safety_proof_summary or MSG_SANDBOX_SAFETY_PROOF,
     )
     state.workspace_run_interaction_status = interaction.interaction_status
     state.workspace_start_feedback_primary = interaction.primary

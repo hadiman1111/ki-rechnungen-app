@@ -23,6 +23,16 @@ from invoice_tool.ui_v2.components import (
     stacked_list,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingReviewItem, ProcessingRunState
+from invoice_tool.ui_v2.review_components import (
+    review_error_section_lines,
+    review_planned_preview_lines,
+    review_safety_line,
+)
+from invoice_tool.ui_v2.review_state import (
+    MSG_NO_FINAL_APPROVAL,
+    ReviewFlowState,
+    build_review_flow_state,
+)
 from invoice_tool.ui_v2.review_workflow import (
     DEFAULT_EVIDENCE_SUMMARY,
     DEFAULT_NEXT_ACTION_HINT,
@@ -92,6 +102,10 @@ class ReviewPageVM:
     actions_disabled: bool = True
     action_labels: tuple[str, ...] = ()
     source_run_id: str | None = None
+    planned_preview_lines: tuple[str, ...] = ()
+    error_section_lines: tuple[str, ...] = ()
+    safety_line: str | None = None
+    productive_actions_exposed: bool = False
 
 
 def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
@@ -117,27 +131,32 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     """Derive review queue from ProcessingRunState only — never invent items."""
 
     run_state: ProcessingRunState = state.processing_run_state or ProcessingRunState()
-    queue: ReviewQueueViewModel = build_review_queue_view_model(run_state)
-    raw_items = tuple(run_state.review_items or ())
-    detail_items = tuple(_detail_from_item_vm(item) for item in queue.items)
-    action_labels = tuple(action.label for action in queue.actions)
+    flow: ReviewFlowState = build_review_flow_state(run_state)
+    queue: ReviewQueueViewModel = flow.queue
+    raw_items = tuple(flow.review_items)
+    detail_items = tuple(_detail_from_item_vm(item) for item in flow.review_view_items)
+    action_labels = tuple(action.label for action in flow.actions)
     return ReviewPageVM(
         title=queue.title,
         subtitle=queue.subtitle,
-        empty=queue.empty,
+        empty=flow.empty,
         empty_title=queue.empty_title,
         empty_detail=queue.empty_detail,
         items=raw_items,
         detail_items=detail_items,
-        honest_copy=queue.honest_copy,
+        honest_copy=flow.honest_copy,
         mutates_files=False,
-        error_count=queue.error_count,
-        result_count=queue.result_count,
-        review_count=queue.review_count,
-        separation_notes=queue.separation_notes,
-        actions_disabled=all(not action.enabled for action in queue.actions),
+        error_count=flow.error_count,
+        result_count=flow.recognized_count,
+        review_count=flow.review_count,
+        separation_notes=flow.separation_notes,
+        actions_disabled=True,
         action_labels=action_labels,
-        source_run_id=queue.source_run_id,
+        source_run_id=flow.source_run_id,
+        planned_preview_lines=review_planned_preview_lines(flow),
+        error_section_lines=review_error_section_lines(flow),
+        safety_line=review_safety_line(flow),
+        productive_actions_exposed=False,
     )
 
 
@@ -208,10 +227,18 @@ def build_review_page(state: UiV2State) -> ft.Control:
             stacked_list(*review_rows),
         )
     )
+    detail_bits = [
+        MSG_REVIEW_NO_FILE_MUTATION,
+        MSG_NO_FINAL_APPROVAL,
+        *vm.separation_notes,
+        *(vm.error_section_lines or ()),
+        *(vm.planned_preview_lines or ()),
+    ]
+    if vm.safety_line:
+        detail_bits.append(vm.safety_line)
     items.append(
         collapsible_details(
-            MSG_REVIEW_NO_FILE_MUTATION,
-            *vm.separation_notes,
+            *detail_bits,
             title="Details anzeigen",
         )
     )

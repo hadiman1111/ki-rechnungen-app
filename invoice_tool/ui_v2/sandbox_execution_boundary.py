@@ -23,11 +23,15 @@ from invoice_tool.ui_v2.processing_state import (
     MSG_COMPLETED_WITH_REVIEW,
     MSG_FAILED,
     MSG_SAFETY_PROOF_COMPACT,
+    OutcomeKind,
+    ProcessingErrorItem,
+    ProcessingPlannedDestination,
     ProcessingResultSummary,
     ProcessingReviewItem,
     ProcessingRunState,
     ProcessingStatus,
 )
+from invoice_tool.ui_v2.result_mapping import derive_outcome_kind
 
 MSG_SANDBOX_RUNNER_UNBOUND = (
     "Sandbox nicht verbunden. "
@@ -81,6 +85,12 @@ class SandboxCoreCallResult:
     planned_destination_count: int = 0
     safety_proof_summary: str | None = None
     bridge_status: str | None = None
+    error_items: tuple[ProcessingErrorItem, ...] = field(default_factory=tuple)
+    planned_destinations: tuple[ProcessingPlannedDestination, ...] = field(
+        default_factory=tuple
+    )
+    outcome_kind: OutcomeKind | None = None
+    detailed_item_mapping_complete: bool = True
 
 
 class SandboxCoreRunner(Protocol):
@@ -172,6 +182,35 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
     ):
         message = f"{message} {bridge_result.safety_proof_summary}".strip()
 
+    planned = tuple(bridge_result.planned_destinations)
+    if not planned and bridge_result.planned_moves:
+        planned = tuple(
+            ProcessingPlannedDestination(
+                document_name=path.rsplit("/", 1)[-1],
+                planned_path=path,
+                applied=False,
+                preview_only=True,
+            )
+            for path in bridge_result.planned_moves
+        )
+    outcome: OutcomeKind | None
+    if bridge_result.outcome_kind in {
+        "idle",
+        "empty",
+        "recognized_only",
+        "all_review",
+        "errors_only",
+        "mixed",
+        "failed",
+        "blocked",
+        "not_configured",
+        "ready",
+        "running",
+    }:
+        outcome = bridge_result.outcome_kind  # type: ignore[assignment]
+    else:
+        outcome = None
+
     return SandboxCoreCallResult(
         ok=bridge_result.ok,
         message=message,
@@ -185,6 +224,10 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
         safety_proof_summary=bridge_result.safety_proof_summary
         or MSG_SAFETY_PROOF_COMPACT,
         bridge_status=bridge_result.status.value,
+        error_items=tuple(bridge_result.error_items),
+        planned_destinations=planned,
+        outcome_kind=outcome,
+        detailed_item_mapping_complete=bridge_result.detailed_item_mapping_complete,
     )
 
 
@@ -215,6 +258,24 @@ def map_sandbox_core_result_to_run_state(
         status = "failed"
         default_message = result.message or MSG_SANDBOX_EXECUTION_FAILED or MSG_FAILED
 
+    planned = tuple(result.planned_destinations)
+    if not planned and result.planned_moves:
+        planned = tuple(
+            ProcessingPlannedDestination(
+                document_name=path.rsplit("/", 1)[-1],
+                planned_path=path,
+                applied=False,
+                preview_only=True,
+            )
+            for path in result.planned_moves
+        )
+    outcome = result.outcome_kind or derive_outcome_kind(
+        status=status,
+        recognized_count=len(result.results),
+        review_count=len(result.review_items),
+        error_count=len(result.error_items) or len(result.errors),
+    )
+
     return ProcessingRunState(
         status=status,
         message=result.message or default_message,
@@ -227,8 +288,13 @@ def map_sandbox_core_result_to_run_state(
         core_dry_run_status=core_dry_run_status,  # type: ignore[arg-type]
         warnings=tuple(result.warnings),
         planned_destination_count=result.planned_destination_count
-        or len(result.planned_moves),
+        or len(result.planned_moves)
+        or len(planned),
         safety_proof_summary=result.safety_proof_summary or MSG_SAFETY_PROOF_COMPACT,
+        error_items=tuple(result.error_items),
+        planned_destinations=planned,
+        outcome_kind=outcome,
+        detailed_item_mapping_complete=result.detailed_item_mapping_complete,
     )
 
 

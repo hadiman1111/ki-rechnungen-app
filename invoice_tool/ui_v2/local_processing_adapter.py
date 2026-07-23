@@ -430,6 +430,10 @@ class LocalProcessingAdapter:
             warnings=tuple(state.warnings),
             planned_destination_count=state.planned_destination_count,
             safety_proof_summary=state.safety_proof_summary,
+            error_items=tuple(state.error_items),
+            planned_destinations=tuple(state.planned_destinations),
+            outcome_kind=state.outcome_kind,
+            detailed_item_mapping_complete=state.detailed_item_mapping_complete,
         )
 
     def _is_forbidden_private_default_path(self, folder: str | None) -> bool:

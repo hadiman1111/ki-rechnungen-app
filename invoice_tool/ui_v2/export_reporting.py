@@ -292,7 +292,6 @@ def build_run_report_view_model(
     destinations: list[DestinationItemVM] = []
 
     for item in results:
-        destinations.append(_destination_from_result(item))
         if _is_failed_result(item):
             failed.append(
                 FailedItemVM(
@@ -304,12 +303,39 @@ def build_run_report_view_model(
         else:
             recognized.append(_recognized_from_result(item))
 
-    for message in error_messages:
-        failed.append(FailedItemVM(message=message))
+    if state.error_items:
+        for item in state.error_items:
+            failed.append(
+                FailedItemVM(
+                    message=item.message,
+                    document_name=(item.document_name or "").strip() or None,
+                    status_label=item.status_label or MSG_FAILED_STATUS,
+                )
+            )
+    else:
+        for message in error_messages:
+            failed.append(FailedItemVM(message=message))
 
     unclear = tuple(_unclear_from_review(item) for item in review_items)
-    for item in review_items:
-        destinations.append(_destination_from_review(item))
+
+    # Prefer structured planned destinations from dry-run mapping (preview-only).
+    if state.planned_destinations:
+        for item in state.planned_destinations:
+            destinations.append(
+                DestinationItemVM(
+                    document_name=(item.document_name or "").strip()
+                    or DEFAULT_DOCUMENT_LABEL,
+                    destination_hint=(item.planned_path or "").strip()
+                    or MSG_DESTINATION_UNKNOWN,
+                    outcome_label=(item.destination_label or "geplant").strip(),
+                    planned_only=True,
+                )
+            )
+    else:
+        for item in results:
+            destinations.append(_destination_from_result(item))
+        for item in review_items:
+            destinations.append(_destination_from_review(item))
 
     run_id = (state.run_id or "").strip() or None
     user_summary = build_user_summary(

@@ -24,9 +24,15 @@ from invoice_tool.ui_v2.core_dry_run_contract import (
     path_looks_like_original as contract_path_looks_like_original,
 )
 from invoice_tool.ui_v2.processing_state import (
+    ProcessingErrorItem,
+    ProcessingPlannedDestination,
     ProcessingResultSummary,
     ProcessingReviewItem,
     ProcessingRunState,
+)
+from invoice_tool.ui_v2.result_mapping import (
+    MSG_SAFETY_PROOF_LINE,
+    map_core_dry_run_result_to_processing_run_state as map_dry_run_to_run_state,
 )
 
 CoreBridgeMode = Literal["sandbox_dry_run", "blocked_contract"]
@@ -61,7 +67,7 @@ MSG_BRIDGE_SAME_INPUT_OUTPUT = (
 )
 MSG_BRIDGE_INPUT_NOT_DIR = "Sandbox-Eingang existiert nicht oder ist kein Ordner."
 MSG_BRIDGE_OUTPUT_NOT_DIR = "Sandbox-Ausgabe existiert nicht oder ist kein Ordner."
-MSG_BRIDGE_SAFETY_PROOF = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
+MSG_BRIDGE_SAFETY_PROOF = MSG_SAFETY_PROOF_LINE
 MSG_BRIDGE_COMPLETED = "Sandbox-Lauf abgeschlossen"
 MSG_BRIDGE_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen"
 MSG_BRIDGE_FAILED = "Sandbox-Lauf fehlgeschlagen"
@@ -153,6 +159,12 @@ class CoreBridgeResult:
     recognized_count: int = 0
     review_count: int = 0
     error_count: int = 0
+    error_items: tuple[ProcessingErrorItem, ...] = field(default_factory=tuple)
+    planned_destinations: tuple[ProcessingPlannedDestination, ...] = field(
+        default_factory=tuple
+    )
+    outcome_kind: str | None = None
+    detailed_item_mapping_complete: bool = True
 
 
 def _norm(path: str | None) -> str | None:
@@ -245,41 +257,9 @@ def map_core_dry_run_result_to_bridge_result(
 ) -> CoreBridgeResult:
     """Map CoreDryRunResult into CoreBridgeResult — never invent document rows."""
 
-    results = tuple(
-        ProcessingResultSummary(
-            document_name=item.document_name,
-            document_type=item.document_type,
-            classification_status=item.classification_status,
-            status_label=item.status_label,
-            confidence_label=item.confidence_label,
-            target_hint=item.target_hint,
-        )
-        for item in dry.recognized
-    )
-    review_items = tuple(
-        ProcessingReviewItem(
-            document_name=item.document_name,
-            reason=item.reason,
-            status_label=item.status_label,
-            document_id=item.document_id,
-            evidence_summary=item.evidence_summary,
-            next_action_hint=item.next_action_hint,
-        )
-        for item in dry.review
-    )
-    error_messages = tuple(
-        f"{item.error_code}: {item.message}" if item.error_code else item.message
-        for item in dry.errors
-    )
-    if dry.contract_error_codes:
-        error_messages = error_messages + tuple(dry.contract_error_codes)
-    planned = tuple(item.planned_path for item in dry.planned_destinations)
-    summary = dry.summary
-    proof = dry.safety_proof
-    safety_ok = proof is not None and proof.no_original_mutation and (
-        proof.productive_mode_disabled
-    )
-    safety_summary = MSG_BRIDGE_SAFETY_PROOF if safety_ok or proof is not None else None
+    # Canonical mapping lives in result_mapping; bridge keeps transport shape.
+    mapped = map_dry_run_to_run_state(dry)
+    planned_paths = tuple(item.planned_path for item in mapped.planned_destinations)
 
     if dry.status == CoreDryRunStatus.BLOCKED:
         status = CoreBridgeStatus.BLOCKED
@@ -303,22 +283,31 @@ def map_core_dry_run_result_to_bridge_result(
         ok = False
         message = dry.message or MSG_BRIDGE_FAILED
 
+    # Prefer honest empty / all-review wording from the mapping layer.
+    if mapped.outcome_kind in {"empty", "all_review"} and mapped.message:
+        # Strip trailing safety line for the bridge message field; summary carries it.
+        message = mapped.message.replace(MSG_BRIDGE_SAFETY_PROOF, "").strip() or message
+
     return CoreBridgeResult(
         status=status,
         ok=ok,
         message=message,
-        errors=error_messages,
-        planned_moves=planned,
-        results=results,
-        review_items=review_items,
-        run_id=dry.run_id,
+        errors=tuple(mapped.errors),
+        planned_moves=planned_paths,
+        results=tuple(mapped.results),
+        review_items=tuple(mapped.review_items),
+        run_id=mapped.run_id,
         productive_execution_enabled=False,
-        warnings=tuple(dry.warnings or ()),
-        planned_destination_count=summary.planned_destination_count,
-        safety_proof_summary=safety_summary,
-        recognized_count=summary.recognized_count,
-        review_count=summary.review_count,
-        error_count=summary.error_count,
+        warnings=tuple(mapped.warnings),
+        planned_destination_count=mapped.planned_destination_count,
+        safety_proof_summary=mapped.safety_proof_summary or MSG_BRIDGE_SAFETY_PROOF,
+        recognized_count=mapped.recognized_count,
+        review_count=mapped.review_count,
+        error_count=mapped.error_count,
+        error_items=tuple(mapped.error_items),
+        planned_destinations=tuple(mapped.planned_destinations),
+        outcome_kind=mapped.outcome_kind,
+        detailed_item_mapping_complete=mapped.detailed_item_mapping_complete,
     )
 
 
@@ -494,6 +483,10 @@ def map_core_result_to_processing_run_state(
 ) -> ProcessingRunState:
     """Map bridge outcome into ProcessingRunState — never invents rows."""
 
+    from invoice_tool.ui_v2.result_mapping import (  # noqa: PLC0415
+        derive_outcome_kind,
+    )
+
     if result.status in {
         CoreBridgeStatus.COMPLETED,
         CoreBridgeStatus.COMPLETED_WITH_REVIEW,
@@ -523,6 +516,25 @@ def map_core_result_to_processing_run_state(
     if result.safety_proof_summary and result.safety_proof_summary not in message:
         message = f"{message} {result.safety_proof_summary}".strip()
 
+    planned = tuple(result.planned_destinations)
+    if not planned and result.planned_moves:
+        planned = tuple(
+            ProcessingPlannedDestination(
+                document_name=Path(path).name,
+                planned_path=path,
+                applied=False,
+                preview_only=True,
+            )
+            for path in result.planned_moves
+        )
+
+    outcome = result.outcome_kind or derive_outcome_kind(
+        status=status,  # type: ignore[arg-type]
+        recognized_count=len(result.results),
+        review_count=len(result.review_items),
+        error_count=len(result.error_items) or len(result.errors),
+    )
+
     return ProcessingRunState(
         status=status,  # type: ignore[arg-type]
         message=message,
@@ -534,8 +546,12 @@ def map_core_result_to_processing_run_state(
         dry_run_gate=dry_run_gate,  # type: ignore[arg-type]
         core_dry_run_status=core_dry_run_status,  # type: ignore[arg-type]
         warnings=tuple(result.warnings),
-        planned_destination_count=result.planned_destination_count,
+        planned_destination_count=result.planned_destination_count or len(planned),
         safety_proof_summary=result.safety_proof_summary,
+        error_items=tuple(result.error_items),
+        planned_destinations=planned,
+        outcome_kind=outcome,  # type: ignore[arg-type]
+        detailed_item_mapping_complete=result.detailed_item_mapping_complete,
     )
 
 
