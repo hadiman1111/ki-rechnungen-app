@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_INVOICE_TOTAL_ART_AND_CONFIGURATION_MATCHING_REPAIR_01`
 2. **Masterplan position:** Prompt 21/34
 3. **HEAD before:** `515a8403c957e808264229af989168fd0ca022ad`  
-   **HEAD after:** *(set at commit)*
+   **HEAD after:** `c7f3c17188b156f36a3b633a785d71bb0a03e020`
 4. **User manual evidence:** Preview-Export mit LUMITOP 500,00 / Bootshop 80,55 / Storno ohne art=storno / alle Unklar.
 5. **Baseline:** Prompt 20 configuration filename pattern bridge ready; Beträge/Payment noch heuristisch falsch.
 6. **Files changed:**
