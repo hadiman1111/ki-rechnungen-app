@@ -240,7 +240,9 @@ PACKAGE_EXPORT_HELPER = (
     "Preview Export: schreibt nur ein Preview-Paket · "
     "Originale bleiben unverändert · "
     "keine finale Verarbeitung · "
-    "Produktiv gesperrt"
+    "Produktiv gesperrt · "
+    "Vorschau-Dateiname / Grund für REVIEW_REQUIRED / Geplantes Ziel im Manifest · "
+    "Benennung noch nicht final"
 )
 # Productive final export must never appear in Track-B UI-v2.
 PRODUCTIVE_FINAL_EXPORT_LABELS = (

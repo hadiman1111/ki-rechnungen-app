@@ -1,11 +1,12 @@
-"""Track-B controlled Preview Export package writer (Prompt 16/34).
+"""Track-B controlled Preview Export package writer (Prompt 16–17/34).
 
 Writes a clearly marked preview-export package under a controlled sandbox/test
 output folder. Copies input PDFs as byte-identical preview artifacts and emits
-manifest/README reports.
+manifest/README reports with honest filename-source / naming-reason metadata.
 
 Never mutates input/source files, never calls run_once, never performs final
 productive processing, never writes outside the validated sandbox output root.
+Never invents supplier/date/amount invoice names when extraction data is absent.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal
 
 from invoice_tool.ui_v2.core_dry_run_contract import (
     is_explicit_copied_sandbox_test_path,
@@ -41,7 +42,18 @@ PREVIEW_EXPORT_KIND = "track_b_preview_export_package"
 PREVIEW_EXPORT_SCHEMA_VERSION = 1
 PREVIEW_EXPORT_FOLDER_PREFIX = "preview-export-"
 REVIEW_REQUIRED_PREFIX = "REVIEW_REQUIRED__"
+REVIEW_REQUIRED_SUGGESTED_PREFIX = "REVIEW_REQUIRED__SUGGESTED__"
 FILES_SUBDIR = "files"
+
+FilenameSource = Literal[
+    "planned_result",
+    "suggested_mapping",
+    "original_fallback",
+]
+
+FILENAME_SOURCE_PLANNED_RESULT: FilenameSource = "planned_result"
+FILENAME_SOURCE_SUGGESTED_MAPPING: FilenameSource = "suggested_mapping"
+FILENAME_SOURCE_ORIGINAL_FALLBACK: FilenameSource = "original_fallback"
 
 MSG_PREVIEW_EXPORT_TITLE = "Preview Export"
 MSG_PREVIEW_EXPORT_CTA = "Preview-Export in Output-Ordner schreiben"
@@ -73,6 +85,32 @@ MSG_PREVIEW_EXPORT_PARTIAL_BLOCKED = (
 )
 MSG_NO_SAAS_READY = "nicht SaaS-ready"
 MSG_NO_PRODUCTION_READY = "nicht production-ready"
+MSG_FIELD_PREVIEW_FILENAME = "Vorschau-Dateiname"
+MSG_FIELD_NAMING_REASON = "Grund für REVIEW_REQUIRED"
+MSG_FIELD_PLANNED_TARGET = "Geplantes Ziel"
+MSG_NAMING_NOT_FINAL = "Benennung noch nicht final"
+MSG_SUGGESTED_PREVIEW_ONLY = (
+    "Vorschlagsname nur als Preview — finale Freigabe erforderlich; "
+    "Originale unverändert; kein Produktivexport."
+)
+MSG_NAMING_REASON_SUGGESTED = (
+    "Prüffall — sicherer Vorschlagsname aus geplantem Ziel verwendet; "
+    "finale Freigabe erforderlich."
+)
+MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE = (
+    "Prüffall — geplantes Ziel vorhanden, aber Dateiname entspricht dem Original; "
+    "kein abweichender Vorschlagsname (fehlende Extraktion/Mapping)."
+)
+MSG_NAMING_REASON_NO_SUGGESTED = (
+    "Prüffall — kein sicherer geplanter/vorgeschlagener Dateiname verfügbar; "
+    "Originalname als Fallback."
+)
+MSG_NAMING_REASON_RECOGNIZED_PLANNED = (
+    "Erkannt/geplant — Preview-Dateiname aus geplantem Ziel (nicht final)."
+)
+MSG_NAMING_REASON_RECOGNIZED_SOURCE = (
+    "Erkannt — Preview-Dateiname aus Original (kein abweichendes geplantes Ziel)."
+)
 
 # Positive maturity / write claims only — negated disclaimers are allowed.
 FORBIDDEN_POSITIVE_CLAIM_MARKERS = (
@@ -92,6 +130,18 @@ _MULTI_UNDERSCORE_RE = re.compile(r"_+")
 
 
 @dataclass(frozen=True)
+class PreviewNamingDecision:
+    """Honest preview naming decision — never invents invoice metadata."""
+
+    preview_filename: str
+    suggested_filename: str | None
+    planned_target: str | None
+    filename_source: FilenameSource
+    naming_reason: str
+    review_required: bool
+
+
+@dataclass(frozen=True)
 class PreviewExportItem:
     source_filename: str
     preview_filename: str
@@ -104,6 +154,10 @@ class PreviewExportItem:
     source_path: str
     preview_path: str
     excluded: bool = False
+    suggested_filename: str | None = None
+    filename_source: FilenameSource = FILENAME_SOURCE_ORIGINAL_FALLBACK
+    naming_reason: str = MSG_NAMING_REASON_NO_SUGGESTED
+    review_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +214,116 @@ def review_required_preview_filename(source_filename: str) -> str:
     if safe.startswith(REVIEW_REQUIRED_PREFIX):
         return safe
     return f"{REVIEW_REQUIRED_PREFIX}{safe}"
+
+
+def review_required_suggested_preview_filename(suggested_filename: str) -> str:
+    """Mark a safe suggested name as review-required preview (not final)."""
+
+    safe = sanitize_preview_filename(suggested_filename)
+    # Strip existing review prefixes so we never double-wrap.
+    while safe.startswith(REVIEW_REQUIRED_SUGGESTED_PREFIX):
+        safe = safe[len(REVIEW_REQUIRED_SUGGESTED_PREFIX) :]
+    while safe.startswith(REVIEW_REQUIRED_PREFIX):
+        safe = safe[len(REVIEW_REQUIRED_PREFIX) :]
+    safe = sanitize_preview_filename(safe)
+    return f"{REVIEW_REQUIRED_SUGGESTED_PREFIX}{safe}"
+
+
+def _planned_basename(planned: ProcessingPlannedDestination | None) -> str | None:
+    if planned is None:
+        return None
+    name = Path(str(planned.planned_path or "").strip()).name
+    if not name or not name.lower().endswith(".pdf"):
+        return None
+    if ".." in name or "/" in name or "\\" in name:
+        return None
+    return name
+
+
+def _basename_differs_from_source(planned_name: str, source_filename: str) -> bool:
+    return sanitize_preview_filename(planned_name).lower() != sanitize_preview_filename(
+        source_filename
+    ).lower()
+
+
+def resolve_preview_naming(
+    *,
+    source_filename: str,
+    review_required: bool,
+    planned: ProcessingPlannedDestination | None = None,
+    suggested_filename: str | None = None,
+) -> PreviewNamingDecision:
+    """Resolve preview filename + honest naming metadata.
+
+    Uses planned/suggested basenames only when they differ safely from the
+    source name. Never invents supplier/date/amount tokens.
+    """
+
+    planned_target = (planned.planned_path if planned is not None else None) or None
+    if planned_target is not None:
+        planned_target = str(planned_target).strip() or None
+
+    planned_name = _planned_basename(planned)
+    explicit_suggested = (suggested_filename or "").strip() or None
+    if explicit_suggested:
+        explicit_suggested = Path(explicit_suggested).name
+        if not explicit_suggested.lower().endswith(".pdf") or ".." in explicit_suggested:
+            explicit_suggested = None
+
+    # Prefer an explicit suggested mapping name when it safely differs.
+    candidate: str | None = None
+    source_kind: FilenameSource = FILENAME_SOURCE_ORIGINAL_FALLBACK
+    if explicit_suggested and _basename_differs_from_source(
+        explicit_suggested, source_filename
+    ):
+        candidate = explicit_suggested
+        source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
+    elif planned_name and _basename_differs_from_source(planned_name, source_filename):
+        candidate = planned_name
+        source_kind = FILENAME_SOURCE_PLANNED_RESULT
+
+    if review_required:
+        if candidate is not None:
+            safe_suggested = sanitize_preview_filename(candidate)
+            return PreviewNamingDecision(
+                preview_filename=review_required_suggested_preview_filename(safe_suggested),
+                suggested_filename=safe_suggested,
+                planned_target=planned_target,
+                filename_source=source_kind,
+                naming_reason=MSG_NAMING_REASON_SUGGESTED,
+                review_required=True,
+            )
+        reason = (
+            MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE
+            if planned_target
+            else MSG_NAMING_REASON_NO_SUGGESTED
+        )
+        return PreviewNamingDecision(
+            preview_filename=review_required_preview_filename(source_filename),
+            suggested_filename=None,
+            planned_target=planned_target,
+            filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
+            naming_reason=reason,
+            review_required=True,
+        )
+
+    if candidate is not None:
+        return PreviewNamingDecision(
+            preview_filename=sanitize_preview_filename(candidate),
+            suggested_filename=sanitize_preview_filename(candidate),
+            planned_target=planned_target,
+            filename_source=source_kind,
+            naming_reason=MSG_NAMING_REASON_RECOGNIZED_PLANNED,
+            review_required=False,
+        )
+    return PreviewNamingDecision(
+        preview_filename=sanitize_preview_filename(source_filename),
+        suggested_filename=None,
+        planned_target=planned_target,
+        filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
+        naming_reason=MSG_NAMING_REASON_RECOGNIZED_SOURCE,
+        review_required=False,
+    )
 
 
 def preview_export_available(run_state: ProcessingRunState | None) -> bool:
@@ -269,6 +433,7 @@ def _collect_export_candidates(
         review_required: bool,
         document_id: str | None = None,
         excluded: bool = False,
+        review_reason: str | None = None,
     ) -> None:
         key = (source_filename or "").strip()
         if not key or key in seen:
@@ -282,6 +447,7 @@ def _collect_export_candidates(
                 "review_required": review_required,
                 "document_id": document_id,
                 "excluded": excluded,
+                "review_reason": (review_reason or "").strip() or None,
             }
         )
 
@@ -295,6 +461,7 @@ def _collect_export_candidates(
             review_required=True,
             document_id=item.document_id,
             excluded=key in excluded_keys,
+            review_reason=item.reason,
         )
     for item in run_state.results or ():
         assert isinstance(item, ProcessingResultSummary)
@@ -311,6 +478,7 @@ def _collect_export_candidates(
             category="error",
             status=item.status_label or "fehler",
             review_required=True,
+            review_reason=item.message,
         )
     # Planned-only rows that were not already listed.
     for planned in run_state.planned_destinations or ():
@@ -319,25 +487,9 @@ def _collect_export_candidates(
             category="planned",
             status="geplant",
             review_required=True,
+            review_reason=planned.reason,
         )
     return rows
-
-
-def _choose_preview_filename(
-    *,
-    source_filename: str,
-    review_required: bool,
-    planned: ProcessingPlannedDestination | None,
-) -> str:
-    if review_required:
-        return review_required_preview_filename(source_filename)
-    if planned is not None:
-        planned_name = Path(str(planned.planned_path or "").strip()).name
-        if planned_name and planned_name.lower().endswith(".pdf"):
-            safe = sanitize_preview_filename(planned_name)
-            if safe and ".." not in safe:
-                return safe
-    return sanitize_preview_filename(source_filename)
 
 
 def _unique_preview_name(desired: str, used: set[str]) -> str:
@@ -373,6 +525,7 @@ def _readme_text(
             "Original files were not moved/renamed/deleted.",
             "Files in `files/` are preview copies.",
             "Review-required files must be checked manually.",
+            "Suggested preview filenames are not final approvals.",
             "Export was generated from controlled test input.",
             "",
             f"- Kind: {PREVIEW_EXPORT_KIND}",
@@ -382,6 +535,14 @@ def _readme_text(
             f"- Output root: `{output_root}`",
             f"- Copied preview PDFs: {copied_file_count}",
             f"- Review items: {review_count}",
+            "",
+            "## Naming",
+            "",
+            f"- `{REVIEW_REQUIRED_PREFIX}<original>` = Prüffall ohne abweichenden Vorschlagsnamen",
+            f"- `{REVIEW_REQUIRED_SUGGESTED_PREFIX}<name>` = Prüffall mit sicherem Vorschlagsnamen",
+            f"- {MSG_SUGGESTED_PREVIEW_ONLY}",
+            f"- {MSG_NAMING_NOT_FINAL}",
+            "- Manifest fields: `filename_source`, `naming_reason`, `suggested_filename`, `planned_target`",
             "",
             "## Safety",
             "",
@@ -402,6 +563,7 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
         "# Review items (Preview Export)",
         "",
         "Diese Dateien sind zur manuellen Prüfung markiert.",
+        f"{MSG_NAMING_NOT_FINAL}. {MSG_SUGGESTED_PREVIEW_ONLY}",
         "",
     ]
     review_rows = [item for item in items if item.review_required and not item.excluded]
@@ -411,9 +573,21 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
         return "\n".join(lines)
     for item in review_rows:
         lines.append(f"- `{item.source_filename}` → `{item.preview_filename}`")
+        lines.append(f"  - {MSG_FIELD_PREVIEW_FILENAME}: `{item.preview_filename}`")
+        lines.append(f"  - Warum REVIEW_REQUIRED: {item.naming_reason}")
+        if item.review_reason:
+            lines.append(f"  - Prüffgrund (Dry-Run): {item.review_reason}")
+        if item.suggested_filename:
+            lines.append(f"  - Vorgeschlagener Dateiname: `{item.suggested_filename}`")
+        else:
+            lines.append("  - Vorgeschlagener Dateiname: nicht verfügbar")
         if item.planned_target:
-            lines.append(f"  - Geplantes Ziel (Vorschau): `{item.planned_target}`")
+            lines.append(f"  - {MSG_FIELD_PLANNED_TARGET} (Vorschau): `{item.planned_target}`")
+        else:
+            lines.append(f"  - {MSG_FIELD_PLANNED_TARGET}: nicht verfügbar")
+        lines.append(f"  - Namensquelle (`filename_source`): `{item.filename_source}`")
         lines.append(f"  - Status: {item.status}")
+        lines.append(f"  - {MSG_NAMING_NOT_FINAL}")
     lines.append("")
     return "\n".join(lines)
 
@@ -428,6 +602,9 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "status",
             "category",
             "planned_target",
+            "suggested_filename",
+            "filename_source",
+            "naming_reason",
             "review_required",
             "source_sha256",
             "preview_sha256",
@@ -442,6 +619,9 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.status,
                 item.category,
                 item.planned_target or "",
+                item.suggested_filename or "",
+                item.filename_source,
+                item.naming_reason,
                 "yes" if item.review_required else "no",
                 item.source_sha256,
                 item.preview_sha256,
@@ -487,6 +667,7 @@ def _manifest_payload(
         "claims_saas_ready": False,
         "claims_production_ready": False,
         "disclaimer": MSG_PREVIEW_EXPORT_SANDBOX_ONLY,
+        "naming_disclaimer": MSG_SUGGESTED_PREVIEW_ONLY,
         "items": [
             {
                 "source_filename": item.source_filename,
@@ -494,6 +675,10 @@ def _manifest_payload(
                 "status": item.status,
                 "category": item.category,
                 "planned_target": item.planned_target,
+                "suggested_filename": item.suggested_filename,
+                "filename_source": item.filename_source,
+                "naming_reason": item.naming_reason,
+                "review_reason": item.review_reason,
                 "review_required": item.review_required,
                 "source_sha256": item.source_sha256,
                 "preview_sha256": item.preview_sha256,
@@ -651,13 +836,13 @@ def write_preview_export_package(
         files_dir.mkdir(parents=False, exist_ok=False)
 
         for row, source, planned in resolved:
-            preview_name = _choose_preview_filename(
+            naming = resolve_preview_naming(
                 source_filename=row["source_filename"],
                 review_required=bool(row["review_required"]),
                 planned=planned,
             )
-            preview_name = _unique_preview_name(preview_name, used_names)
-            planned_target = planned.planned_path if planned is not None else None
+            preview_name = _unique_preview_name(naming.preview_filename, used_names)
+            review_reason = row.get("review_reason")
 
             if row["excluded"] or source is None:
                 items.append(
@@ -666,13 +851,17 @@ def write_preview_export_package(
                         preview_filename=preview_name,
                         status=row["status"],
                         category=row["category"],
-                        planned_target=planned_target,
+                        planned_target=naming.planned_target,
                         review_required=bool(row["review_required"]),
                         source_sha256="",
                         preview_sha256="",
                         source_path="",
                         preview_path="",
                         excluded=True,
+                        suggested_filename=naming.suggested_filename,
+                        filename_source=naming.filename_source,
+                        naming_reason=naming.naming_reason,
+                        review_reason=review_reason,
                     )
                 )
                 continue
@@ -693,13 +882,17 @@ def write_preview_export_package(
                     preview_filename=preview_name,
                     status=row["status"],
                     category=row["category"],
-                    planned_target=planned_target,
+                    planned_target=naming.planned_target,
                     review_required=bool(row["review_required"]),
                     source_sha256=source_sha,
                     preview_sha256=preview_sha,
                     source_path=str(source),
                     preview_path=str(target),
                     excluded=False,
+                    suggested_filename=naming.suggested_filename,
+                    filename_source=naming.filename_source,
+                    naming_reason=naming.naming_reason,
+                    review_reason=review_reason,
                 )
             )
 
@@ -834,6 +1027,11 @@ def preview_export_ui_copy() -> tuple[str, ...]:
         MSG_PREVIEW_EXPORT_NO_FINAL,
         MSG_PREVIEW_EXPORT_PRODUCTIVE_LOCKED,
         MSG_PREVIEW_EXPORT_NO_FINAL_FILES,
+        MSG_FIELD_PREVIEW_FILENAME,
+        MSG_FIELD_NAMING_REASON,
+        MSG_FIELD_PLANNED_TARGET,
+        MSG_NAMING_NOT_FINAL,
+        MSG_SUGGESTED_PREVIEW_ONLY,
         MSG_NO_SAAS_READY,
         MSG_NO_PRODUCTION_READY,
     )
@@ -851,6 +1049,11 @@ def text_claims_forbidden_maturity(text: str) -> bool:
         .replace("not production-ready", " ")
         .replace("kein finales produktions-output", " ")
         .replace("not a final production output", " ")
+        # Path/test-name false positives (e.g. …/no_saas_ready_… in export folder).
+        .replace("no_saas_ready", " ")
+        .replace("no_production_ready", " ")
+        .replace("not_saas_ready", " ")
+        .replace("not_production_ready", " ")
     )
     # Bare "saas-ready" / "production-ready" after stripping negations is a claim.
     if "saas-ready" in cleaned or "production-ready" in cleaned:
@@ -860,8 +1063,18 @@ def text_claims_forbidden_maturity(text: str) -> bool:
 
 __all__ = (
     "FILES_SUBDIR",
+    "FILENAME_SOURCE_ORIGINAL_FALLBACK",
+    "FILENAME_SOURCE_PLANNED_RESULT",
+    "FILENAME_SOURCE_SUGGESTED_MAPPING",
     "FORBIDDEN_CLAIM_MARKERS",
     "FORBIDDEN_POSITIVE_CLAIM_MARKERS",
+    "MSG_FIELD_NAMING_REASON",
+    "MSG_FIELD_PLANNED_TARGET",
+    "MSG_FIELD_PREVIEW_FILENAME",
+    "MSG_NAMING_NOT_FINAL",
+    "MSG_NAMING_REASON_NO_SUGGESTED",
+    "MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE",
+    "MSG_NAMING_REASON_SUGGESTED",
     "MSG_NO_PRODUCTION_READY",
     "MSG_NO_SAAS_READY",
     "MSG_PREVIEW_EXPORT_BLOCKED_PATH",
@@ -878,17 +1091,22 @@ __all__ = (
     "MSG_PREVIEW_EXPORT_SANDBOX_ONLY",
     "MSG_PREVIEW_EXPORT_TITLE",
     "MSG_PREVIEW_EXPORT_WRITES_PACKAGE_ONLY",
+    "MSG_SUGGESTED_PREVIEW_ONLY",
     "PREVIEW_EXPORT_FOLDER_PREFIX",
     "PREVIEW_EXPORT_KIND",
     "PREVIEW_EXPORT_SCHEMA_VERSION",
     "PreviewExportItem",
     "PreviewExportRequest",
     "PreviewExportResult",
+    "PreviewNamingDecision",
     "REVIEW_REQUIRED_PREFIX",
+    "REVIEW_REQUIRED_SUGGESTED_PREFIX",
     "apply_workspace_preview_export",
     "preview_export_available",
     "preview_export_ui_copy",
+    "resolve_preview_naming",
     "review_required_preview_filename",
+    "review_required_suggested_preview_filename",
     "sanitize_preview_filename",
     "sha256_file",
     "text_claims_forbidden_maturity",

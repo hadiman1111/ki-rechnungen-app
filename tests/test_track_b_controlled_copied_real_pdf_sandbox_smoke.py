@@ -161,13 +161,27 @@ def _install_safety_monkeypatches(monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     return counters
 
 
+def _is_preview_export_artifact(path: Path, output_dir: Path) -> bool:
+    """PDFs under preview-export-* packages are Prompt-16/17 preview copies, not finals."""
+
+    try:
+        relative = path.resolve().relative_to(output_dir.resolve())
+    except (OSError, ValueError):
+        return False
+    return any(part.startswith("preview-export-") for part in relative.parts)
+
+
 def _classify_output_files(output_dir: Path, *, before_count: int) -> str:
     files = [p for p in output_dir.rglob("*") if p.is_file()] if output_dir.exists() else []
     pdfs = [p for p in files if p.suffix.lower() == ".pdf"]
     # Final renamed invoices would appear as PDFs under output in a productive path.
-    if pdfs:
+    # Controlled Preview-Export packages (preview-export-*/) are explicit preview copies.
+    unexpected_pdfs = [
+        p for p in pdfs if not _is_preview_export_artifact(p, output_dir)
+    ]
+    if unexpected_pdfs:
         return OUTPUT_UNEXPECTED_FINAL_FILES
-    if files and before_count == 0:
+    if pdfs or (files and before_count == 0):
         return OUTPUT_PREVIEW_ONLY_ARTIFACTS
     if not files:
         return OUTPUT_EMPTY_EXPECTED_PREVIEW_ONLY
@@ -279,8 +293,14 @@ def test_controlled_copied_real_pdf_sandbox_smoke(
     assert _digest_tree(input_dir) == before_hashes
     assert _listing(input_dir) == before_listing
     after_output_files = [p for p in output_dir.rglob("*") if p.is_file()]
-    assert not any(p.suffix.lower() == ".pdf" for p in after_output_files), (
-        "final renamed invoice PDFs must not appear in output"
+    unexpected_final_pdfs = [
+        p
+        for p in after_output_files
+        if p.suffix.lower() == ".pdf" and not _is_preview_export_artifact(p, output_dir)
+    ]
+    assert not unexpected_final_pdfs, (
+        "final renamed invoice PDFs must not appear in output "
+        f"(preview-export packages allowed): {unexpected_final_pdfs}"
     )
     assert os.environ.get("KI_RECHNUNGEN_PRODUCTIVE", "") in {
         "",

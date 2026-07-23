@@ -23,6 +23,9 @@ MSG_BADGE_PRODUCTIVE_BLOCKED = "Produktiv gesperrt"
 MSG_BADGE_ORIGINALS_UNCHANGED = "Originale unverändert"
 MSG_FIELD_PLANNED_TARGET = "Geplantes Ziel"
 MSG_FIELD_REVIEW_REASON = "Grund der Prüfung"
+MSG_FIELD_PREVIEW_FILENAME = "Vorschau-Dateiname"
+MSG_FIELD_NAMING_REASON = "Grund für REVIEW_REQUIRED"
+MSG_NAMING_NOT_FINAL = "Benennung noch nicht final"
 MSG_EMPTY_OUTPUT_EXPLAIN = (
     "Output bleibt in Vorschau/Dry-Run leer, bis ein späterer explizit "
     "freigegebener Export-/Finalisierungsschritt folgt. "
@@ -188,8 +191,11 @@ __all__ = (
     "MSG_BADGE_PRODUCTIVE_BLOCKED",
     "MSG_CATEGORY_REVIEW",
     "MSG_EMPTY_OUTPUT_EXPLAIN",
+    "MSG_FIELD_NAMING_REASON",
     "MSG_FIELD_PLANNED_TARGET",
+    "MSG_FIELD_PREVIEW_FILENAME",
     "MSG_FIELD_REVIEW_REASON",
+    "MSG_NAMING_NOT_FINAL",
     "MSG_NO_PRODUCTION_READY",
     "MSG_NO_SAAS_READY",
     "MSG_PREVIEW_ONLY_BANNER",

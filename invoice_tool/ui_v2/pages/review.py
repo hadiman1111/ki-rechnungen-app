@@ -34,12 +34,17 @@ from invoice_tool.ui_v2.export_reporting import (
     MSG_TARGET_PATHS_VORSCHAU_ONLY,
     build_export_preview_report,
 )
-from invoice_tool.ui_v2.processing_state import ProcessingReviewItem, ProcessingRunState
+from invoice_tool.ui_v2.processing_state import (
+    ProcessingPlannedDestination,
+    ProcessingReviewItem,
+    ProcessingRunState,
+)
 from invoice_tool.ui_v2.review_components import (
     review_error_section_lines,
     review_planned_preview_lines,
     review_safety_line,
 )
+from invoice_tool.ui_v2.preview_export import resolve_preview_naming
 from invoice_tool.ui_v2.review_preview_state import (
     ACTION_EXCLUDE_EXPORT_PREVIEW,
     ACTION_KEEP_IN_REVIEW,
@@ -51,8 +56,11 @@ from invoice_tool.ui_v2.review_preview_state import (
     MSG_BADGE_PRODUCTIVE_BLOCKED,
     MSG_CATEGORY_REVIEW,
     MSG_EMPTY_OUTPUT_EXPLAIN,
+    MSG_FIELD_NAMING_REASON,
     MSG_FIELD_PLANNED_TARGET,
+    MSG_FIELD_PREVIEW_FILENAME,
     MSG_FIELD_REVIEW_REASON,
+    MSG_NAMING_NOT_FINAL,
     MSG_PREVIEW_ONLY_BANNER,
     PREVIEW_ACTION_LABELS,
     STATUS_CHECKED_PREVIEW,
@@ -165,6 +173,9 @@ class ReviewSelectedDetailVM:
     category: str = MSG_CATEGORY_REVIEW
     confidence_or_status: str = STATUS_IN_REVIEW
     originals_unchanged: str = MSG_BADGE_ORIGINALS_UNCHANGED
+    preview_filename: str | None = None
+    naming_reason: str | None = None
+    naming_not_final: str = MSG_NAMING_NOT_FINAL
 
 
 @dataclass(frozen=True)
@@ -311,6 +322,20 @@ def _build_selected_detail(
         planned_target = f"{detail.planned_action}: {planned_target}"
     elif detail.planned_action and not planned_target:
         planned_target = detail.planned_action
+    planned_for_naming = None
+    if detail.planned_destination:
+        planned_for_naming = ProcessingPlannedDestination(
+            document_name=detail.source_filename or detail.document_label,
+            planned_path=detail.planned_destination,
+            destination_label=detail.planned_action,
+            preview_only=True,
+            applied=False,
+        )
+    naming = resolve_preview_naming(
+        source_filename=detail.source_filename or detail.document_label,
+        review_required=True,
+        planned=planned_for_naming,
+    )
     return ReviewSelectedDetailVM(
         item_key=detail.item_key or detail.document_id,
         source_filename=detail.source_filename or detail.document_label,
@@ -325,6 +350,9 @@ def _build_selected_detail(
         category=detail.category or MSG_CATEGORY_REVIEW,
         confidence_or_status=_preview_status_label(checked=checked, excluded=excluded),
         originals_unchanged=MSG_BADGE_ORIGINALS_UNCHANGED,
+        preview_filename=naming.preview_filename,
+        naming_reason=naming.naming_reason,
+        naming_not_final=MSG_NAMING_NOT_FINAL,
     )
 
 
@@ -594,8 +622,23 @@ def build_review_page(state: UiV2State) -> ft.Control:
             ("Hinweis", detail.preview_only_banner),
             ("Output", detail.empty_output_explanation),
         ]
+        insert_at = 2
+        if detail.preview_filename:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_PREVIEW_FILENAME, detail.preview_filename)
+            )
+            insert_at += 1
+        if detail.naming_reason:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_NAMING_REASON, detail.naming_reason)
+            )
+            insert_at += 1
         if detail.planned_target:
-            detail_fields.insert(2, (MSG_FIELD_PLANNED_TARGET, detail.planned_target))
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_PLANNED_TARGET, detail.planned_target)
+            )
+            insert_at += 1
+        detail_fields.insert(insert_at, ("Benennung", detail.naming_not_final))
         items.append(
             section_block(
                 "Prüffall-Details",
