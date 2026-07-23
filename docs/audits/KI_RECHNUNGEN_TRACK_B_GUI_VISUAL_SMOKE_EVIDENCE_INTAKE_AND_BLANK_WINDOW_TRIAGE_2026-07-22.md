@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_GUI_VISUAL_SMOKE_EVIDENCE_INTAKE_AND_BLANK_WINDOW_TRIAGE_01`
 2. **Masterplan position:** Prompt 13/34
 3. **HEAD before:** `d2b53206d3934485aed52e0981f110e22bbba753`  
-   **HEAD after:** *(gesetzt nach Commit)*
+   **HEAD after:** `e1f93c35a806031ed224d999ab400882b6cbde36`
 4. **User evidence:** UI-v2 via `.venv/bin/python app_ui_v2.py` öffnete leeres weiß/bläuliches Fenster; kein Workspace, keine Ordnerwahl, kein Sandbox-CTA, keine Counts/Export/Safety; kein sichtbarer Terminal-Traceback; kein Sandbox-/Produktivlauf; Input 5 PDFs / Output 0 im kontrollierten Testordner.
 5. **GUI smoke classification:** `GUI_VISUAL_SMOKE_BLOCKED` (vor Repair); nach Repair bereit für Rerun mit Flet 0.85.
 6. **Diagnosis:** `build_ui_v2` hängt Shell/Workspace korrekt ein und ruft `page.update()`; unter Flet 0.28 (`.venv`) scheitert Workspace-Build an `ft.Padding.symmetric` → Exception vor `page.add` → leeres Fenster mit Canvas-Hintergrund.
