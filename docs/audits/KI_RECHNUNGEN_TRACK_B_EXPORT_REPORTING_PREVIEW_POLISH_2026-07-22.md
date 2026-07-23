@@ -11,7 +11,7 @@ Prompt 5 von 34 bis echter SaaS-Reife.
 ## 3. HEAD before/after
 
 - **HEAD before:** `e8f65cb3e8505f58ec5b3eeca9ec1884f6ea11e3`
-- **HEAD after:** `c94d47b8a334a2bf93f335e8464cb1d4d6a9926b`
+- **HEAD after:** `28d8401a41f28559c8dff57678fdc2d820aa81b0`
 
 ## 4. Diagnosis
 
