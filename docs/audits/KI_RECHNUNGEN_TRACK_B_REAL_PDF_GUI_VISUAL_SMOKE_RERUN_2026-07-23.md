@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_REAL_PDF_GUI_VISUAL_SMOKE_RERUN_01`
 2. **Masterplan position:** Prompt 14/34
 3. **HEAD before:** `21d176428d4297c83f19cb9d813e9d7ca2c3c18a`  
-   **HEAD after:** *(wird nach Commit gesetzt)*
+   **HEAD after:** `3647f4e740b865f3d837bd1fa522f9f79018607b`
 4. **User evidence summary:** Nach Prompt-13-Repair Rerun mit `.venv-flet085`; UI zeigte grünen Completed-Status („Abgeschlossen“, „Sandbox-Lauf mit Prüffällen abgeschlossen.“), Counts Erkannt 0 / Prüfung 5 / Fehler 0 / Geplant 5, Safety-Proof und Export-Vorschau; Folder-Monitor Input 5 / Output 0; manuelle Klassifikation `GUI_VISUAL_SMOKE_PASS`.
 5. **App start command:** `.venv-flet085/bin/python app_ui_v2.py`
 6. **Controlled input/output:**  
