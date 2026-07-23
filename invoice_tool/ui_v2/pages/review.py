@@ -22,6 +22,15 @@ from invoice_tool.ui_v2.components import (
     section_block,
     stacked_list,
 )
+from invoice_tool.ui_v2.export_reporting import (
+    MSG_EXPORT_PREVIEW_TITLE,
+    MSG_NO_FINAL_FILES_WRITTEN,
+    MSG_NO_SANDBOX_RUN,
+    MSG_ORIGINALS_UNCHANGED,
+    MSG_PRODUCTIVE_PROCESSING_BLOCKED,
+    MSG_TARGET_PATHS_VORSCHAU_ONLY,
+    build_export_preview_report,
+)
 from invoice_tool.ui_v2.processing_state import ProcessingReviewItem, ProcessingRunState
 from invoice_tool.ui_v2.review_components import (
     review_error_section_lines,
@@ -106,6 +115,11 @@ class ReviewPageVM:
     error_section_lines: tuple[str, ...] = ()
     safety_line: str | None = None
     productive_actions_exposed: bool = False
+    # Prompt 5/34 — light Export-Vorschau summary (no final action).
+    export_preview_title: str = MSG_EXPORT_PREVIEW_TITLE
+    export_preview_summary: str | None = None
+    export_preview_only: bool = True
+    final_actions_blocked: bool = True
 
 
 def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
@@ -136,6 +150,19 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     raw_items = tuple(flow.review_items)
     detail_items = tuple(_detail_from_item_vm(item) for item in flow.review_view_items)
     action_labels = tuple(action.label for action in flow.actions)
+    preview = build_export_preview_report(run_state)
+    if preview.no_run:
+        export_summary = MSG_NO_SANDBOX_RUN
+    else:
+        export_summary = (
+            f"{MSG_EXPORT_PREVIEW_TITLE}: "
+            f"{preview.recognized_count} erkannt · "
+            f"{preview.review_count} Prüfung · "
+            f"{preview.error_count} Fehler · "
+            f"{preview.planned_destination_count} Ziele (Vorschau). "
+            f"{MSG_NO_FINAL_FILES_WRITTEN} {MSG_ORIGINALS_UNCHANGED} "
+            f"{MSG_PRODUCTIVE_PROCESSING_BLOCKED}"
+        )
     return ReviewPageVM(
         title=queue.title,
         subtitle=queue.subtitle,
@@ -157,6 +184,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         error_section_lines=review_error_section_lines(flow),
         safety_line=review_safety_line(flow),
         productive_actions_exposed=False,
+        export_preview_title=MSG_EXPORT_PREVIEW_TITLE,
+        export_preview_summary=export_summary,
+        export_preview_only=True,
+        final_actions_blocked=True,
     )
 
 
@@ -230,10 +261,13 @@ def build_review_page(state: UiV2State) -> ft.Control:
     detail_bits = [
         MSG_REVIEW_NO_FILE_MUTATION,
         MSG_NO_FINAL_APPROVAL,
+        MSG_TARGET_PATHS_VORSCHAU_ONLY,
         *vm.separation_notes,
         *(vm.error_section_lines or ()),
         *(vm.planned_preview_lines or ()),
     ]
+    if vm.export_preview_summary:
+        detail_bits.append(vm.export_preview_summary)
     if vm.safety_line:
         detail_bits.append(vm.safety_line)
     items.append(

@@ -58,21 +58,31 @@ from invoice_tool.ui_v2.onboarding import (
 )
 from invoice_tool.ui_v2.export_reporting import (
     MSG_DESTINATIONS_EMPTY,
+    MSG_EXPORT_DISCLAIMER_COMPACT as MSG_EXPORT_DISCLAIMER_FROM_MODULE,
     MSG_EXPORT_FROM_REAL_RUN,
     MSG_EXPORT_IS_PREVIEW,
     MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
     MSG_FAILED_EMPTY,
+    MSG_NO_FINAL_FILES_WRITTEN,
     MSG_NO_RUN_PAYLOAD,
+    MSG_NO_SANDBOX_RUN,
+    MSG_ORIGINALS_UNCHANGED,
     MSG_PLANNED_DESTINATION_HINT,
+    MSG_PRODUCTIVE_PROCESSING_BLOCKED,
     MSG_RECOGNIZED_EMPTY,
+    MSG_TARGET_PATHS_VORSCHAU_ONLY,
     MSG_UNCLEAR_EMPTY,
+    MSG_VORSCHAU_NOT_PRODUCTIVE_RUN,
+    ExportPreviewContext,
     RunReportViewModel,
     SECTION_DESTINATIONS,
     SECTION_FAILED,
     SECTION_RECOGNIZED,
     SECTION_SUMMARY,
     SECTION_UNCLEAR,
+    build_export_preview_report,
     build_run_report_view_model,
+    render_export_preview_text,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
 from invoice_tool.saas_product_model import default_classification_policy
@@ -209,9 +219,7 @@ MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
 MSG_SANDBOX_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen."
 MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
 MSG_SANDBOX_SAFETY_PROOF = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
-MSG_EXPORT_DISCLAIMER_COMPACT = (
-    "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
-)
+MSG_EXPORT_DISCLAIMER_COMPACT = MSG_EXPORT_DISCLAIMER_FROM_MODULE
 
 # Explicit folder selection copy — no private/default paths.
 EMPTY_INPUT_FOLDER_TEXT = "Kein Eingangsordner gewählt."
@@ -219,9 +227,9 @@ EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgabeordner gewählt."
 PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
 PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
 FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
-RUN_REPORT_SECTION_LABEL = "Ergebnisbericht"
+RUN_REPORT_SECTION_LABEL = "Export-Vorschau"
 EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
-EXPORT_ACTION_LABEL = "Ergebnisvorschau exportieren"
+EXPORT_ACTION_LABEL = "Export-Vorschau lokal speichern"
 START_FEEDBACK_SECTION_LABEL = "Laufstatus"
 ONBOARDING_SECTION_LABEL_COMPACT = "Pilotstatus"
 
@@ -389,21 +397,33 @@ def build_workspace_run_result_shell(state: UiV2State) -> RunResultDisplayShellV
     return build_run_result_display_shell(state.processing_run_state)
 
 
-def build_workspace_run_report_vm(state: UiV2State) -> RunReportViewModel:
-    """Five-question run report from ProcessingRunState — no GUI / no FS invent."""
+def build_workspace_export_preview_context(state: UiV2State) -> ExportPreviewContext:
+    """Resolve sandbox paths + profile/config display from current workspace state."""
 
-    return build_run_report_view_model(state.processing_run_state)
+    selection = resolve_selection_from_state(state)
+    return ExportPreviewContext(
+        sandbox_input_path=(state.workspace_input_folder_override or "").strip() or None,
+        sandbox_output_path=(state.workspace_output_folder_override or "").strip() or None,
+        profile_display=selection.profile_display,
+        config_display=selection.configuration_display,
+    )
+
+
+def build_workspace_run_report_vm(state: UiV2State) -> RunReportViewModel:
+    """Export-Vorschau from real ProcessingRunState — no GUI / no FS invent."""
+
+    return build_export_preview_report(
+        state.processing_run_state,
+        build_workspace_export_preview_context(state),
+    )
 
 
 def _report_item_lines(report: RunReportViewModel) -> list[tuple[str, str]]:
-    """Compact metadata rows for the five report questions."""
+    """Compact metadata rows for the Export-Vorschau."""
 
-    if report.empty:
+    if report.no_run:
         return [
-            (SECTION_RECOGNIZED, MSG_RECOGNIZED_EMPTY),
-            (SECTION_UNCLEAR, MSG_UNCLEAR_EMPTY),
-            (SECTION_FAILED, MSG_FAILED_EMPTY),
-            (SECTION_DESTINATIONS, MSG_DESTINATIONS_EMPTY),
+            ("Hinweis", MSG_NO_SANDBOX_RUN),
             (SECTION_SUMMARY, MSG_NO_RUN_PAYLOAD),
         ]
 
@@ -427,12 +447,21 @@ def _report_item_lines(report: RunReportViewModel) -> list[tuple[str, str]]:
     )
     destination_detail = (
         ", ".join(
-            f"{item.document_name} → {item.destination_hint}"
+            f"{item.document_name} → {item.destination_hint} (Vorschau)"
             for item in report.destinations[:8]
         )
         or MSG_DESTINATIONS_EMPTY
     )
     return [
+        ("Sandbox-Quellpfad", report.sandbox_input_path or "—"),
+        ("Sandbox-Zielpfad", report.sandbox_output_path or "—"),
+        ("Profil/Konfiguration", report.profile_display or "—"),
+        ("Erkannt", str(report.recognized_count)),
+        ("Zur Prüfung", str(report.review_count)),
+        ("Fehler", str(report.error_count)),
+        ("Warnungen", str(report.warning_count)),
+        ("Geplante Ziele", str(report.planned_destination_count)),
+        ("Sicherheitsnachweis", report.safety_proof),
         (SECTION_RECOGNIZED, recognized_detail),
         (SECTION_UNCLEAR, unclear_detail),
         (SECTION_FAILED, failed_detail),
@@ -442,7 +471,7 @@ def _report_item_lines(report: RunReportViewModel) -> list[tuple[str, str]]:
 
 
 def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> list[ft.Control]:
-    """Workspace Ergebnisbericht + Export — no original mutation, no processing start."""
+    """Workspace Export-Vorschau — no original mutation, no processing start."""
 
     def _refresh() -> None:
         if state.refresh:
@@ -450,28 +479,35 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
 
     def _export_click(_e: ft.ControlEvent, field: ft.TextField | None = None) -> None:
         path = (field.value if field is not None else state.workspace_export_path_draft) or ""
-        state.export_run_report(path)
+        apply_workspace_export_preview(state, path)
         _refresh()
 
     rows: list[ft.Control] = [
+        compact_info_row("Titel", report.title),
         compact_info_row("Status", report.status_label),
         compact_info_row("Lauf-ID", report.run_id or "—"),
     ]
     for label, value in _report_item_lines(report):
         rows.append(compact_info_row(label, value))
-    rows.append(compact_info_row("Zusammenfassung", report.user_summary.detail))
+    if not report.no_run:
+        rows.append(compact_info_row("Zusammenfassung", report.user_summary.detail))
     panel_controls: list[ft.Control] = [
         make_section_label(RUN_REPORT_SECTION_LABEL),
         dense_card(*rows),
         helper_text(MSG_EXPORT_DISCLAIMER_COMPACT),
         collapsible_details(
             MSG_EXPORT_IS_PREVIEW,
+            MSG_NO_FINAL_FILES_WRITTEN,
+            MSG_ORIGINALS_UNCHANGED,
+            MSG_PRODUCTIVE_PROCESSING_BLOCKED,
+            MSG_TARGET_PATHS_VORSCHAU_ONLY,
+            MSG_VORSCHAU_NOT_PRODUCTIVE_RUN,
             MSG_EXPORT_FROM_REAL_RUN,
             MSG_EXPORT_NO_FILE_MUTATION_OF_ORIGINALS,
             MSG_PLANNED_DESTINATION_HINT,
             MSG_CLARITY_BUCKETS_SEPARATED,
             MSG_CLARITY_FILENAME_NOT_TRUTH,
-            title="Export-Details anzeigen",
+            title="Export-Vorschau-Details anzeigen",
         ),
     ]
     if report.export_available:
@@ -484,7 +520,7 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
         panel_controls.extend(
             [
                 form_field_group(
-                    "Exportpfad",
+                    "Export-Vorschau-Pfad",
                     full_width_field(export_field),
                     helper=EXPORT_PATH_HINT,
                 ),
@@ -495,6 +531,8 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
                 ),
             ]
         )
+    else:
+        panel_controls.append(helper_text(MSG_NO_SANDBOX_RUN))
     if state.workspace_export_feedback:
         panel_controls.append(
             inline_warning(state.workspace_export_feedback)
@@ -502,6 +540,44 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
             else summary_alert(state.workspace_export_feedback)
         )
     return panel_controls
+
+
+def build_workspace_export_preview_text(state: UiV2State) -> str:
+    """In-memory Export-Vorschau-Text aus dem aktuellen Dry-Run-State."""
+
+    return render_export_preview_text(build_workspace_run_report_vm(state))
+
+
+def apply_workspace_export_preview(
+    state: UiV2State,
+    export_path: str | None = None,
+):
+    """Write Export-Vorschau with workspace sandbox/profile context — no processing."""
+
+    from invoice_tool.ui_v2.export_reporting import (
+        MSG_EXPORT_NEEDS_PATH,
+        MSG_EXPORT_OK,
+        export_processing_run_state,
+    )
+
+    path = str(export_path or state.workspace_export_path_draft or "").strip()
+    state.workspace_export_path_draft = path
+    if not path:
+        state.workspace_export_feedback = MSG_EXPORT_NEEDS_PATH
+        state.workspace_export_feedback_error = True
+        return None
+    result = export_processing_run_state(
+        state.processing_run_state,
+        path,
+        context=build_workspace_export_preview_context(state),
+    )
+    if result.ok:
+        state.workspace_export_feedback = MSG_EXPORT_OK
+        state.workspace_export_feedback_error = False
+    else:
+        state.workspace_export_feedback = result.error or "Export fehlgeschlagen."
+        state.workspace_export_feedback_error = True
+    return result
 
 
 @dataclass(frozen=True)
