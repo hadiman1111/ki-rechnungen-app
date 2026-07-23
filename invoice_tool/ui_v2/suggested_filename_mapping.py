@@ -1,16 +1,30 @@
-"""Track-B suggested filename mapping (Prompt 18/34).
+"""Track-B suggested filename mapping (Prompt 18–19/34).
 
-Builds safe, non-final suggested PDF filenames from structured extraction /
-planning fields. Never calls run_once, never writes/moves/archives files,
-never invents supplier/date/amount tokens when fields are absent.
+Builds safe, non-final suggested PDF filenames via the canonical Track-B
+template:
+
+    <YYMMDD>_<DOCUMENT_DIRECTION>_<BUSINESS_CATEGORY>_<COUNTERPARTY_NAME>_<AMOUNT>.pdf
+
+Never calls run_once, never writes/moves/archives files, never invents
+supplier/date/amount tokens when fields are absent (uses explicit Unklar
+markers inside the canonical template instead).
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
+
+from invoice_tool.ui_v2.canonical_filename_template import (
+    BUSINESS_CATEGORY_UNCLEAR,
+    DOCUMENT_DIRECTION_UNCLEAR,
+    FILENAME_TEMPLATE_VERSION,
+    CanonicalFilenameFields,
+    build_canonical_filename,
+    sanitize_canonical_filename,
+    sanitize_filename_component,
+)
 
 NamingConfidence = Literal["none", "low", "medium", "high"]
 FilenameSource = Literal[
@@ -19,18 +33,24 @@ FilenameSource = Literal[
     "original_fallback",
 ]
 
-DEFAULT_FILENAME_PATTERN = "{invoice_date}_{supplier}_{amount}.pdf"
+# Kept for Prompt-18 compatibility; canonical template is authoritative.
+DEFAULT_FILENAME_PATTERN = (
+    "{invoice_date}_{document_direction}_{business_category}"
+    "_{supplier}_{amount}.pdf"
+)
 
 FILENAME_SOURCE_SUGGESTED_MAPPING: FilenameSource = "suggested_mapping"
 FILENAME_SOURCE_PLANNED_RESULT: FilenameSource = "planned_result"
 FILENAME_SOURCE_ORIGINAL_FALLBACK: FilenameSource = "original_fallback"
 
 MSG_NAMING_REASON_STRUCTURED = (
-    "Vorschlagsname aus lokalen Extraktionsfeldern (Lieferant/Datum/Betrag); "
+    "Vorschlagsname aus kanonischem Track-B-Muster "
+    "(Datum/Rechnungsart/Zuordnung/Name/Betrag); "
     "Review bleibt erforderlich — nicht final."
 )
 MSG_NAMING_REASON_PARTIAL = (
-    "Teilfelder für Vorschlagsname vorhanden; Review bleibt erforderlich."
+    "Teilfelder für kanonischen Vorschlagsnamen vorhanden; "
+    "unklare Felder explizit markiert; Review bleibt erforderlich."
 )
 MSG_NAMING_REASON_MISSING = (
     "Keine ausreichenden strukturierten Felder für einen abweichenden "
@@ -64,10 +84,6 @@ FORBIDDEN_SENSITIVE_FIELD_KEYS = frozenset(
     }
 )
 
-_UNSAFE_COMPONENT_RE = re.compile(r"[^\w.\- ()\[\]]+", re.UNICODE)
-_MULTI_UNDERSCORE_RE = re.compile(r"_+")
-_TEMPLATE_TOKEN_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
-
 
 @dataclass(frozen=True)
 class SuggestedFilenameFields:
@@ -84,6 +100,15 @@ class SuggestedFilenameFields:
     planned_basename: str | None = None
     confidence: NamingConfidence | None = None
     review_reason: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    counterparty_name: str | None = None
+    routing_category: str | None = None
+    profile_category: str | None = None
+    direction_hint: str | None = None
+    own_issuer_hints: tuple[str, ...] = field(default_factory=tuple)
+    recipient_hints: tuple[str, ...] = field(default_factory=tuple)
+    raw_text_head: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,34 +127,19 @@ class SuggestedFilenameMappingResult:
     payment_account: str | None = None
     source_filename: str | None = None
     review_required: bool = True
-
-
-def sanitize_filename_component(value: str | None) -> str:
-    """Sanitize one filename token — no path separators / unsafe chars."""
-
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    # Collapse whitespace to underscore before stripping other junk.
-    cleaned = re.sub(r"\s+", "_", raw)
-    cleaned = _UNSAFE_COMPONENT_RE.sub("_", cleaned)
-    cleaned = _MULTI_UNDERSCORE_RE.sub("_", cleaned).strip(" ._")
-    return cleaned
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 def sanitize_suggested_filename(name: str | None) -> str | None:
     """Return a safe PDF basename or None."""
 
-    if name is None:
-        return None
-    base = Path(str(name).strip()).name
-    if not base or ".." in base or "/" in base or "\\" in base:
-        return None
-    stem = base[:-4] if base.lower().endswith(".pdf") else base
-    safe_stem = sanitize_filename_component(stem)
-    if not safe_stem:
-        return None
-    return f"{safe_stem}.pdf"
+    return sanitize_canonical_filename(name)
 
 
 def _clean_optional(value: str | None) -> str | None:
@@ -143,7 +153,7 @@ def _supplier_token(fields: SuggestedFilenameFields) -> str | None:
 
 def _present_field_keys(fields: SuggestedFilenameFields) -> tuple[str, ...]:
     present: list[str] = []
-    if _supplier_token(fields):
+    if _supplier_token(fields) or _clean_optional(fields.counterparty_name):
         present.append("supplier")
     if _clean_optional(fields.invoice_date):
         present.append("invoice_date")
@@ -153,18 +163,17 @@ def _present_field_keys(fields: SuggestedFilenameFields) -> tuple[str, ...]:
         present.append("document_type")
     if _clean_optional(fields.payment_account):
         present.append("payment_account")
+    if _clean_optional(fields.document_direction) or _clean_optional(
+        fields.direction_hint
+    ):
+        present.append("document_direction")
+    if (
+        _clean_optional(fields.business_category)
+        or _clean_optional(fields.routing_category)
+        or _clean_optional(fields.profile_category)
+    ):
+        present.append("business_category")
     return tuple(present)
-
-
-def _confidence_from_fields(present: tuple[str, ...]) -> NamingConfidence:
-    keys = set(present)
-    if {"supplier", "invoice_date", "amount"} <= keys:
-        return "high"
-    if len(keys & {"supplier", "invoice_date", "amount"}) >= 2:
-        return "medium"
-    if keys & {"supplier", "invoice_date", "amount"}:
-        return "low"
-    return "none"
 
 
 def _assert_no_forbidden_keys(extra: Mapping[str, Any] | None) -> None:
@@ -184,76 +193,51 @@ def render_suggested_filename(
     pattern: str = DEFAULT_FILENAME_PATTERN,
     extra_values: Mapping[str, Any] | None = None,
 ) -> str | None:
-    """Render a suggested basename from structured fields only.
+    """Render a suggested basename via the canonical Track-B template.
 
-    Missing tokens are omitted (no synthetic fallback labels such as
-    ``unbekannt``), so incomplete extractions still produce compact names
-    when at least one useful field exists.
+    ``pattern`` is accepted for API compatibility but ignored — the canonical
+    component order is fixed. Missing tokens become explicit Unklar markers.
     """
 
+    _ = pattern
     _assert_no_forbidden_keys(extra_values)
-    values: dict[str, str] = {}
     supplier = _supplier_token(fields)
-    if supplier:
-        values["supplier"] = sanitize_filename_component(supplier)
-        values["vendor"] = values["supplier"]
-    if fields.invoice_date:
-        values["invoice_date"] = sanitize_filename_component(fields.invoice_date)
-    if fields.amount:
-        values["amount"] = sanitize_filename_component(fields.amount)
-    if fields.document_type:
-        values["document_type"] = sanitize_filename_component(fields.document_type)
-    if fields.payment_account:
-        # Only short category tokens (paypal/card/transfer) — never IBAN/PAN.
-        values["payment_account"] = sanitize_filename_component(fields.payment_account)
-        values["payment_field"] = values["payment_account"]
-    if extra_values:
-        for key, raw in extra_values.items():
-            lowered = str(key).strip().lower()
-            if lowered in FORBIDDEN_SENSITIVE_FIELD_KEYS:
-                continue
-            token = sanitize_filename_component(str(raw) if raw is not None else "")
-            if token:
-                values[str(key)] = token
-
-    if not any(values.get(k) for k in ("supplier", "invoice_date", "amount")):
+    if not any(
+        (
+            supplier,
+            _clean_optional(fields.counterparty_name),
+            _clean_optional(fields.invoice_date),
+            _clean_optional(fields.amount),
+            _clean_optional(fields.document_direction),
+            _clean_optional(fields.business_category),
+        )
+    ):
         return None
-
-    stem_template = pattern[:-4] if pattern.lower().endswith(".pdf") else pattern
-    parts: list[str] = []
-    last_end = 0
-    for match in _TEMPLATE_TOKEN_RE.finditer(stem_template):
-        literal = stem_template[last_end : match.start()]
-        if literal and parts:
-            # Keep separators only between present tokens.
-            pass
-        key = match.group(1)
-        token = values.get(key) or ""
-        if token:
-            if parts and literal:
-                # Use a single underscore between filled tokens.
-                if not parts[-1].endswith("_") and not token.startswith("_"):
-                    parts.append("_")
-            elif parts and not literal:
-                if not parts[-1].endswith("_") and not token.startswith("_"):
-                    parts.append("_")
-            parts.append(token)
-        last_end = match.end()
-    # If the template had no tokens matched into parts, fall back to ordered fields.
-    if not parts:
-        ordered = [
-            values.get("invoice_date") or "",
-            values.get("supplier") or "",
-            values.get("amount") or "",
-        ]
-        parts = [p for p in ordered if p]
-        rendered = "_".join(parts)
-    else:
-        rendered = "".join(parts)
-    rendered = _MULTI_UNDERSCORE_RE.sub("_", rendered).strip(" ._")
-    if not rendered:
-        return None
-    return sanitize_suggested_filename(f"{rendered}.pdf")
+    result = build_canonical_filename(
+        CanonicalFilenameFields(
+            invoice_date=fields.invoice_date,
+            document_direction=fields.document_direction,
+            business_category=fields.business_category,
+            counterparty_name=fields.counterparty_name or supplier,
+            amount=fields.amount,
+            document_type=fields.document_type,
+            confidence=fields.confidence,
+            source_filename=fields.source_filename,
+            review_reason=fields.review_reason,
+            supplier=fields.supplier,
+            vendor=fields.vendor,
+            routing_category=fields.routing_category,
+            profile_category=fields.profile_category,
+            target_folder=fields.target_folder,
+            direction_hint=fields.direction_hint,
+            own_issuer_hints=fields.own_issuer_hints,
+            recipient_hints=fields.recipient_hints,
+            raw_text_head=fields.raw_text_head,
+        ),
+        review_required=True,
+        extra_values=extra_values,
+    )
+    return result.canonical_filename
 
 
 def map_suggested_filename(
@@ -265,8 +249,8 @@ def map_suggested_filename(
 ) -> SuggestedFilenameMappingResult:
     """Map structured fields to a Track-B suggested filename decision."""
 
+    _ = pattern
     present = _present_field_keys(fields)
-    confidence = fields.confidence or _confidence_from_fields(present)
     source_name = _clean_optional(fields.source_filename)
     supplier = _supplier_token(fields)
     invoice_date = _clean_optional(fields.invoice_date)
@@ -274,23 +258,16 @@ def map_suggested_filename(
     document_type = _clean_optional(fields.document_type)
     payment_account = _clean_optional(fields.payment_account)
 
-    suggested = render_suggested_filename(
-        fields, pattern=pattern, extra_values=extra_values
-    )
-    if suggested and source_name:
-        if suggested.lower() == sanitize_suggested_filename(source_name):
-            suggested = None
-
-    # Planned basename may already differ from the source (bridge / planner).
-    if suggested is None:
+    has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
+    if not has_core:
+        # Planned basename may already differ from the source (bridge / planner).
         planned = sanitize_suggested_filename(fields.planned_basename)
         if planned and source_name:
             if planned.lower() != (sanitize_suggested_filename(source_name) or "").lower():
-                suggested = planned
                 return SuggestedFilenameMappingResult(
-                    suggested_filename=suggested,
+                    suggested_filename=planned,
                     filename_source=FILENAME_SOURCE_PLANNED_RESULT,
-                    naming_confidence=confidence if confidence != "none" else "low",
+                    naming_confidence="low",
                     naming_reason=MSG_NAMING_REASON_PLANNED_BASENAME,
                     suggested_filename_fields=present,
                     supplier=supplier,
@@ -300,7 +277,70 @@ def map_suggested_filename(
                     payment_account=payment_account,
                     source_filename=source_name,
                     review_required=review_required,
+                    canonical_filename=planned,
+                    filename_template_version=None,
+                    document_direction=DOCUMENT_DIRECTION_UNCLEAR,
+                    business_category=BUSINESS_CATEGORY_UNCLEAR,
+                    business_category_display="Unklare_Zuordnung",
+                    counterparty_name=supplier,
+                    missing_fields=("document_direction", "business_category"),
                 )
+        return SuggestedFilenameMappingResult(
+            suggested_filename=None,
+            filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
+            naming_confidence="none",
+            naming_reason=MSG_NAMING_REASON_MISSING,
+            suggested_filename_fields=present,
+            supplier=supplier,
+            invoice_date=invoice_date,
+            amount=amount,
+            document_type=document_type,
+            payment_account=payment_account,
+            source_filename=source_name,
+            review_required=review_required,
+            canonical_filename=None,
+            filename_template_version=FILENAME_TEMPLATE_VERSION,
+            document_direction=DOCUMENT_DIRECTION_UNCLEAR,
+            business_category=BUSINESS_CATEGORY_UNCLEAR,
+            business_category_display="Unklare_Zuordnung",
+            counterparty_name=supplier,
+            missing_fields=(
+                "invoice_date",
+                "document_direction",
+                "business_category",
+                "counterparty_name",
+                "amount",
+            ),
+        )
+
+    canonical = build_canonical_filename(
+        CanonicalFilenameFields(
+            invoice_date=fields.invoice_date,
+            document_direction=fields.document_direction,
+            business_category=fields.business_category,
+            counterparty_name=fields.counterparty_name or supplier,
+            amount=fields.amount,
+            document_type=fields.document_type,
+            confidence=fields.confidence,
+            source_filename=fields.source_filename,
+            review_reason=fields.review_reason,
+            supplier=fields.supplier,
+            vendor=fields.vendor,
+            routing_category=fields.routing_category,
+            profile_category=fields.profile_category,
+            target_folder=fields.target_folder,
+            direction_hint=fields.direction_hint,
+            own_issuer_hints=fields.own_issuer_hints,
+            recipient_hints=fields.recipient_hints,
+            raw_text_head=fields.raw_text_head,
+        ),
+        review_required=review_required,
+        extra_values=extra_values,
+    )
+    suggested = canonical.canonical_filename
+    if suggested and source_name:
+        if suggested.lower() == sanitize_suggested_filename(source_name):
+            suggested = None
 
     if suggested is None:
         return SuggestedFilenameMappingResult(
@@ -315,27 +355,50 @@ def map_suggested_filename(
             document_type=document_type,
             payment_account=payment_account,
             source_filename=source_name,
-            review_required=review_required,
+            review_required=True,
+            canonical_filename=canonical.canonical_filename,
+            filename_template_version=canonical.filename_template_version,
+            document_direction=canonical.document_direction,
+            business_category=canonical.business_category,
+            business_category_display=canonical.business_category_display,
+            counterparty_name=canonical.counterparty_name,
+            missing_fields=canonical.missing_fields,
         )
 
-    reason = (
+    reason = canonical.naming_reason or (
         MSG_NAMING_REASON_STRUCTURED
-        if confidence in {"medium", "high"}
+        if canonical.naming_confidence in {"medium", "high"}
         else MSG_NAMING_REASON_PARTIAL
     )
     return SuggestedFilenameMappingResult(
         suggested_filename=suggested,
         filename_source=FILENAME_SOURCE_SUGGESTED_MAPPING,
-        naming_confidence=confidence if confidence != "none" else "low",
+        naming_confidence=canonical.naming_confidence,
         naming_reason=reason,
-        suggested_filename_fields=present,
+        suggested_filename_fields=present
+        + tuple(
+            key
+            for key in (
+                "document_direction",
+                "business_category",
+                "canonical_filename",
+            )
+            if key not in present
+        ),
         supplier=supplier,
-        invoice_date=invoice_date,
-        amount=amount,
+        invoice_date=invoice_date or canonical.invoice_date,
+        amount=amount or canonical.amount,
         document_type=document_type,
         payment_account=payment_account,
         source_filename=source_name,
-        review_required=review_required,
+        review_required=True,
+        canonical_filename=canonical.canonical_filename,
+        filename_template_version=canonical.filename_template_version,
+        document_direction=canonical.document_direction,
+        business_category=canonical.business_category,
+        business_category_display=canonical.business_category_display,
+        counterparty_name=canonical.counterparty_name,
+        missing_fields=canonical.missing_fields,
     )
 
 
@@ -345,6 +408,7 @@ __all__ = (
     "FILENAME_SOURCE_ORIGINAL_FALLBACK",
     "FILENAME_SOURCE_PLANNED_RESULT",
     "FILENAME_SOURCE_SUGGESTED_MAPPING",
+    "FILENAME_TEMPLATE_VERSION",
     "MSG_NAMING_REASON_MISSING",
     "MSG_NAMING_REASON_PARTIAL",
     "MSG_NAMING_REASON_PLANNED_BASENAME",

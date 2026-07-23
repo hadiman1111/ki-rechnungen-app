@@ -43,6 +43,7 @@ PREVIEW_EXPORT_SCHEMA_VERSION = 1
 PREVIEW_EXPORT_FOLDER_PREFIX = "preview-export-"
 REVIEW_REQUIRED_PREFIX = "REVIEW_REQUIRED__"
 REVIEW_REQUIRED_SUGGESTED_PREFIX = "REVIEW_REQUIRED__SUGGESTED__"
+SUGGESTED_PREFIX = "SUGGESTED__"
 FILES_SUBDIR = "files"
 
 FilenameSource = Literal[
@@ -88,6 +89,10 @@ MSG_NO_PRODUCTION_READY = "nicht production-ready"
 MSG_FIELD_PREVIEW_FILENAME = "Vorschau-Dateiname"
 MSG_FIELD_NAMING_REASON = "Grund für REVIEW_REQUIRED"
 MSG_FIELD_PLANNED_TARGET = "Geplantes Ziel"
+MSG_FIELD_DOCUMENT_DIRECTION = "Rechnungsart"
+MSG_FIELD_BUSINESS_CATEGORY = "Zuordnung"
+MSG_FIELD_COUNTERPARTY_NAME = "Name"
+MSG_FIELD_AMOUNT = "Betrag"
 MSG_NAMING_NOT_FINAL = "Benennung noch nicht final"
 MSG_SUGGESTED_PREVIEW_ONLY = (
     "Vorschlagsname nur als Preview — finale Freigabe erforderlich; "
@@ -146,6 +151,13 @@ class PreviewNamingDecision:
     document_type: str | None = None
     payment_account: str | None = None
     suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -172,6 +184,13 @@ class PreviewExportItem:
     document_type: str | None = None
     payment_account: str | None = None
     suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -239,8 +258,24 @@ def review_required_suggested_preview_filename(suggested_filename: str) -> str:
         safe = safe[len(REVIEW_REQUIRED_SUGGESTED_PREFIX) :]
     while safe.startswith(REVIEW_REQUIRED_PREFIX):
         safe = safe[len(REVIEW_REQUIRED_PREFIX) :]
+    while safe.startswith(SUGGESTED_PREFIX):
+        safe = safe[len(SUGGESTED_PREFIX) :]
     safe = sanitize_preview_filename(safe)
     return f"{REVIEW_REQUIRED_SUGGESTED_PREFIX}{safe}"
+
+
+def suggested_preview_filename(suggested_filename: str) -> str:
+    """Mark a safe suggested name for recognized (non-review) preview cases."""
+
+    safe = sanitize_preview_filename(suggested_filename)
+    while safe.startswith(REVIEW_REQUIRED_SUGGESTED_PREFIX):
+        safe = safe[len(REVIEW_REQUIRED_SUGGESTED_PREFIX) :]
+    while safe.startswith(REVIEW_REQUIRED_PREFIX):
+        safe = safe[len(REVIEW_REQUIRED_PREFIX) :]
+    while safe.startswith(SUGGESTED_PREFIX):
+        safe = safe[len(SUGGESTED_PREFIX) :]
+    safe = sanitize_preview_filename(safe)
+    return f"{SUGGESTED_PREFIX}{safe}"
 
 
 def _planned_basename(planned: ProcessingPlannedDestination | None) -> str | None:
@@ -274,6 +309,13 @@ def _meta_from_planned(
             "suggested_filename_fields": (),
             "planned_naming_reason": None,
             "planned_filename_source": None,
+            "canonical_filename": None,
+            "filename_template_version": None,
+            "document_direction": None,
+            "business_category": None,
+            "business_category_display": None,
+            "counterparty_name": None,
+            "missing_fields": (),
         }
     fields = tuple(planned.suggested_filename_fields or ())
     return {
@@ -286,6 +328,32 @@ def _meta_from_planned(
         "suggested_filename_fields": fields,
         "planned_naming_reason": planned.naming_reason,
         "planned_filename_source": planned.filename_source,
+        "canonical_filename": planned.canonical_filename or planned.suggested_filename,
+        "filename_template_version": planned.filename_template_version,
+        "document_direction": planned.document_direction,
+        "business_category": planned.business_category,
+        "business_category_display": planned.business_category_display,
+        "counterparty_name": planned.counterparty_name or planned.supplier,
+        "missing_fields": tuple(planned.missing_fields or ()),
+    }
+
+
+def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "naming_confidence": meta["naming_confidence"],
+        "supplier": meta["supplier"],
+        "invoice_date": meta["invoice_date"],
+        "amount": meta["amount"],
+        "document_type": meta["document_type"],
+        "payment_account": meta["payment_account"],
+        "suggested_filename_fields": meta["suggested_filename_fields"],
+        "canonical_filename": meta.get("canonical_filename"),
+        "filename_template_version": meta.get("filename_template_version"),
+        "document_direction": meta.get("document_direction"),
+        "business_category": meta.get("business_category"),
+        "business_category_display": meta.get("business_category_display"),
+        "counterparty_name": meta.get("counterparty_name"),
+        "missing_fields": tuple(meta.get("missing_fields") or ()),
     }
 
 
@@ -339,6 +407,20 @@ def resolve_preview_naming(
         source_kind = FILENAME_SOURCE_PLANNED_RESULT
 
     naming_reason_override = meta.get("planned_naming_reason")
+    extra = _naming_decision_fields(meta)
+    # Prefer canonical basename when available and safe.
+    canonical = (meta.get("canonical_filename") or "").strip() or None
+    if canonical:
+        canonical = Path(canonical).name
+        if not canonical.lower().endswith(".pdf") or ".." in canonical:
+            canonical = None
+    if candidate is None and canonical and _basename_differs_from_source(
+        canonical, source_filename
+    ):
+        candidate = canonical
+        source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
+    if candidate is not None and canonical is None:
+        extra = {**extra, "canonical_filename": sanitize_preview_filename(candidate)}
 
     if review_required:
         if candidate is not None:
@@ -350,13 +432,7 @@ def resolve_preview_naming(
                 filename_source=source_kind,
                 naming_reason=naming_reason_override or MSG_NAMING_REASON_SUGGESTED,
                 review_required=True,
-                naming_confidence=meta["naming_confidence"],
-                supplier=meta["supplier"],
-                invoice_date=meta["invoice_date"],
-                amount=meta["amount"],
-                document_type=meta["document_type"],
-                payment_account=meta["payment_account"],
-                suggested_filename_fields=meta["suggested_filename_fields"],
+                **extra,
             )
         reason = (
             naming_reason_override
@@ -373,30 +449,19 @@ def resolve_preview_naming(
             filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
             naming_reason=reason,
             review_required=True,
-            naming_confidence=meta["naming_confidence"],
-            supplier=meta["supplier"],
-            invoice_date=meta["invoice_date"],
-            amount=meta["amount"],
-            document_type=meta["document_type"],
-            payment_account=meta["payment_account"],
-            suggested_filename_fields=meta["suggested_filename_fields"],
+            **extra,
         )
 
     if candidate is not None:
+        safe_suggested = sanitize_preview_filename(candidate)
         return PreviewNamingDecision(
-            preview_filename=sanitize_preview_filename(candidate),
-            suggested_filename=sanitize_preview_filename(candidate),
+            preview_filename=suggested_preview_filename(safe_suggested),
+            suggested_filename=safe_suggested,
             planned_target=planned_target,
             filename_source=source_kind,
             naming_reason=naming_reason_override or MSG_NAMING_REASON_RECOGNIZED_PLANNED,
             review_required=False,
-            naming_confidence=meta["naming_confidence"],
-            supplier=meta["supplier"],
-            invoice_date=meta["invoice_date"],
-            amount=meta["amount"],
-            document_type=meta["document_type"],
-            payment_account=meta["payment_account"],
-            suggested_filename_fields=meta["suggested_filename_fields"],
+            **extra,
         )
     return PreviewNamingDecision(
         preview_filename=sanitize_preview_filename(source_filename),
@@ -405,13 +470,7 @@ def resolve_preview_naming(
         filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
         naming_reason=naming_reason_override or MSG_NAMING_REASON_RECOGNIZED_SOURCE,
         review_required=False,
-        naming_confidence=meta["naming_confidence"],
-        supplier=meta["supplier"],
-        invoice_date=meta["invoice_date"],
-        amount=meta["amount"],
-        document_type=meta["document_type"],
-        payment_account=meta["payment_account"],
-        suggested_filename_fields=meta["suggested_filename_fields"],
+        **extra,
     )
 
 
@@ -631,8 +690,10 @@ def _readme_text(
             f"- `{REVIEW_REQUIRED_SUGGESTED_PREFIX}<name>` = Prüffall mit sicherem Vorschlagsnamen",
             f"- {MSG_SUGGESTED_PREVIEW_ONLY}",
             f"- {MSG_NAMING_NOT_FINAL}",
-            "- Manifest fields: `filename_source`, `naming_reason`, `naming_confidence`, "
-            "`suggested_filename`, `planned_target`, `supplier`, `invoice_date`, `amount`",
+            "- Manifest fields: `canonical_filename`, `document_direction`, "
+            "`business_category`, `counterparty_name`, `invoice_date`, `amount`, "
+            "`filename_template_version`, `missing_fields`, `naming_reason`, "
+            "`naming_confidence`, `suggested_filename`, `planned_target`",
             "",
             "## Safety",
             "",
@@ -671,14 +732,43 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(f"  - Vorgeschlagener Dateiname: `{item.suggested_filename}`")
         else:
             lines.append("  - Vorgeschlagener Dateiname: nicht verfügbar")
+        if item.canonical_filename:
+            lines.append(f"  - canonical_filename: `{item.canonical_filename}`")
+        if item.filename_template_version:
+            lines.append(
+                f"  - filename_template_version: `{item.filename_template_version}`"
+            )
+        direction = item.document_direction or "Unklare_Rechnungsart"
+        lines.append(f"  - {MSG_FIELD_DOCUMENT_DIRECTION}: `{direction}`")
+        if direction == "Unklare_Rechnungsart":
+            lines.append("  - Hinweis: Rechnungsart unklar — nicht stillschweigend weggelassen.")
+        category_display = (
+            item.business_category_display
+            or item.business_category
+            or "Unklare_Zuordnung"
+        )
+        lines.append(f"  - {MSG_FIELD_BUSINESS_CATEGORY}: `{category_display}`")
+        if (item.business_category or "Unklare_Zuordnung") == "Unklare_Zuordnung":
+            lines.append(
+                "  - Hinweis: Zuordnung unklar — kein Blind-Default auf Architektur."
+            )
+        name = item.counterparty_name or item.supplier
+        if name:
+            lines.append(f"  - {MSG_FIELD_COUNTERPARTY_NAME}: `{name}`")
+        if item.invoice_date:
+            lines.append(f"  - invoice_date: `{item.invoice_date}`")
+        if item.amount:
+            lines.append(f"  - {MSG_FIELD_AMOUNT}: `{item.amount}`")
+        if item.missing_fields:
+            lines.append(
+                "  - fehlende Felder: `"
+                + ", ".join(item.missing_fields)
+                + "`"
+            )
         if item.naming_confidence:
             lines.append(f"  - naming_confidence: `{item.naming_confidence}`")
         if item.supplier:
             lines.append(f"  - supplier: `{item.supplier}`")
-        if item.invoice_date:
-            lines.append(f"  - invoice_date: `{item.invoice_date}`")
-        if item.amount:
-            lines.append(f"  - amount: `{item.amount}`")
         if item.document_type:
             lines.append(f"  - document_type: `{item.document_type}`")
         if item.payment_account:
@@ -705,12 +795,18 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "category",
             "planned_target",
             "suggested_filename",
+            "canonical_filename",
+            "filename_template_version",
+            "document_direction",
+            "business_category",
+            "counterparty_name",
             "filename_source",
             "naming_reason",
             "naming_confidence",
             "supplier",
             "invoice_date",
             "amount",
+            "missing_fields",
             "document_type",
             "payment_account",
             "review_required",
@@ -728,12 +824,18 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.category,
                 item.planned_target or "",
                 item.suggested_filename or "",
+                item.canonical_filename or "",
+                item.filename_template_version or "",
+                item.document_direction or "",
+                item.business_category or "",
+                item.counterparty_name or "",
                 item.filename_source,
                 item.naming_reason,
                 item.naming_confidence or "",
                 item.supplier or "",
                 item.invoice_date or "",
                 item.amount or "",
+                "|".join(item.missing_fields or ()),
                 item.document_type or "",
                 item.payment_account or "",
                 "yes" if item.review_required else "no",
@@ -790,6 +892,13 @@ def _manifest_payload(
                 "category": item.category,
                 "planned_target": item.planned_target,
                 "suggested_filename": item.suggested_filename,
+                "canonical_filename": item.canonical_filename,
+                "filename_template_version": item.filename_template_version,
+                "document_direction": item.document_direction,
+                "business_category": item.business_category,
+                "business_category_display": item.business_category_display,
+                "counterparty_name": item.counterparty_name,
+                "missing_fields": list(item.missing_fields or ()),
                 "filename_source": item.filename_source,
                 "naming_reason": item.naming_reason,
                 "naming_confidence": item.naming_confidence,
@@ -990,6 +1099,13 @@ def write_preview_export_package(
                         document_type=naming.document_type,
                         payment_account=naming.payment_account,
                         suggested_filename_fields=naming.suggested_filename_fields,
+                        canonical_filename=naming.canonical_filename,
+                        filename_template_version=naming.filename_template_version,
+                        document_direction=naming.document_direction,
+                        business_category=naming.business_category,
+                        business_category_display=naming.business_category_display,
+                        counterparty_name=naming.counterparty_name,
+                        missing_fields=naming.missing_fields,
                     )
                 )
                 continue
@@ -1028,6 +1144,13 @@ def write_preview_export_package(
                     document_type=naming.document_type,
                     payment_account=naming.payment_account,
                     suggested_filename_fields=naming.suggested_filename_fields,
+                    canonical_filename=naming.canonical_filename,
+                    filename_template_version=naming.filename_template_version,
+                    document_direction=naming.document_direction,
+                    business_category=naming.business_category,
+                    business_category_display=naming.business_category_display,
+                    counterparty_name=naming.counterparty_name,
+                    missing_fields=naming.missing_fields,
                 )
             )
 
@@ -1163,6 +1286,10 @@ def preview_export_ui_copy() -> tuple[str, ...]:
         MSG_PREVIEW_EXPORT_PRODUCTIVE_LOCKED,
         MSG_PREVIEW_EXPORT_NO_FINAL_FILES,
         MSG_FIELD_PREVIEW_FILENAME,
+        MSG_FIELD_DOCUMENT_DIRECTION,
+        MSG_FIELD_BUSINESS_CATEGORY,
+        MSG_FIELD_COUNTERPARTY_NAME,
+        MSG_FIELD_AMOUNT,
         MSG_FIELD_NAMING_REASON,
         MSG_FIELD_PLANNED_TARGET,
         MSG_NAMING_NOT_FINAL,
@@ -1203,6 +1330,10 @@ __all__ = (
     "FILENAME_SOURCE_SUGGESTED_MAPPING",
     "FORBIDDEN_CLAIM_MARKERS",
     "FORBIDDEN_POSITIVE_CLAIM_MARKERS",
+    "MSG_FIELD_AMOUNT",
+    "MSG_FIELD_BUSINESS_CATEGORY",
+    "MSG_FIELD_COUNTERPARTY_NAME",
+    "MSG_FIELD_DOCUMENT_DIRECTION",
     "MSG_FIELD_NAMING_REASON",
     "MSG_FIELD_PLANNED_TARGET",
     "MSG_FIELD_PREVIEW_FILENAME",
@@ -1236,6 +1367,7 @@ __all__ = (
     "PreviewNamingDecision",
     "REVIEW_REQUIRED_PREFIX",
     "REVIEW_REQUIRED_SUGGESTED_PREFIX",
+    "SUGGESTED_PREFIX",
     "apply_workspace_preview_export",
     "preview_export_available",
     "preview_export_ui_copy",
@@ -1244,6 +1376,7 @@ __all__ = (
     "review_required_suggested_preview_filename",
     "sanitize_preview_filename",
     "sha256_file",
+    "suggested_preview_filename",
     "text_claims_forbidden_maturity",
     "validate_preview_export_paths",
     "write_preview_export_package",

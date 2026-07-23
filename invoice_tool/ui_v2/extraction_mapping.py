@@ -85,6 +85,8 @@ class LocalExtractionResult:
     extraction_method: str = MSG_EXTRACTION_LOCAL_TEXT
     warnings: tuple[str, ...] = ()
     ok: bool = False
+    # First text chunk only — for safe direction heuristics (no private hardcodes).
+    raw_text_head: str | None = None
 
 
 def _norm_path(path: Path | str | None) -> Path | None:
@@ -232,6 +234,7 @@ def extract_local_fields_from_pdf(path: Path | str) -> LocalExtractionResult:
         extraction_method=MSG_EXTRACTION_LOCAL_TEXT,
         warnings=tuple(warnings),
         ok=ok,
+        raw_text_head=cleaned[:1200],
     )
 
 
@@ -251,6 +254,12 @@ def _planned_with_suggestion(
             planned_basename=Path(planned.planned_path).name if planned.planned_path else None,
             target_folder=str(Path(planned.planned_path).parent) if planned.planned_path else None,
             review_reason=planned.reason,
+            # Prefer any already-resolved routing/profile category on the plan;
+            # never invent Architektur when absent.
+            business_category=planned.business_category,
+            routing_category=planned.business_category,
+            document_direction=planned.document_direction,
+            raw_text_head=extraction.raw_text_head,
         ),
         review_required=True,
     )
@@ -274,6 +283,13 @@ def _planned_with_suggestion(
         suggested_filename_fields=mapping.suggested_filename_fields,
         extraction_method=extraction.extraction_method,
         reason=planned.reason or mapping.naming_reason,
+        canonical_filename=mapping.canonical_filename,
+        filename_template_version=mapping.filename_template_version,
+        document_direction=mapping.document_direction,
+        business_category=mapping.business_category,
+        business_category_display=mapping.business_category_display,
+        counterparty_name=mapping.counterparty_name,
+        missing_fields=mapping.missing_fields,
     )
 
 

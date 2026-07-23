@@ -96,7 +96,7 @@ class ReviewItemViewModel:
     preview_only_badge: str = MSG_BADGE_PREVIEW
     no_final_write_badge: str = MSG_BADGE_NO_FINAL_WRITE
     productive_blocked_badge: str = MSG_BADGE_PRODUCTIVE_BLOCKED
-    # Prompt 18/34 — suggested naming metadata from Track-B enrichment.
+    # Prompt 18–19/34 — suggested naming metadata from Track-B enrichment.
     suggested_filename: str | None = None
     naming_confidence: str | None = None
     naming_reason: str | None = None
@@ -106,6 +106,13 @@ class ReviewItemViewModel:
     amount: str | None = None
     document_type: str | None = None
     payment_account: str | None = None
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -189,6 +196,13 @@ def build_review_item_view_model(
     amount = None
     document_type = None
     payment_account = None
+    canonical_filename = None
+    filename_template_version = None
+    document_direction = None
+    business_category = None
+    business_category_display = None
+    counterparty_name = None
+    missing_fields: tuple[str, ...] = ()
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -203,6 +217,17 @@ def build_review_item_view_model(
         amount = (planned.amount or "").strip() or None
         document_type = (planned.document_type or "").strip() or None
         payment_account = (planned.payment_account or "").strip() or None
+        canonical_filename = (planned.canonical_filename or "").strip() or None
+        filename_template_version = (
+            (planned.filename_template_version or "").strip() or None
+        )
+        document_direction = (planned.document_direction or "").strip() or None
+        business_category = (planned.business_category or "").strip() or None
+        business_category_display = (
+            (planned.business_category_display or "").strip() or None
+        )
+        counterparty_name = (planned.counterparty_name or "").strip() or None
+        missing_fields = tuple(planned.missing_fields or ())
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -229,6 +254,13 @@ def build_review_item_view_model(
         amount=amount,
         document_type=document_type,
         payment_account=payment_account,
+        canonical_filename=canonical_filename,
+        filename_template_version=filename_template_version,
+        document_direction=document_direction,
+        business_category=business_category,
+        business_category_display=business_category_display,
+        counterparty_name=counterparty_name,
+        missing_fields=missing_fields,
     )
 
 

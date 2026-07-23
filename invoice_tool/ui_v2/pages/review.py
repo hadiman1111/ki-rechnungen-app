@@ -44,7 +44,13 @@ from invoice_tool.ui_v2.review_components import (
     review_planned_preview_lines,
     review_safety_line,
 )
-from invoice_tool.ui_v2.preview_export import resolve_preview_naming
+from invoice_tool.ui_v2.preview_export import (
+    MSG_FIELD_AMOUNT,
+    MSG_FIELD_BUSINESS_CATEGORY,
+    MSG_FIELD_COUNTERPARTY_NAME,
+    MSG_FIELD_DOCUMENT_DIRECTION,
+    resolve_preview_naming,
+)
 from invoice_tool.ui_v2.review_preview_state import (
     ACTION_EXCLUDE_EXPORT_PREVIEW,
     ACTION_KEEP_IN_REVIEW,
@@ -143,6 +149,13 @@ class ReviewDetailItemVM:
     amount: str | None = None
     document_type: str | None = None
     payment_account: str | None = None
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -193,6 +206,13 @@ class ReviewSelectedDetailVM:
     amount: str | None = None
     document_type: str | None = None
     payment_account: str | None = None
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -268,6 +288,13 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         amount=item.amount,
         document_type=item.document_type,
         payment_account=item.payment_account,
+        canonical_filename=item.canonical_filename,
+        filename_template_version=item.filename_template_version,
+        document_direction=item.document_direction,
+        business_category=item.business_category,
+        business_category_display=item.business_category_display,
+        counterparty_name=item.counterparty_name,
+        missing_fields=tuple(item.missing_fields or ()),
     )
 
 
@@ -368,12 +395,19 @@ def _build_selected_detail(
             amount=detail.amount,
             document_type=detail.document_type,
             payment_account=detail.payment_account,
+            canonical_filename=detail.canonical_filename,
+            filename_template_version=detail.filename_template_version,
+            document_direction=detail.document_direction,
+            business_category=detail.business_category,
+            business_category_display=detail.business_category_display,
+            counterparty_name=detail.counterparty_name,
+            missing_fields=tuple(detail.missing_fields or ()),
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
         review_required=True,
         planned=planned_for_naming,
-        suggested_filename=detail.suggested_filename,
+        suggested_filename=detail.suggested_filename or detail.canonical_filename,
     )
     return ReviewSelectedDetailVM(
         item_key=detail.item_key or detail.document_id,
@@ -400,6 +434,17 @@ def _build_selected_detail(
         amount=naming.amount or detail.amount,
         document_type=naming.document_type or detail.document_type,
         payment_account=naming.payment_account or detail.payment_account,
+        canonical_filename=naming.canonical_filename or detail.canonical_filename,
+        filename_template_version=(
+            naming.filename_template_version or detail.filename_template_version
+        ),
+        document_direction=naming.document_direction or detail.document_direction,
+        business_category=naming.business_category or detail.business_category,
+        business_category_display=(
+            naming.business_category_display or detail.business_category_display
+        ),
+        counterparty_name=naming.counterparty_name or detail.counterparty_name,
+        missing_fields=tuple(naming.missing_fields or detail.missing_fields or ()),
     )
 
 
@@ -678,6 +723,31 @@ def build_review_page(state: UiV2State) -> ft.Control:
         if detail.suggested_filename:
             detail_fields.insert(
                 insert_at, ("Vorgeschlagener Dateiname", detail.suggested_filename)
+            )
+            insert_at += 1
+        direction = detail.document_direction or "Unklare_Rechnungsart"
+        detail_fields.insert(insert_at, (MSG_FIELD_DOCUMENT_DIRECTION, direction))
+        insert_at += 1
+        category_label = (
+            detail.business_category_display
+            or detail.business_category
+            or "Unklare_Zuordnung"
+        )
+        detail_fields.insert(insert_at, (MSG_FIELD_BUSINESS_CATEGORY, category_label))
+        insert_at += 1
+        name_label = detail.counterparty_name or detail.supplier
+        if name_label:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_COUNTERPARTY_NAME, name_label)
+            )
+            insert_at += 1
+        if detail.amount:
+            detail_fields.insert(insert_at, (MSG_FIELD_AMOUNT, detail.amount))
+            insert_at += 1
+        if detail.missing_fields:
+            detail_fields.insert(
+                insert_at,
+                ("fehlende Felder", ", ".join(detail.missing_fields)),
             )
             insert_at += 1
         if detail.naming_reason:

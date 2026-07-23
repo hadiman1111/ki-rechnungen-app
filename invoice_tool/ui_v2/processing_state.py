@@ -131,7 +131,7 @@ class ProcessingPlannedDestination:
     reason: str | None = None
     applied: bool = False
     preview_only: bool = True
-    # Track-B suggested naming / local extraction (Prompt 18/34) — optional.
+    # Track-B suggested naming / local extraction (Prompt 18–19/34) — optional.
     suggested_filename: str | None = None
     filename_source: str | None = None
     naming_confidence: str | None = None
@@ -143,6 +143,14 @@ class ProcessingPlannedDestination:
     payment_account: str | None = None
     suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
     extraction_method: str | None = None
+    # Prompt 19/34 — canonical filename template fields.
+    canonical_filename: str | None = None
+    filename_template_version: str | None = None
+    document_direction: str | None = None
+    business_category: str | None = None
+    business_category_display: str | None = None
+    counterparty_name: str | None = None
+    missing_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

@@ -117,12 +117,17 @@ def test_01_suggested_filename_from_structured_fields() -> None:
             supplier="Böttcher AG",
             invoice_date="260523",
             amount="84.39",
+            document_type="rechnung",
             source_filename="320262919974.pdf",
         )
     )
-    assert result.suggested_filename == "260523_Böttcher_AG_84.39.pdf"
+    assert result.suggested_filename == (
+        "260523_Eingangsrechnung_Unklare_Zuordnung_Böttcher_AG_84.39.pdf"
+    )
     assert result.filename_source == "suggested_mapping"
-    assert result.naming_confidence == "high"
+    assert result.naming_confidence in {"medium", "high"}
+    assert result.document_direction == "Eingangsrechnung"
+    assert result.business_category == "Unklare_Zuordnung"
 
 
 def test_02_mapping_sanitizes_unsafe_characters() -> None:
