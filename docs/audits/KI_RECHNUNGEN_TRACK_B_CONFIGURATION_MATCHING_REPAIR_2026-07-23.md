@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CONFIGURATION_MATCHING_REPAIR_01`
 2. **Masterplan position:** Prompt 22/34
 3. **HEAD before:** `b102ec378b9652941c7d629e976a318ec2c37e26`  
-   **HEAD after:** *(nach Commit)*
+   **HEAD after:** `473b49f7a526731da11e2ca1068e1a9586b2803e`
 4. **Baseline:** Prompt 21 amount/payment/art repaired; configuration matching partial (Unklar ohne volle Kandidaten-Transparenz).
 5. **Files changed:**
    - `invoice_tool/ui_v2/configuration_matching.py`
