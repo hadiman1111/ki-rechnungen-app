@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_REVIEW_BUCKET_USABILITY_AND_ACTIONS_01`
 2. **Masterplan position:** Prompt 15/34
 3. **HEAD before:** `cd26151868317cae796fcb8dbb190617b1394938`  
-   **HEAD after:** *(wird nach Commit gesetzt)*
+   **HEAD after:** `5bf4cdea7eb194c902226a32f863cda835f7d30c`
 4. **Baseline:** Prompt 14 `GUI_VISUAL_SMOKE_PASS` — Prüfung 5, Output 0, Safety-Proof sichtbar; Review-Usability noch nicht belegt.
 5. **Files changed:**
    - `invoice_tool/ui_v2/review_preview_state.py` (neu)
