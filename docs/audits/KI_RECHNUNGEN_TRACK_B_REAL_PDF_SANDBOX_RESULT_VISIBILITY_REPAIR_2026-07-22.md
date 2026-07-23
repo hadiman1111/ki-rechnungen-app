@@ -11,7 +11,7 @@ Prompt 11 von 34 bis echter SaaS-Reife.
 ## 3. HEAD before/after
 
 - **HEAD before:** `8b27480278e189b700255b874044314a8dc21065`
-- **HEAD after:** (gesetzt beim Commit dieser Task)
+- **HEAD after:** `0a44be2418e572c6881f1f0a1e3fbb0a90af59af`
 
 ## 4. Root cause
 
