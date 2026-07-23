@@ -11,7 +11,8 @@ Prompt 6 von 34 bis echter SaaS-Reife.
 ## 3. HEAD before/after
 
 - **HEAD before:** `2472929331bf22cc8c8b6c9f17edeb2dd8e62366`
-- **HEAD after:** `f32e197520404034b353cff1470f73f36f715054`
+- **HEAD after (feature):** `564b7ae791f228b59f7b73610d24ef978788681c`
+- **HEAD tip after docs sync:** siehe `git rev-parse HEAD` / Final Report
 
 ## 4. Gate result
 
