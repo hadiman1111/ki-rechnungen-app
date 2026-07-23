@@ -1,6 +1,10 @@
-"""Track-B canonical filename template (Prompt 19/34).
+"""Track-B canonical filename template (Prompt 19/34, demoted in Prompt 20).
 
-Builds non-final suggested PDF basenames in fixed component order:
+Fallback-only naming when no active/matched configuration filename pattern
+is available. Preferred Track-B naming uses the configuration pattern bridge
+(``configuration_filename_renderer`` / ``configuration_matching``).
+
+Fixed fallback component order:
 
     <YYMMDD>_<DOCUMENT_DIRECTION>_<BUSINESS_CATEGORY>_<COUNTERPARTY_NAME>_<AMOUNT>.pdf
 

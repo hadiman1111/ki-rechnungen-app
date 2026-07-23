@@ -1,20 +1,18 @@
-"""Track-B suggested filename mapping (Prompt 18–19/34).
+"""Track-B suggested filename mapping (Prompt 18–20/34).
 
-Builds safe, non-final suggested PDF filenames via the canonical Track-B
-template:
+Primary source of truth: matched active configuration filename pattern.
 
-    <YYMMDD>_<DOCUMENT_DIRECTION>_<BUSINESS_CATEGORY>_<COUNTERPARTY_NAME>_<AMOUNT>.pdf
+Fallback only when no configuration pattern is available:
+canonical Track-B template (Prompt 19 demoted).
 
-Never calls run_once, never writes/moves/archives files, never invents
-supplier/date/amount tokens when fields are absent (uses explicit Unklar
-markers inside the canonical template instead).
+Never calls run_once, never writes/moves/archives files.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, Sequence
 
 from invoice_tool.ui_v2.canonical_filename_template import (
     BUSINESS_CATEGORY_UNCLEAR,
@@ -25,15 +23,33 @@ from invoice_tool.ui_v2.canonical_filename_template import (
     sanitize_canonical_filename,
     sanitize_filename_component,
 )
+from invoice_tool.ui_v2.configuration_filename_renderer import (
+    AMOUNT_FORMAT_COMMA_2,
+    FILENAME_SOURCE_CANONICAL_FALLBACK,
+    FILENAME_SOURCE_CONFIGURATION_PATTERN,
+    FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE,
+    FILENAME_SOURCE_ORIGINAL_FALLBACK,
+    build_configuration_placeholder_values,
+    format_amount_comma,
+    render_configuration_filename_pattern,
+)
+from invoice_tool.ui_v2.configuration_matching import (
+    ConfigurationCandidate,
+    ConfigurationMatchResult,
+    match_active_configuration,
+)
 
 NamingConfidence = Literal["none", "low", "medium", "high"]
 FilenameSource = Literal[
+    "configuration_pattern",
+    "configuration_pattern_incomplete",
+    "canonical_fallback_no_configuration_pattern",
     "suggested_mapping",
     "planned_result",
     "original_fallback",
 ]
 
-# Kept for Prompt-18 compatibility; canonical template is authoritative.
+# Compatibility alias — canonical template is fallback-only now.
 DEFAULT_FILENAME_PATTERN = (
     "{invoice_date}_{document_direction}_{business_category}"
     "_{supplier}_{amount}.pdf"
@@ -41,16 +57,18 @@ DEFAULT_FILENAME_PATTERN = (
 
 FILENAME_SOURCE_SUGGESTED_MAPPING: FilenameSource = "suggested_mapping"
 FILENAME_SOURCE_PLANNED_RESULT: FilenameSource = "planned_result"
-FILENAME_SOURCE_ORIGINAL_FALLBACK: FilenameSource = "original_fallback"
 
 MSG_NAMING_REASON_STRUCTURED = (
-    "Vorschlagsname aus kanonischem Track-B-Muster "
-    "(Datum/Rechnungsart/Zuordnung/Name/Betrag); "
+    "Vorschlagsname aus Konfigurations-Dateinamensmuster; "
     "Review bleibt erforderlich — nicht final."
 )
 MSG_NAMING_REASON_PARTIAL = (
-    "Teilfelder für kanonischen Vorschlagsnamen vorhanden; "
-    "unklare Felder explizit markiert; Review bleibt erforderlich."
+    "Konfigurationsmuster teilweise gerendert; fehlende Platzhalter explizit; "
+    "Review bleibt erforderlich."
+)
+MSG_NAMING_REASON_CANONICAL_FALLBACK = (
+    "Kein Konfigurations-Dateinamensmuster verfügbar — "
+    "kanonischer Track-B-Fallback; Review bleibt erforderlich."
 )
 MSG_NAMING_REASON_MISSING = (
     "Keine ausreichenden strukturierten Felder für einen abweichenden "
@@ -61,7 +79,6 @@ MSG_NAMING_REASON_PLANNED_BASENAME = (
     "Review bleibt erforderlich — nicht final."
 )
 
-# Never embed these in suggested filenames unless explicitly allow-listed.
 FORBIDDEN_SENSITIVE_FIELD_KEYS = frozenset(
     {
         "iban",
@@ -109,6 +126,11 @@ class SuggestedFilenameFields:
     own_issuer_hints: tuple[str, ...] = field(default_factory=tuple)
     recipient_hints: tuple[str, ...] = field(default_factory=tuple)
     raw_text_head: str | None = None
+    payment_field: str | None = None
+    art: str | None = None
+    filename_pattern: str | None = None
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +156,16 @@ class SuggestedFilenameMappingResult:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = field(default_factory=tuple)
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
+    missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
+    amount_format: str | None = None
 
 
 def sanitize_suggested_filename(name: str | None) -> str | None:
@@ -161,7 +193,7 @@ def _present_field_keys(fields: SuggestedFilenameFields) -> tuple[str, ...]:
         present.append("amount")
     if _clean_optional(fields.document_type):
         present.append("document_type")
-    if _clean_optional(fields.payment_account):
+    if _clean_optional(fields.payment_account) or _clean_optional(fields.payment_field):
         present.append("payment_account")
     if _clean_optional(fields.document_direction) or _clean_optional(
         fields.direction_hint
@@ -187,69 +219,13 @@ def _assert_no_forbidden_keys(extra: Mapping[str, Any] | None) -> None:
             )
 
 
-def render_suggested_filename(
+def _canonical_fallback(
     fields: SuggestedFilenameFields,
     *,
-    pattern: str = DEFAULT_FILENAME_PATTERN,
-    extra_values: Mapping[str, Any] | None = None,
-) -> str | None:
-    """Render a suggested basename via the canonical Track-B template.
-
-    ``pattern`` is accepted for API compatibility but ignored — the canonical
-    component order is fixed. Missing tokens become explicit Unklar markers.
-    """
-
-    _ = pattern
-    _assert_no_forbidden_keys(extra_values)
-    supplier = _supplier_token(fields)
-    if not any(
-        (
-            supplier,
-            _clean_optional(fields.counterparty_name),
-            _clean_optional(fields.invoice_date),
-            _clean_optional(fields.amount),
-            _clean_optional(fields.document_direction),
-            _clean_optional(fields.business_category),
-        )
-    ):
-        return None
-    result = build_canonical_filename(
-        CanonicalFilenameFields(
-            invoice_date=fields.invoice_date,
-            document_direction=fields.document_direction,
-            business_category=fields.business_category,
-            counterparty_name=fields.counterparty_name or supplier,
-            amount=fields.amount,
-            document_type=fields.document_type,
-            confidence=fields.confidence,
-            source_filename=fields.source_filename,
-            review_reason=fields.review_reason,
-            supplier=fields.supplier,
-            vendor=fields.vendor,
-            routing_category=fields.routing_category,
-            profile_category=fields.profile_category,
-            target_folder=fields.target_folder,
-            direction_hint=fields.direction_hint,
-            own_issuer_hints=fields.own_issuer_hints,
-            recipient_hints=fields.recipient_hints,
-            raw_text_head=fields.raw_text_head,
-        ),
-        review_required=True,
-        extra_values=extra_values,
-    )
-    return result.canonical_filename
-
-
-def map_suggested_filename(
-    fields: SuggestedFilenameFields,
-    *,
-    pattern: str = DEFAULT_FILENAME_PATTERN,
-    review_required: bool = True,
-    extra_values: Mapping[str, Any] | None = None,
+    review_required: bool,
+    extra_values: Mapping[str, Any] | None,
+    match: ConfigurationMatchResult | None,
 ) -> SuggestedFilenameMappingResult:
-    """Map structured fields to a Track-B suggested filename decision."""
-
-    _ = pattern
     present = _present_field_keys(fields)
     source_name = _clean_optional(fields.source_filename)
     supplier = _supplier_token(fields)
@@ -259,8 +235,20 @@ def map_suggested_filename(
     payment_account = _clean_optional(fields.payment_account)
 
     has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
+    match_meta = {
+        "matched_configuration_name": match.matched_configuration_name if match else None,
+        "matched_configuration_id": match.matched_configuration_id if match else None,
+        "matched_configuration_pattern": (
+            match.matched_configuration_pattern if match else None
+        ),
+        "matched_configuration_reason": (
+            match.matched_configuration_reason if match else None
+        ),
+        "matched_configuration_confidence": (
+            match.matched_configuration_confidence if match else None
+        ),
+    }
     if not has_core:
-        # Planned basename may already differ from the source (bridge / planner).
         planned = sanitize_suggested_filename(fields.planned_basename)
         if planned and source_name:
             if planned.lower() != (sanitize_suggested_filename(source_name) or "").lower():
@@ -284,6 +272,7 @@ def map_suggested_filename(
                     business_category_display="Unklare_Zuordnung",
                     counterparty_name=supplier,
                     missing_fields=("document_direction", "business_category"),
+                    **match_meta,
                 )
         return SuggestedFilenameMappingResult(
             suggested_filename=None,
@@ -311,6 +300,7 @@ def map_suggested_filename(
                 "counterparty_name",
                 "amount",
             ),
+            **match_meta,
         )
 
     canonical = build_canonical_filename(
@@ -341,7 +331,6 @@ def map_suggested_filename(
     if suggested and source_name:
         if suggested.lower() == sanitize_suggested_filename(source_name):
             suggested = None
-
     if suggested is None:
         return SuggestedFilenameMappingResult(
             suggested_filename=None,
@@ -363,18 +352,15 @@ def map_suggested_filename(
             business_category_display=canonical.business_category_display,
             counterparty_name=canonical.counterparty_name,
             missing_fields=canonical.missing_fields,
+            **match_meta,
         )
-
-    reason = canonical.naming_reason or (
-        MSG_NAMING_REASON_STRUCTURED
-        if canonical.naming_confidence in {"medium", "high"}
-        else MSG_NAMING_REASON_PARTIAL
-    )
     return SuggestedFilenameMappingResult(
         suggested_filename=suggested,
-        filename_source=FILENAME_SOURCE_SUGGESTED_MAPPING,
+        filename_source=FILENAME_SOURCE_CANONICAL_FALLBACK,
         naming_confidence=canonical.naming_confidence,
-        naming_reason=reason,
+        naming_reason=(
+            f"{MSG_NAMING_REASON_CANONICAL_FALLBACK} {canonical.naming_reason}"
+        ).strip(),
         suggested_filename_fields=present
         + tuple(
             key
@@ -399,16 +385,250 @@ def map_suggested_filename(
         business_category_display=canonical.business_category_display,
         counterparty_name=canonical.counterparty_name,
         missing_fields=canonical.missing_fields,
+        rendered_filename=suggested,
+        **match_meta,
+    )
+
+
+def render_suggested_filename(
+    fields: SuggestedFilenameFields,
+    *,
+    pattern: str = DEFAULT_FILENAME_PATTERN,
+    extra_values: Mapping[str, Any] | None = None,
+    configurations: Sequence[ConfigurationCandidate] | None = None,
+    unmatched: ConfigurationCandidate | None = None,
+    use_configuration_bridge: bool = True,
+) -> str | None:
+    """Render a suggested basename — configuration pattern preferred."""
+
+    mapped = map_suggested_filename(
+        fields,
+        pattern=pattern,
+        extra_values=extra_values,
+        configurations=configurations,
+        unmatched=unmatched,
+        use_configuration_bridge=use_configuration_bridge,
+    )
+    return mapped.suggested_filename
+
+
+def map_suggested_filename(
+    fields: SuggestedFilenameFields,
+    *,
+    pattern: str = DEFAULT_FILENAME_PATTERN,
+    review_required: bool = True,
+    extra_values: Mapping[str, Any] | None = None,
+    configurations: Sequence[ConfigurationCandidate] | None = None,
+    unmatched: ConfigurationCandidate | None = None,
+    use_configuration_bridge: bool = True,
+) -> SuggestedFilenameMappingResult:
+    """Map structured fields to a Track-B suggested filename decision."""
+
+    _ = pattern  # legacy API; configuration pattern / canonical fallback are authoritative
+    _assert_no_forbidden_keys(extra_values)
+    present = _present_field_keys(fields)
+    source_name = _clean_optional(fields.source_filename)
+    supplier = _supplier_token(fields)
+    invoice_date = _clean_optional(fields.invoice_date)
+    amount = _clean_optional(fields.amount)
+    amount_comma = format_amount_comma(amount)
+    document_type = _clean_optional(fields.document_type)
+    payment_account = _clean_optional(fields.payment_account)
+
+    has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
+    match: ConfigurationMatchResult | None = None
+    config_pattern = _clean_optional(fields.filename_pattern)
+    if use_configuration_bridge and has_core:
+        if config_pattern:
+            match = ConfigurationMatchResult(
+                matched_configuration_name=fields.matched_configuration_name,
+                matched_configuration_id=fields.matched_configuration_id,
+                matched_configuration_pattern=config_pattern,
+                matched_configuration_reason=(
+                    "Explizites Dateinamensmuster am Mapping-Input."
+                ),
+                matched_configuration_confidence="medium",
+                matched_payment_field=_clean_optional(fields.payment_field),
+            )
+        else:
+            match = match_active_configuration(
+                payment_field=fields.payment_field,
+                payment_account=fields.payment_account,
+                raw_text_head=fields.raw_text_head,
+                configurations=configurations,
+                unmatched=unmatched,
+            )
+            config_pattern = match.matched_configuration_pattern
+
+    if use_configuration_bridge and has_core and config_pattern:
+        placeholders = build_configuration_placeholder_values(
+            pattern=config_pattern,
+            invoice_date=invoice_date,
+            art=fields.art,
+            supplier=supplier,
+            amount=amount,
+            payment_field=fields.payment_field
+            or (match.matched_payment_field if match else None),
+            document_direction=fields.document_direction,
+            document_type=document_type,
+            counterparty_name=fields.counterparty_name,
+            payment_account=payment_account,
+            extra_values=extra_values,
+        )
+        rendered = render_configuration_filename_pattern(
+            config_pattern,
+            placeholder_values=placeholders,
+        )
+        # Still compute canonical metadata for reports / demoted fallback visibility.
+        canonical = build_canonical_filename(
+            CanonicalFilenameFields(
+                invoice_date=fields.invoice_date,
+                document_direction=fields.document_direction,
+                business_category=fields.business_category,
+                counterparty_name=fields.counterparty_name or supplier,
+                amount=fields.amount,
+                document_type=fields.document_type,
+                confidence=fields.confidence,
+                source_filename=fields.source_filename,
+                review_reason=fields.review_reason,
+                supplier=fields.supplier,
+                vendor=fields.vendor,
+                routing_category=fields.routing_category,
+                profile_category=fields.profile_category,
+                target_folder=fields.target_folder,
+                direction_hint=fields.direction_hint,
+                own_issuer_hints=fields.own_issuer_hints,
+                recipient_hints=fields.recipient_hints,
+                raw_text_head=fields.raw_text_head,
+            ),
+            review_required=True,
+            extra_values=extra_values,
+        )
+        suggested = rendered.rendered_filename
+        if suggested and source_name:
+            if suggested.lower() == sanitize_suggested_filename(source_name):
+                suggested = None
+        missing_fields = tuple(
+            dict.fromkeys(
+                list(canonical.missing_fields)
+                + list(rendered.missing_placeholders)
+            )
+        )
+        source: FilenameSource = (
+            FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE
+            if rendered.incomplete
+            else FILENAME_SOURCE_CONFIGURATION_PATTERN
+        )
+        if suggested is None:
+            return SuggestedFilenameMappingResult(
+                suggested_filename=None,
+                filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
+                naming_confidence="none",
+                naming_reason=MSG_NAMING_REASON_MISSING,
+                suggested_filename_fields=present,
+                supplier=supplier,
+                invoice_date=invoice_date or canonical.invoice_date,
+                amount=amount_comma or amount or canonical.amount,
+                document_type=document_type,
+                payment_account=payment_account,
+                source_filename=source_name,
+                review_required=True,
+                canonical_filename=canonical.canonical_filename,
+                filename_template_version=canonical.filename_template_version,
+                document_direction=canonical.document_direction,
+                business_category=canonical.business_category,
+                business_category_display=canonical.business_category_display,
+                counterparty_name=canonical.counterparty_name,
+                missing_fields=missing_fields,
+                matched_configuration_name=(
+                    match.matched_configuration_name if match else None
+                ),
+                matched_configuration_id=(
+                    match.matched_configuration_id if match else None
+                ),
+                matched_configuration_pattern=config_pattern,
+                matched_configuration_reason=(
+                    match.matched_configuration_reason if match else None
+                ),
+                matched_configuration_confidence=(
+                    match.matched_configuration_confidence if match else None
+                ),
+                filename_pattern=config_pattern,
+                rendered_filename=None,
+                placeholder_values=rendered.placeholder_values,
+                missing_placeholders=rendered.missing_placeholders,
+                amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+            )
+        reason = rendered.naming_reason
+        if match and match.matched_configuration_reason:
+            reason = f"{match.matched_configuration_reason} {reason}".strip()
+        return SuggestedFilenameMappingResult(
+            suggested_filename=suggested,
+            filename_source=source,
+            naming_confidence=rendered.naming_confidence,
+            naming_reason=reason or MSG_NAMING_REASON_STRUCTURED,
+            suggested_filename_fields=present
+            + tuple(
+                key
+                for key in (
+                    "filename_pattern",
+                    "rendered_filename",
+                    "matched_configuration_name",
+                )
+                if key not in present
+            ),
+            supplier=supplier,
+            invoice_date=placeholders.get("invoice_date") or invoice_date,
+            amount=amount_comma or amount,
+            document_type=document_type,
+            payment_account=payment_account,
+            source_filename=source_name,
+            review_required=True,
+            canonical_filename=canonical.canonical_filename,
+            filename_template_version=canonical.filename_template_version,
+            document_direction=canonical.document_direction,
+            business_category=canonical.business_category,
+            business_category_display=canonical.business_category_display,
+            counterparty_name=canonical.counterparty_name,
+            missing_fields=missing_fields,
+            matched_configuration_name=(
+                match.matched_configuration_name if match else None
+            ),
+            matched_configuration_id=match.matched_configuration_id if match else None,
+            matched_configuration_pattern=config_pattern,
+            matched_configuration_reason=(
+                match.matched_configuration_reason if match else None
+            ),
+            matched_configuration_confidence=(
+                match.matched_configuration_confidence if match else None
+            ),
+            filename_pattern=config_pattern,
+            rendered_filename=suggested,
+            placeholder_values=rendered.placeholder_values,
+            missing_placeholders=rendered.missing_placeholders,
+            amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+        )
+
+    # No configuration pattern → demoted canonical fallback.
+    return _canonical_fallback(
+        fields,
+        review_required=review_required,
+        extra_values=extra_values,
+        match=match,
     )
 
 
 __all__ = (
     "DEFAULT_FILENAME_PATTERN",
     "FORBIDDEN_SENSITIVE_FIELD_KEYS",
+    "FILENAME_SOURCE_CANONICAL_FALLBACK",
+    "FILENAME_SOURCE_CONFIGURATION_PATTERN",
+    "FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE",
     "FILENAME_SOURCE_ORIGINAL_FALLBACK",
     "FILENAME_SOURCE_PLANNED_RESULT",
     "FILENAME_SOURCE_SUGGESTED_MAPPING",
     "FILENAME_TEMPLATE_VERSION",
+    "MSG_NAMING_REASON_CANONICAL_FALLBACK",
     "MSG_NAMING_REASON_MISSING",
     "MSG_NAMING_REASON_PARTIAL",
     "MSG_NAMING_REASON_PLANNED_BASENAME",

@@ -290,6 +290,16 @@ def _planned_with_suggestion(
         business_category_display=mapping.business_category_display,
         counterparty_name=mapping.counterparty_name,
         missing_fields=mapping.missing_fields,
+        matched_configuration_name=mapping.matched_configuration_name,
+        matched_configuration_id=mapping.matched_configuration_id,
+        matched_configuration_pattern=mapping.matched_configuration_pattern,
+        matched_configuration_reason=mapping.matched_configuration_reason,
+        matched_configuration_confidence=mapping.matched_configuration_confidence,
+        filename_pattern=mapping.filename_pattern,
+        rendered_filename=mapping.rendered_filename,
+        placeholder_values=mapping.placeholder_values,
+        missing_placeholders=mapping.missing_placeholders,
+        amount_format=mapping.amount_format,
     )
 
 

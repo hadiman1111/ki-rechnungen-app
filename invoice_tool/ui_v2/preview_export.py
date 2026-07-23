@@ -43,6 +43,7 @@ PREVIEW_EXPORT_SCHEMA_VERSION = 1
 PREVIEW_EXPORT_FOLDER_PREFIX = "preview-export-"
 REVIEW_REQUIRED_PREFIX = "REVIEW_REQUIRED__"
 REVIEW_REQUIRED_SUGGESTED_PREFIX = "REVIEW_REQUIRED__SUGGESTED__"
+REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_PREFIX = "REVIEW_REQUIRED__SUGGESTED__INCOMPLETE__"
 SUGGESTED_PREFIX = "SUGGESTED__"
 FILES_SUBDIR = "files"
 
@@ -50,11 +51,28 @@ FilenameSource = Literal[
     "planned_result",
     "suggested_mapping",
     "original_fallback",
+    "configuration_pattern",
+    "configuration_pattern_incomplete",
+    "canonical_fallback_no_configuration_pattern",
 ]
 
 FILENAME_SOURCE_PLANNED_RESULT: FilenameSource = "planned_result"
 FILENAME_SOURCE_SUGGESTED_MAPPING: FilenameSource = "suggested_mapping"
 FILENAME_SOURCE_ORIGINAL_FALLBACK: FilenameSource = "original_fallback"
+FILENAME_SOURCE_CONFIGURATION_PATTERN: FilenameSource = "configuration_pattern"
+FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE: FilenameSource = (
+    "configuration_pattern_incomplete"
+)
+FILENAME_SOURCE_CANONICAL_FALLBACK: FilenameSource = (
+    "canonical_fallback_no_configuration_pattern"
+)
+
+MSG_FIELD_CONFIGURATION = "Konfiguration"
+MSG_FIELD_FILENAME_PATTERN = "Dateinamensmuster"
+MSG_FIELD_PLACEHOLDER_VALUES = "Platzhalterwerte"
+MSG_FIELD_MISSING_PLACEHOLDERS = "fehlende Platzhalter"
+MSG_FIELD_AMOUNT_FORMAT = "Betrag format"
+MSG_FIELD_RENDERED_FILENAME = "Vorschau-Dateiname"
 
 MSG_PREVIEW_EXPORT_TITLE = "Preview Export"
 MSG_PREVIEW_EXPORT_CTA = "Preview-Export in Output-Ordner schreiben"
@@ -130,8 +148,9 @@ FORBIDDEN_POSITIVE_CLAIM_MARKERS = (
 # Back-compat alias used by tests / callers.
 FORBIDDEN_CLAIM_MARKERS = FORBIDDEN_POSITIVE_CLAIM_MARKERS
 
-_UNSAFE_FILENAME_RE = re.compile(r"[^\w.\- ()\[\]]+", re.UNICODE)
-_MULTI_UNDERSCORE_RE = re.compile(r"_+")
+# Allow decimal comma in configuration-pattern amounts (e.g. 84,39).
+_UNSAFE_FILENAME_RE = re.compile(r"[^\w.\-, ()\[\]]+", re.UNICODE)
+_MULTI_UNDERSCORE_RE = re.compile(r"_{2,}")
 
 
 @dataclass(frozen=True)
@@ -158,6 +177,16 @@ class PreviewNamingDecision:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = field(default_factory=tuple)
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
+    missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +220,16 @@ class PreviewExportItem:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = field(default_factory=tuple)
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
+    missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -249,32 +288,41 @@ def review_required_preview_filename(source_filename: str) -> str:
     return f"{REVIEW_REQUIRED_PREFIX}{safe}"
 
 
-def review_required_suggested_preview_filename(suggested_filename: str) -> str:
+def _strip_preview_name_prefixes(name: str) -> str:
+    safe = sanitize_preview_filename(name)
+    changed = True
+    while changed:
+        changed = False
+        for prefix in (
+            REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_PREFIX,
+            REVIEW_REQUIRED_SUGGESTED_PREFIX,
+            REVIEW_REQUIRED_PREFIX,
+            SUGGESTED_PREFIX,
+            "INCOMPLETE__",
+        ):
+            if safe.startswith(prefix):
+                safe = safe[len(prefix) :]
+                changed = True
+    return sanitize_preview_filename(safe)
+
+
+def review_required_suggested_preview_filename(
+    suggested_filename: str,
+    *,
+    incomplete: bool = False,
+) -> str:
     """Mark a safe suggested name as review-required preview (not final)."""
 
-    safe = sanitize_preview_filename(suggested_filename)
-    # Strip existing review prefixes so we never double-wrap.
-    while safe.startswith(REVIEW_REQUIRED_SUGGESTED_PREFIX):
-        safe = safe[len(REVIEW_REQUIRED_SUGGESTED_PREFIX) :]
-    while safe.startswith(REVIEW_REQUIRED_PREFIX):
-        safe = safe[len(REVIEW_REQUIRED_PREFIX) :]
-    while safe.startswith(SUGGESTED_PREFIX):
-        safe = safe[len(SUGGESTED_PREFIX) :]
-    safe = sanitize_preview_filename(safe)
+    safe = _strip_preview_name_prefixes(suggested_filename)
+    if incomplete:
+        return f"{REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_PREFIX}{safe}"
     return f"{REVIEW_REQUIRED_SUGGESTED_PREFIX}{safe}"
 
 
 def suggested_preview_filename(suggested_filename: str) -> str:
     """Mark a safe suggested name for recognized (non-review) preview cases."""
 
-    safe = sanitize_preview_filename(suggested_filename)
-    while safe.startswith(REVIEW_REQUIRED_SUGGESTED_PREFIX):
-        safe = safe[len(REVIEW_REQUIRED_SUGGESTED_PREFIX) :]
-    while safe.startswith(REVIEW_REQUIRED_PREFIX):
-        safe = safe[len(REVIEW_REQUIRED_PREFIX) :]
-    while safe.startswith(SUGGESTED_PREFIX):
-        safe = safe[len(SUGGESTED_PREFIX) :]
-    safe = sanitize_preview_filename(safe)
+    safe = _strip_preview_name_prefixes(suggested_filename)
     return f"{SUGGESTED_PREFIX}{safe}"
 
 
@@ -316,6 +364,16 @@ def _meta_from_planned(
             "business_category_display": None,
             "counterparty_name": None,
             "missing_fields": (),
+            "matched_configuration_name": None,
+            "matched_configuration_id": None,
+            "matched_configuration_pattern": None,
+            "matched_configuration_reason": None,
+            "matched_configuration_confidence": None,
+            "filename_pattern": None,
+            "rendered_filename": None,
+            "placeholder_values": (),
+            "missing_placeholders": (),
+            "amount_format": None,
         }
     fields = tuple(planned.suggested_filename_fields or ())
     return {
@@ -335,6 +393,16 @@ def _meta_from_planned(
         "business_category_display": planned.business_category_display,
         "counterparty_name": planned.counterparty_name or planned.supplier,
         "missing_fields": tuple(planned.missing_fields or ()),
+        "matched_configuration_name": planned.matched_configuration_name,
+        "matched_configuration_id": planned.matched_configuration_id,
+        "matched_configuration_pattern": planned.matched_configuration_pattern,
+        "matched_configuration_reason": planned.matched_configuration_reason,
+        "matched_configuration_confidence": planned.matched_configuration_confidence,
+        "filename_pattern": planned.filename_pattern,
+        "rendered_filename": planned.rendered_filename or planned.suggested_filename,
+        "placeholder_values": tuple(planned.placeholder_values or ()),
+        "missing_placeholders": tuple(planned.missing_placeholders or ()),
+        "amount_format": planned.amount_format,
     }
 
 
@@ -354,7 +422,34 @@ def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "business_category_display": meta.get("business_category_display"),
         "counterparty_name": meta.get("counterparty_name"),
         "missing_fields": tuple(meta.get("missing_fields") or ()),
+        "matched_configuration_name": meta.get("matched_configuration_name"),
+        "matched_configuration_id": meta.get("matched_configuration_id"),
+        "matched_configuration_pattern": meta.get("matched_configuration_pattern"),
+        "matched_configuration_reason": meta.get("matched_configuration_reason"),
+        "matched_configuration_confidence": meta.get(
+            "matched_configuration_confidence"
+        ),
+        "filename_pattern": meta.get("filename_pattern"),
+        "rendered_filename": meta.get("rendered_filename"),
+        "placeholder_values": tuple(meta.get("placeholder_values") or ()),
+        "missing_placeholders": tuple(meta.get("missing_placeholders") or ()),
+        "amount_format": meta.get("amount_format"),
     }
+
+
+def _coerce_filename_source(raw: str | None, default: FilenameSource) -> FilenameSource:
+    text = str(raw or "").strip()
+    allowed: set[str] = {
+        FILENAME_SOURCE_PLANNED_RESULT,
+        FILENAME_SOURCE_SUGGESTED_MAPPING,
+        FILENAME_SOURCE_ORIGINAL_FALLBACK,
+        FILENAME_SOURCE_CONFIGURATION_PATTERN,
+        FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE,
+        FILENAME_SOURCE_CANONICAL_FALLBACK,
+    }
+    if text in allowed:
+        return text  # type: ignore[return-value]
+    return default
 
 
 def resolve_preview_naming(
@@ -398,35 +493,56 @@ def resolve_preview_naming(
     ):
         candidate = explicit_suggested
         planned_source = str(meta.get("planned_filename_source") or "").strip()
+        source_kind = _coerce_filename_source(
+            planned_source, FILENAME_SOURCE_SUGGESTED_MAPPING
+        )
         if planned_source == FILENAME_SOURCE_PLANNED_RESULT:
             source_kind = FILENAME_SOURCE_PLANNED_RESULT
-        else:
-            source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
     elif planned_name and _basename_differs_from_source(planned_name, source_filename):
         candidate = planned_name
         source_kind = FILENAME_SOURCE_PLANNED_RESULT
 
     naming_reason_override = meta.get("planned_naming_reason")
     extra = _naming_decision_fields(meta)
-    # Prefer canonical basename when available and safe.
+    # Prefer rendered configuration / canonical basename when available and safe.
+    rendered = (meta.get("rendered_filename") or "").strip() or None
+    if rendered:
+        rendered = Path(rendered).name
+        if not rendered.lower().endswith(".pdf") or ".." in rendered:
+            rendered = None
     canonical = (meta.get("canonical_filename") or "").strip() or None
     if canonical:
         canonical = Path(canonical).name
         if not canonical.lower().endswith(".pdf") or ".." in canonical:
             canonical = None
+    if candidate is None and rendered and _basename_differs_from_source(
+        rendered, source_filename
+    ):
+        candidate = rendered
+        source_kind = _coerce_filename_source(
+            str(meta.get("planned_filename_source") or ""),
+            FILENAME_SOURCE_CONFIGURATION_PATTERN,
+        )
     if candidate is None and canonical and _basename_differs_from_source(
         canonical, source_filename
     ):
         candidate = canonical
-        source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
+        source_kind = FILENAME_SOURCE_CANONICAL_FALLBACK
     if candidate is not None and canonical is None:
         extra = {**extra, "canonical_filename": sanitize_preview_filename(candidate)}
+
+    incomplete = (
+        source_kind == FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE
+        or bool(meta.get("missing_placeholders"))
+    )
 
     if review_required:
         if candidate is not None:
             safe_suggested = sanitize_preview_filename(candidate)
             return PreviewNamingDecision(
-                preview_filename=review_required_suggested_preview_filename(safe_suggested),
+                preview_filename=review_required_suggested_preview_filename(
+                    safe_suggested, incomplete=incomplete
+                ),
                 suggested_filename=safe_suggested,
                 planned_target=planned_target,
                 filename_source=source_kind,
@@ -690,10 +806,11 @@ def _readme_text(
             f"- `{REVIEW_REQUIRED_SUGGESTED_PREFIX}<name>` = Prüffall mit sicherem Vorschlagsnamen",
             f"- {MSG_SUGGESTED_PREVIEW_ONLY}",
             f"- {MSG_NAMING_NOT_FINAL}",
-            "- Manifest fields: `canonical_filename`, `document_direction`, "
-            "`business_category`, `counterparty_name`, `invoice_date`, `amount`, "
-            "`filename_template_version`, `missing_fields`, `naming_reason`, "
-            "`naming_confidence`, `suggested_filename`, `planned_target`",
+            "- Manifest fields: `matched_configuration_name`, "
+            "`matched_configuration_pattern`, `filename_pattern`, "
+            "`rendered_filename`, `placeholder_values`, `missing_placeholders`, "
+            "`amount_format`, `filename_source`, `canonical_filename` (fallback), "
+            "`naming_reason`, `naming_confidence`, `suggested_filename`",
             "",
             "## Safety",
             "",
@@ -732,8 +849,38 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(f"  - Vorgeschlagener Dateiname: `{item.suggested_filename}`")
         else:
             lines.append("  - Vorgeschlagener Dateiname: nicht verfügbar")
+        if item.matched_configuration_name:
+            lines.append(
+                f"  - {MSG_FIELD_CONFIGURATION}: `{item.matched_configuration_name}`"
+            )
+        if item.matched_configuration_pattern or item.filename_pattern:
+            lines.append(
+                f"  - {MSG_FIELD_FILENAME_PATTERN}: `"
+                f"{item.matched_configuration_pattern or item.filename_pattern}`"
+            )
+        if item.rendered_filename:
+            lines.append(
+                f"  - rendered_filename: `{item.rendered_filename}`"
+            )
+        if item.placeholder_values:
+            rendered_vals = ", ".join(
+                f"{key}={value if value is not None else '—'}"
+                for key, value in item.placeholder_values
+            )
+            lines.append(f"  - {MSG_FIELD_PLACEHOLDER_VALUES}: `{rendered_vals}`")
+        if item.missing_placeholders:
+            lines.append(
+                f"  - {MSG_FIELD_MISSING_PLACEHOLDERS}: `"
+                + ", ".join(item.missing_placeholders)
+                + "`"
+            )
+            lines.append(
+                "  - Hinweis: Fehlende Platzhalter wurden nicht stillschweigend entfernt."
+            )
+        if item.amount_format:
+            lines.append(f"  - {MSG_FIELD_AMOUNT_FORMAT}: `{item.amount_format}`")
         if item.canonical_filename:
-            lines.append(f"  - canonical_filename: `{item.canonical_filename}`")
+            lines.append(f"  - canonical_filename (Fallback): `{item.canonical_filename}`")
         if item.filename_template_version:
             lines.append(
                 f"  - filename_template_version: `{item.filename_template_version}`"
@@ -795,6 +942,14 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "category",
             "planned_target",
             "suggested_filename",
+            "rendered_filename",
+            "matched_configuration_name",
+            "matched_configuration_id",
+            "matched_configuration_pattern",
+            "filename_pattern",
+            "placeholder_values",
+            "missing_placeholders",
+            "amount_format",
             "canonical_filename",
             "filename_template_version",
             "document_direction",
@@ -816,6 +971,10 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
         ]
     )
     for item in items:
+        placeholder_text = "|".join(
+            f"{key}={value if value is not None else ''}"
+            for key, value in (item.placeholder_values or ())
+        )
         writer.writerow(
             [
                 item.source_filename,
@@ -824,6 +983,14 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.category,
                 item.planned_target or "",
                 item.suggested_filename or "",
+                item.rendered_filename or "",
+                item.matched_configuration_name or "",
+                item.matched_configuration_id or "",
+                item.matched_configuration_pattern or "",
+                item.filename_pattern or "",
+                placeholder_text,
+                "|".join(item.missing_placeholders or ()),
+                item.amount_format or "",
                 item.canonical_filename or "",
                 item.filename_template_version or "",
                 item.document_direction or "",
@@ -892,6 +1059,20 @@ def _manifest_payload(
                 "category": item.category,
                 "planned_target": item.planned_target,
                 "suggested_filename": item.suggested_filename,
+                "rendered_filename": item.rendered_filename,
+                "matched_configuration_name": item.matched_configuration_name,
+                "matched_configuration_id": item.matched_configuration_id,
+                "matched_configuration_pattern": item.matched_configuration_pattern,
+                "matched_configuration_reason": item.matched_configuration_reason,
+                "matched_configuration_confidence": (
+                    item.matched_configuration_confidence
+                ),
+                "filename_pattern": item.filename_pattern,
+                "placeholder_values": {
+                    key: value for key, value in (item.placeholder_values or ())
+                },
+                "missing_placeholders": list(item.missing_placeholders or ()),
+                "amount_format": item.amount_format,
                 "canonical_filename": item.canonical_filename,
                 "filename_template_version": item.filename_template_version,
                 "document_direction": item.document_direction,
@@ -1106,6 +1287,18 @@ def write_preview_export_package(
                         business_category_display=naming.business_category_display,
                         counterparty_name=naming.counterparty_name,
                         missing_fields=naming.missing_fields,
+                        matched_configuration_name=naming.matched_configuration_name,
+                        matched_configuration_id=naming.matched_configuration_id,
+                        matched_configuration_pattern=naming.matched_configuration_pattern,
+                        matched_configuration_reason=naming.matched_configuration_reason,
+                        matched_configuration_confidence=(
+                            naming.matched_configuration_confidence
+                        ),
+                        filename_pattern=naming.filename_pattern,
+                        rendered_filename=naming.rendered_filename,
+                        placeholder_values=naming.placeholder_values,
+                        missing_placeholders=naming.missing_placeholders,
+                        amount_format=naming.amount_format,
                     )
                 )
                 continue
@@ -1151,6 +1344,18 @@ def write_preview_export_package(
                     business_category_display=naming.business_category_display,
                     counterparty_name=naming.counterparty_name,
                     missing_fields=naming.missing_fields,
+                    matched_configuration_name=naming.matched_configuration_name,
+                    matched_configuration_id=naming.matched_configuration_id,
+                    matched_configuration_pattern=naming.matched_configuration_pattern,
+                    matched_configuration_reason=naming.matched_configuration_reason,
+                    matched_configuration_confidence=(
+                        naming.matched_configuration_confidence
+                    ),
+                    filename_pattern=naming.filename_pattern,
+                    rendered_filename=naming.rendered_filename,
+                    placeholder_values=naming.placeholder_values,
+                    missing_placeholders=naming.missing_placeholders,
+                    amount_format=naming.amount_format,
                 )
             )
 
@@ -1286,6 +1491,11 @@ def preview_export_ui_copy() -> tuple[str, ...]:
         MSG_PREVIEW_EXPORT_PRODUCTIVE_LOCKED,
         MSG_PREVIEW_EXPORT_NO_FINAL_FILES,
         MSG_FIELD_PREVIEW_FILENAME,
+        MSG_FIELD_CONFIGURATION,
+        MSG_FIELD_FILENAME_PATTERN,
+        MSG_FIELD_PLACEHOLDER_VALUES,
+        MSG_FIELD_MISSING_PLACEHOLDERS,
+        MSG_FIELD_AMOUNT_FORMAT,
         MSG_FIELD_DOCUMENT_DIRECTION,
         MSG_FIELD_BUSINESS_CATEGORY,
         MSG_FIELD_COUNTERPARTY_NAME,
@@ -1325,19 +1535,29 @@ def text_claims_forbidden_maturity(text: str) -> bool:
 
 __all__ = (
     "FILES_SUBDIR",
+    "FILENAME_SOURCE_CANONICAL_FALLBACK",
+    "FILENAME_SOURCE_CONFIGURATION_PATTERN",
+    "FILENAME_SOURCE_CONFIGURATION_PATTERN_INCOMPLETE",
     "FILENAME_SOURCE_ORIGINAL_FALLBACK",
     "FILENAME_SOURCE_PLANNED_RESULT",
     "FILENAME_SOURCE_SUGGESTED_MAPPING",
     "FORBIDDEN_CLAIM_MARKERS",
     "FORBIDDEN_POSITIVE_CLAIM_MARKERS",
     "MSG_FIELD_AMOUNT",
+    "MSG_FIELD_AMOUNT_FORMAT",
     "MSG_FIELD_BUSINESS_CATEGORY",
+    "MSG_FIELD_CONFIGURATION",
     "MSG_FIELD_COUNTERPARTY_NAME",
     "MSG_FIELD_DOCUMENT_DIRECTION",
+    "MSG_FIELD_FILENAME_PATTERN",
+    "MSG_FIELD_MISSING_PLACEHOLDERS",
     "MSG_FIELD_NAMING_REASON",
+    "MSG_FIELD_PLACEHOLDER_VALUES",
     "MSG_FIELD_PLANNED_TARGET",
     "MSG_FIELD_PREVIEW_FILENAME",
+    "MSG_FIELD_RENDERED_FILENAME",
     "MSG_NAMING_NOT_FINAL",
+    "REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_PREFIX",
     "MSG_NAMING_REASON_NO_SUGGESTED",
     "MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE",
     "MSG_NAMING_REASON_SUGGESTED",

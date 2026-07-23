@@ -113,6 +113,16 @@ class ReviewItemViewModel:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = field(default_factory=tuple)
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
+    missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +213,16 @@ def build_review_item_view_model(
     business_category_display = None
     counterparty_name = None
     missing_fields: tuple[str, ...] = ()
+    matched_configuration_name = None
+    matched_configuration_id = None
+    matched_configuration_pattern = None
+    matched_configuration_reason = None
+    matched_configuration_confidence = None
+    filename_pattern = None
+    rendered_filename = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = ()
+    missing_placeholders: tuple[str, ...] = ()
+    amount_format = None
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -228,6 +248,26 @@ def build_review_item_view_model(
         )
         counterparty_name = (planned.counterparty_name or "").strip() or None
         missing_fields = tuple(planned.missing_fields or ())
+        matched_configuration_name = (
+            (planned.matched_configuration_name or "").strip() or None
+        )
+        matched_configuration_id = (
+            (planned.matched_configuration_id or "").strip() or None
+        )
+        matched_configuration_pattern = (
+            (planned.matched_configuration_pattern or "").strip() or None
+        )
+        matched_configuration_reason = (
+            (planned.matched_configuration_reason or "").strip() or None
+        )
+        matched_configuration_confidence = (
+            (planned.matched_configuration_confidence or "").strip() or None
+        )
+        filename_pattern = (planned.filename_pattern or "").strip() or None
+        rendered_filename = (planned.rendered_filename or "").strip() or None
+        placeholder_values = tuple(planned.placeholder_values or ())
+        missing_placeholders = tuple(planned.missing_placeholders or ())
+        amount_format = (planned.amount_format or "").strip() or None
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -261,6 +301,16 @@ def build_review_item_view_model(
         business_category_display=business_category_display,
         counterparty_name=counterparty_name,
         missing_fields=missing_fields,
+        matched_configuration_name=matched_configuration_name,
+        matched_configuration_id=matched_configuration_id,
+        matched_configuration_pattern=matched_configuration_pattern,
+        matched_configuration_reason=matched_configuration_reason,
+        matched_configuration_confidence=matched_configuration_confidence,
+        filename_pattern=filename_pattern,
+        rendered_filename=rendered_filename,
+        placeholder_values=placeholder_values,
+        missing_placeholders=missing_placeholders,
+        amount_format=amount_format,
     )
 
 

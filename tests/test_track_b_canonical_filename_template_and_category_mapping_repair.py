@@ -273,7 +273,8 @@ def test_10_missing_category_does_not_default_to_architektur() -> None:
             invoice_date="260523",
             amount="84.39",
             document_type="rechnung",
-        )
+        ),
+        use_configuration_bridge=False,
     )
     assert mapped.business_category == BUSINESS_CATEGORY_UNCLEAR
     assert "Architektur" not in (mapped.suggested_filename or "")
@@ -491,20 +492,19 @@ def test_23_24_copied_pdfs_byte_identical_and_input_not_mutated() -> None:
     assert len(enriched) >= 1
     for item in enriched:
         assert item.suggested_filename
-        parts = _canonical_parts(item.suggested_filename)
-        assert parts["date"].isdigit() and len(parts["date"]) == 6
-        assert parts["direction"] in {
-            "Eingangsrechnung",
-            "Ausgangsrechnung",
-            "Unklare_Rechnungsart",
+        # Prompt 20: configuration pattern is primary; canonical remains metadata.
+        assert item.filename_pattern or item.canonical_filename
+        assert item.filename_source in {
+            "configuration_pattern",
+            "configuration_pattern_incomplete",
+            "canonical_fallback_no_configuration_pattern",
+            "suggested_mapping",
         }
-        assert parts["category"] in {
-            "Architektur",
-            "Innenarchitektur",
-            "Event_and_Production",
-            "Privat",
-            "Unklare_Zuordnung",
-        }
+        assert "Architektur" not in (item.suggested_filename or "") or (
+            item.matched_configuration_name == "Architektur & Innenarchitektur"
+        )
+        if item.amount and re.search(r"\d", item.amount):
+            assert "," in item.amount or "." not in item.amount
     assert _digest_tree(CONTROLLED_INPUT) == before
 
 
@@ -666,22 +666,19 @@ def test_controlled_preview_export_canonical_names(tmp_path: Path) -> None:
     assert result.ok
     for item in result.items:
         assert item.preview_filename.startswith(REVIEW_REQUIRED_SUGGESTED_PREFIX)
-        assert item.canonical_filename
+        assert item.suggested_filename or item.rendered_filename
         assert item.document_direction
         assert item.business_category
-        assert item.filename_template_version == FILENAME_TEMPLATE_VERSION
-        parts = _canonical_parts(item.preview_filename)
-        assert parts["date"].isdigit()
-        assert parts["direction"] in {
-            "Eingangsrechnung",
-            "Ausgangsrechnung",
-            "Unklare_Rechnungsart",
+        # Configuration pattern preferred; canonical metadata may still be present.
+        assert item.filename_pattern or item.canonical_filename
+        assert item.filename_source in {
+            "configuration_pattern",
+            "configuration_pattern_incomplete",
+            "canonical_fallback_no_configuration_pattern",
+            "suggested_mapping",
         }
-        assert parts["category"] in {
-            "Architektur",
-            "Innenarchitektur",
-            "Event_and_Production",
-            "Privat",
-            "Unklare_Zuordnung",
-        }
+        assert re.search(r"\d+,\d{2}", item.preview_filename) or "FEHLT_" in (
+            item.preview_filename or ""
+        )
+        assert not re.search(r"_\d+\.\d{2}\.pdf$", item.preview_filename or "")
     assert _digest_tree(CONTROLLED_INPUT) == before

@@ -151,6 +151,17 @@ class ProcessingPlannedDestination:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = field(default_factory=tuple)
+    # Prompt 20/34 — configuration filename pattern bridge.
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = field(default_factory=tuple)
+    missing_placeholders: tuple[str, ...] = field(default_factory=tuple)
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)

@@ -46,9 +46,14 @@ from invoice_tool.ui_v2.review_components import (
 )
 from invoice_tool.ui_v2.preview_export import (
     MSG_FIELD_AMOUNT,
+    MSG_FIELD_AMOUNT_FORMAT,
     MSG_FIELD_BUSINESS_CATEGORY,
+    MSG_FIELD_CONFIGURATION,
     MSG_FIELD_COUNTERPARTY_NAME,
     MSG_FIELD_DOCUMENT_DIRECTION,
+    MSG_FIELD_FILENAME_PATTERN,
+    MSG_FIELD_MISSING_PLACEHOLDERS,
+    MSG_FIELD_PLACEHOLDER_VALUES,
     resolve_preview_naming,
 )
 from invoice_tool.ui_v2.review_preview_state import (
@@ -156,6 +161,16 @@ class ReviewDetailItemVM:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = ()
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = ()
+    missing_placeholders: tuple[str, ...] = ()
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +228,16 @@ class ReviewSelectedDetailVM:
     business_category_display: str | None = None
     counterparty_name: str | None = None
     missing_fields: tuple[str, ...] = ()
+    matched_configuration_name: str | None = None
+    matched_configuration_id: str | None = None
+    matched_configuration_pattern: str | None = None
+    matched_configuration_reason: str | None = None
+    matched_configuration_confidence: str | None = None
+    filename_pattern: str | None = None
+    rendered_filename: str | None = None
+    placeholder_values: tuple[tuple[str, str | None], ...] = ()
+    missing_placeholders: tuple[str, ...] = ()
+    amount_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -295,6 +320,16 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         business_category_display=item.business_category_display,
         counterparty_name=item.counterparty_name,
         missing_fields=tuple(item.missing_fields or ()),
+        matched_configuration_name=item.matched_configuration_name,
+        matched_configuration_id=item.matched_configuration_id,
+        matched_configuration_pattern=item.matched_configuration_pattern,
+        matched_configuration_reason=item.matched_configuration_reason,
+        matched_configuration_confidence=item.matched_configuration_confidence,
+        filename_pattern=item.filename_pattern,
+        rendered_filename=item.rendered_filename,
+        placeholder_values=tuple(item.placeholder_values or ()),
+        missing_placeholders=tuple(item.missing_placeholders or ()),
+        amount_format=item.amount_format,
     )
 
 
@@ -402,12 +437,24 @@ def _build_selected_detail(
             business_category_display=detail.business_category_display,
             counterparty_name=detail.counterparty_name,
             missing_fields=tuple(detail.missing_fields or ()),
+            matched_configuration_name=detail.matched_configuration_name,
+            matched_configuration_id=detail.matched_configuration_id,
+            matched_configuration_pattern=detail.matched_configuration_pattern,
+            matched_configuration_reason=detail.matched_configuration_reason,
+            matched_configuration_confidence=detail.matched_configuration_confidence,
+            filename_pattern=detail.filename_pattern,
+            rendered_filename=detail.rendered_filename,
+            placeholder_values=tuple(detail.placeholder_values or ()),
+            missing_placeholders=tuple(detail.missing_placeholders or ()),
+            amount_format=detail.amount_format,
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
         review_required=True,
         planned=planned_for_naming,
-        suggested_filename=detail.suggested_filename or detail.canonical_filename,
+        suggested_filename=detail.suggested_filename
+        or detail.rendered_filename
+        or detail.canonical_filename,
     )
     return ReviewSelectedDetailVM(
         item_key=detail.item_key or detail.document_id,
@@ -445,6 +492,33 @@ def _build_selected_detail(
         ),
         counterparty_name=naming.counterparty_name or detail.counterparty_name,
         missing_fields=tuple(naming.missing_fields or detail.missing_fields or ()),
+        matched_configuration_name=(
+            naming.matched_configuration_name or detail.matched_configuration_name
+        ),
+        matched_configuration_id=(
+            naming.matched_configuration_id or detail.matched_configuration_id
+        ),
+        matched_configuration_pattern=(
+            naming.matched_configuration_pattern
+            or detail.matched_configuration_pattern
+        ),
+        matched_configuration_reason=(
+            naming.matched_configuration_reason
+            or detail.matched_configuration_reason
+        ),
+        matched_configuration_confidence=(
+            naming.matched_configuration_confidence
+            or detail.matched_configuration_confidence
+        ),
+        filename_pattern=naming.filename_pattern or detail.filename_pattern,
+        rendered_filename=naming.rendered_filename or detail.rendered_filename,
+        placeholder_values=tuple(
+            naming.placeholder_values or detail.placeholder_values or ()
+        ),
+        missing_placeholders=tuple(
+            naming.missing_placeholders or detail.missing_placeholders or ()
+        ),
+        amount_format=naming.amount_format or detail.amount_format,
     )
 
 
@@ -725,6 +799,48 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 insert_at, ("Vorgeschlagener Dateiname", detail.suggested_filename)
             )
             insert_at += 1
+        if detail.matched_configuration_name:
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_CONFIGURATION, detail.matched_configuration_name),
+            )
+            insert_at += 1
+        pattern_label = (
+            detail.matched_configuration_pattern or detail.filename_pattern
+        )
+        if pattern_label:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_FILENAME_PATTERN, pattern_label)
+            )
+            insert_at += 1
+        if detail.rendered_filename:
+            detail_fields.insert(
+                insert_at, ("Gerenderter Dateiname", detail.rendered_filename)
+            )
+            insert_at += 1
+        if detail.placeholder_values:
+            placeholder_text = ", ".join(
+                f"{key}={value if value is not None else '—'}"
+                for key, value in detail.placeholder_values
+            )
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_PLACEHOLDER_VALUES, placeholder_text)
+            )
+            insert_at += 1
+        if detail.missing_placeholders:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_MISSING_PLACEHOLDERS,
+                    ", ".join(detail.missing_placeholders),
+                ),
+            )
+            insert_at += 1
+        if detail.amount_format:
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_AMOUNT_FORMAT, detail.amount_format)
+            )
+            insert_at += 1
         direction = detail.document_direction or "Unklare_Rechnungsart"
         detail_fields.insert(insert_at, (MSG_FIELD_DOCUMENT_DIRECTION, direction))
         insert_at += 1
@@ -765,7 +881,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 insert_at, (MSG_FIELD_PLANNED_TARGET, detail.planned_target)
             )
             insert_at += 1
-        detail_fields.insert(insert_at, ("Benennung", detail.naming_not_final))
+        detail_fields.insert(
+            insert_at, ("Benennung noch nicht final", detail.naming_not_final)
+        )
         items.append(
             section_block(
                 "Prüffall-Details",
