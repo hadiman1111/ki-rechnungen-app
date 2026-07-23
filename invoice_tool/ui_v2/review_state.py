@@ -24,6 +24,7 @@ from invoice_tool.ui_v2.result_mapping import (
     build_result_bucket_summary,
     productive_actions_exposed,
 )
+from invoice_tool.ui_v2.review_preview_state import planned_for_document
 from invoice_tool.ui_v2.review_workflow import (
     MSG_BUCKETS_SEPARATED,
     MSG_ERRORS_SEPARATED,
@@ -138,8 +139,13 @@ def build_review_flow_state(
     run = processing_state or ProcessingRunState()
     queue = build_review_queue_view_model(run)
     review_raw = tuple(run.review_items or ())
+    planned_rows = tuple(run.planned_destinations or ())
     review_vms = tuple(
-        build_review_item_view_model(item, source_run_id=run.run_id)
+        build_review_item_view_model(
+            item,
+            source_run_id=run.run_id,
+            planned=planned_for_document(planned_rows, item.document_name),
+        )
         for item in review_raw
     )
     errors = _error_vms(run)

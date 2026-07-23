@@ -17,8 +17,17 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_UNCLEAR_STAYS_REVIEW,
 )
 from invoice_tool.ui_v2.processing_state import (
+    ProcessingPlannedDestination,
     ProcessingReviewItem,
     ProcessingRunState,
+)
+from invoice_tool.ui_v2.review_preview_state import (
+    MSG_BADGE_NO_FINAL_WRITE,
+    MSG_BADGE_PREVIEW,
+    MSG_BADGE_PRODUCTIVE_BLOCKED,
+    MSG_CATEGORY_REVIEW,
+    planned_for_document,
+    review_item_key,
 )
 
 EMPTY_REVIEW_TITLE = "Keine Prüffälle vorhanden."
@@ -78,6 +87,15 @@ class ReviewItemViewModel:
     next_action_hint: str
     source_run_id: str | None = None
     severity: str | None = None
+    # Prompt 15/34 — list/detail usability fields (preview-only).
+    item_key: str = ""
+    source_filename: str = ""
+    category: str = MSG_CATEGORY_REVIEW
+    planned_action: str | None = None
+    planned_destination: str | None = None
+    preview_only_badge: str = MSG_BADGE_PREVIEW
+    no_final_write_badge: str = MSG_BADGE_NO_FINAL_WRITE
+    productive_blocked_badge: str = MSG_BADGE_PRODUCTIVE_BLOCKED
 
 
 @dataclass(frozen=True)
@@ -140,6 +158,7 @@ def build_review_item_view_model(
     item: ProcessingReviewItem,
     *,
     source_run_id: str | None = None,
+    planned: ProcessingPlannedDestination | None = None,
 ) -> ReviewItemViewModel:
     """Map a provided review item — never invent private or filename-derived fields."""
 
@@ -148,6 +167,14 @@ def build_review_item_view_model(
     evidence = (item.evidence_summary or "").strip() or DEFAULT_EVIDENCE_SUMMARY
     next_action = (item.next_action_hint or "").strip() or DEFAULT_NEXT_ACTION_HINT
     status = (item.status_label or "").strip() or DEFAULT_STATUS
+    key = review_item_key(item)
+    planned_path = None
+    planned_action = None
+    if planned is not None:
+        planned_path = (planned.planned_path or "").strip() or None
+        planned_action = (planned.destination_label or "").strip() or None
+        if not planned_action and planned_path:
+            planned_action = "Geplantes Ziel (Vorschau)"
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -157,6 +184,14 @@ def build_review_item_view_model(
         next_action_hint=next_action,
         source_run_id=(source_run_id or "").strip() or None,
         severity=status,
+        item_key=key,
+        source_filename=document_label,
+        category=MSG_CATEGORY_REVIEW,
+        planned_action=planned_action,
+        planned_destination=planned_path,
+        preview_only_badge=MSG_BADGE_PREVIEW,
+        no_final_write_badge=MSG_BADGE_NO_FINAL_WRITE,
+        productive_blocked_badge=MSG_BADGE_PRODUCTIVE_BLOCKED,
     )
 
 
@@ -168,8 +203,13 @@ def build_review_queue_view_model(
     run_state = processing_state or ProcessingRunState()
     raw_items = tuple(run_state.review_items or ())
     source_run_id = (run_state.run_id or "").strip() or None
+    planned_rows = tuple(run_state.planned_destinations or ())
     items = tuple(
-        build_review_item_view_model(item, source_run_id=source_run_id)
+        build_review_item_view_model(
+            item,
+            source_run_id=source_run_id,
+            planned=planned_for_document(planned_rows, item.document_name),
+        )
         for item in raw_items
     )
     error_count = len(tuple(run_state.errors or ()))

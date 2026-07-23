@@ -40,6 +40,7 @@ from invoice_tool.ui_v2.processing_contract import (
     default_processing_service,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingRunState, idle_processing_state
+from invoice_tool.ui_v2.review_preview_state import ReviewPreviewUiState
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
 
 
@@ -108,6 +109,8 @@ class UiV2State:
     # Live Track-B UI injects LocalProcessingAdapter in app.build_ui_v2.
     processing_service: ProcessingServiceProtocol = field(default_factory=default_processing_service)
     processing_run_state: ProcessingRunState = field(default_factory=idle_processing_state)
+    # Prompt 15/34 — Review-bucket preview selection / actions (in-memory only).
+    review_preview_ui: ReviewPreviewUiState = field(default_factory=ReviewPreviewUiState)
 
     page: Any = None
     refresh: Callable[[], None] | None = None
