@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_PROFILE_CONFIGURATION_FILENAME_PATTERN_BRIDGE_REPAIR_01`
 2. **Masterplan position:** Prompt 20/34
 3. **HEAD before:** `01859687051aa72b09352db0fea385f667334563`  
-   **HEAD after:** *(set at commit)*
+   **HEAD after:** `5dcfb1caeb8623163c121183601bf8818bba4379`
 4. **User correction:** Konfigurations-Dateinamensmuster ist Source of Truth; kein paralleles kanonisches Naming; Beträge mit Dezimal-Komma.
 5. **Baseline:** Prompt 19 canonical template ready; Preview-Namen mit Punkt-Beträgen und generischem Muster.
 6. **Existing pattern source of truth:** aktives Profil → Konfigurationen (American Express, Event Production, Architektur & Innenarchitektur, Privat, Unklar) mit `{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf`.
