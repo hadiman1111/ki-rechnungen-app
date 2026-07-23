@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_EXPORT_PREVIEW_USER_FLOW_AND_DOWNLOAD_01`
 2. **Masterplan position:** Prompt 16/34
 3. **HEAD before:** `eda4b73e466a32e560ef16a77728e503feb42c3d`  
-   **HEAD after:** *(set after commit)*
+   **HEAD after:** `c3f5909ad5cf7fe97ca524206e40d7cd5f284f20`
 4. **Baseline:** Prompt 15 `TRACK_B_REVIEW_BUCKET_USABILITY_AND_ACTIONS_READY` — Review-Bucket nutzbar, Output leer (Preview-only), kein sichtbares Export-Paket.
 5. **Files changed:**
    - `invoice_tool/ui_v2/preview_export.py` (neu)
