@@ -8,7 +8,6 @@ recognition rows beyond the dry-run result.
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,9 +52,7 @@ MSG_BRIDGE_MISSING_CONFIGURATION = (
 )
 MSG_BRIDGE_MISSING_PROFILE = "Profil fehlt. Bitte ein Profil explizit wählen."
 MSG_BRIDGE_MISSING_SANDBOX_ROOT = "Sandbox-Root fehlt. Bitte Sandbox-Pfade setzen."
-MSG_BRIDGE_ORIGINAL_LOOKING = (
-    "Originalähnlicher Ordner abgelehnt. Nur kopierte Sandbox-Eingänge sind erlaubt."
-)
+MSG_BRIDGE_ORIGINAL_LOOKING = "Pfad wirkt wie Original-/Produktivordner"
 MSG_BRIDGE_PRODUCTIVE_BLOCKED = (
     "Produktive Verarbeitung ist gesperrt. Die Core-Bridge erlaubt keinen Produktivmodus."
 )
@@ -84,19 +81,6 @@ ERROR_OUTSIDE_SANDBOX = "core_bridge_outside_sandbox"
 ERROR_SAME_INPUT_OUTPUT = "core_bridge_same_input_output"
 ERROR_INPUT_NOT_DIR = "core_bridge_input_not_dir"
 ERROR_OUTPUT_NOT_DIR = "core_bridge_output_not_dir"
-
-# Token/segment checks only — no filesystem access for heuristic path screening.
-_ORIGINAL_LOOKING_PATH_RE = re.compile(
-    r"(?:^|[/\\_\-\s])"
-    r"(?:somaa|bismarck|amex|voba|volksbank|american express|test rechnungen|"
-    r"programm belegerfassung)"
-    r"(?:[/\\_\-\s]|$)",
-    re.IGNORECASE,
-)
-_DESKTOP_ORIGINAL_RE = re.compile(
-    r"(?:^|[/\\])(?:Desktop|Documents)[/\\].*(?:Rechnung|Invoice|Beleg)",
-    re.IGNORECASE,
-)
 
 
 class CoreBridgeStatus(str, Enum):
@@ -183,26 +167,15 @@ def path_looks_like_original(
     *,
     original_source_folder: str | None = None,
 ) -> bool:
-    """Heuristic original-folder rejection — string-only, no FS IO."""
+    """Heuristic original-folder rejection — delegates to shared contract policy.
 
-    if contract_path_looks_like_original(
+    Positive copied sandbox/test paths are accepted only via the contract's
+    explicit sandbox override; Desktop/Rechnung are never globally allowed.
+    """
+
+    return contract_path_looks_like_original(
         path, original_source_folder=original_source_folder
-    ):
-        return True
-    normalized = _norm(path)
-    if normalized is None:
-        return False
-    original = _norm(original_source_folder)
-    if original is not None and (
-        normalized == original or _is_under(normalized, original)
-    ):
-        return True
-    probe = f"/{normalized}"
-    if _ORIGINAL_LOOKING_PATH_RE.search(probe):
-        return True
-    if _DESKTOP_ORIGINAL_RE.search(normalized):
-        return True
-    return False
+    )
 
 
 def _blocked(

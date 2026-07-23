@@ -11,6 +11,7 @@ implement in processing-core. This module:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -85,12 +86,14 @@ MSG_MISSING_PROFILE = "Profil fehlt (profile_id oder profile_name erforderlich).
 MSG_MISSING_CONFIGURATION = (
     "Konfiguration fehlt (configuration_id oder configuration_name erforderlich)."
 )
-MSG_ORIGINAL_LOOKING = (
-    "Originalähnlicher Pfad abgelehnt. Nur kopierte Sandbox-Eingänge/Ausgänge sind erlaubt."
-)
+MSG_ORIGINAL_LOOKING = "Pfad wirkt wie Original-/Produktivordner"
 MSG_OUTSIDE_SANDBOX = "Pfad liegt außerhalb der expliziten Sandbox-Policy."
 MSG_SAFETY_FLAG = "Sicherheitsflag verletzt die Core-Dry-Run-No-Mutation-Policy."
 MSG_MODE = "mode muss sandbox_dry_run sein."
+
+# Optional env-scoped copied sandbox/test roots (colon/semicolon/newline separated).
+# Product defaults stay empty — no Hadi-specific hardcoding.
+ENV_COPIED_SANDBOX_TEST_ROOTS = "KI_RECHNUNGEN_COPIED_SANDBOX_TEST_ROOTS"
 
 # Token/segment checks only — no filesystem access.
 _ORIGINAL_LOOKING_PATH_RE = re.compile(
@@ -102,6 +105,52 @@ _ORIGINAL_LOOKING_PATH_RE = re.compile(
 )
 _DESKTOP_ORIGINAL_RE = re.compile(
     r"(?:^|[/\\])(?:Desktop|Documents)[/\\].*(?:Rechnung|Invoice|Beleg)",
+    re.IGNORECASE,
+)
+
+# Hard productive/original markers — never overridden by sandbox/test signals.
+_FORBIDDEN_PRODUCTIVE_MARKERS = (
+    "/rechnungen/",
+    "/02_rechnungseingang/",
+    "/rechnungseingang/",
+    "/original/",
+    "/produktiv/",
+)
+_FORBIDDEN_PRODUCTIVE_SEGMENTS = frozenset(
+    {
+        "rechnungen",
+        "02_rechnungseingang",
+        "rechnungseingang",
+        "original",
+        "produktiv",
+    }
+)
+_POSITIVE_SANDBOX_SEGMENTS = frozenset(
+    {
+        "sandbox",
+        "test",
+        "tests",
+        "testdata",
+        "test_data",
+        "input_copy",
+        "output_preview",
+    }
+)
+# Token "test" inside a segment (KI-Rechnungen-Test) — not bare substring of "latest".
+_POSITIVE_TEST_TOKEN_RE = re.compile(
+    r"(?:^|[-_\s])test(?:$|[-_\s])",
+    re.IGNORECASE,
+)
+_POSITIVE_SANDBOX_TOKEN_RE = re.compile(
+    r"(?:^|[-_\s])sandbox(?:$|[-_\s])",
+    re.IGNORECASE,
+)
+_POSITIVE_INPUT_COPY_RE = re.compile(
+    r"(?:^|[-_\s])input_copy(?:$|[-_\s])",
+    re.IGNORECASE,
+)
+_POSITIVE_OUTPUT_PREVIEW_RE = re.compile(
+    r"(?:^|[-_\s])output_preview(?:$|[-_\s])",
     re.IGNORECASE,
 )
 
@@ -272,12 +321,92 @@ def _is_under(path: str, root: str) -> bool:
     return path == root or path.startswith(root + "/")
 
 
+def _path_segments(normalized: str) -> tuple[str, ...]:
+    return tuple(seg for seg in normalized.replace("\\", "/").split("/") if seg)
+
+
+def _env_copied_sandbox_test_roots() -> tuple[str, ...]:
+    """Optional explicit copied sandbox/test roots from env — never product defaults."""
+
+    raw = (os.environ.get(ENV_COPIED_SANDBOX_TEST_ROOTS) or "").strip()
+    if not raw:
+        return ()
+    roots: list[str] = []
+    for part in re.split(r"[:;\n]+", raw):
+        normalized = _norm(part)
+        if normalized is not None:
+            roots.append(normalized)
+    return tuple(roots)
+
+
+def path_has_forbidden_productive_marker(path: str | None) -> bool:
+    """True when a path contains hard productive/original markers."""
+
+    normalized = _norm(path)
+    if normalized is None:
+        return False
+    probe = f"/{normalized.lower()}/"
+    if any(marker in probe for marker in _FORBIDDEN_PRODUCTIVE_MARKERS):
+        return True
+    for segment in _path_segments(normalized):
+        if segment.lower() in _FORBIDDEN_PRODUCTIVE_SEGMENTS:
+            return True
+    return False
+
+
+def path_has_positive_sandbox_test_signal(path: str | None) -> bool:
+    """True when a path carries an explicit copied sandbox/test signal.
+
+    Positive signals are required before Desktop/Rechnung heuristics may be
+    overridden. No blanket Desktop or Rechnung allow.
+    """
+
+    normalized = _norm(path)
+    if normalized is None:
+        return False
+    for root in _env_copied_sandbox_test_roots():
+        if _is_under(normalized, root):
+            return True
+    for segment in _path_segments(normalized):
+        lowered = segment.lower()
+        if lowered in _POSITIVE_SANDBOX_SEGMENTS:
+            return True
+        if _POSITIVE_TEST_TOKEN_RE.search(segment):
+            return True
+        if _POSITIVE_SANDBOX_TOKEN_RE.search(segment):
+            return True
+        if _POSITIVE_INPUT_COPY_RE.search(segment):
+            return True
+        if _POSITIVE_OUTPUT_PREVIEW_RE.search(segment):
+            return True
+    return False
+
+
+def is_explicit_copied_sandbox_test_path(path: str | None) -> bool:
+    """Positive sandbox/test path that is not a hard productive/original path."""
+
+    if path_has_forbidden_productive_marker(path):
+        return False
+    normalized = _norm(path)
+    if normalized is None:
+        return False
+    probe = f"/{normalized}"
+    # Named original-looking folders (somaa, test rechnungen, …) stay blocked.
+    if _ORIGINAL_LOOKING_PATH_RE.search(probe):
+        return False
+    return path_has_positive_sandbox_test_signal(normalized)
+
+
 def path_looks_like_original(
     path: str | None,
     *,
     original_source_folder: str | None = None,
 ) -> bool:
-    """Heuristic original-folder rejection — string-only, no FS IO."""
+    """Heuristic original-folder rejection — string-only, no FS IO.
+
+    Positive copied sandbox/test paths may override Desktop/Rechnung heuristics
+    only when hard productive markers and named original patterns are absent.
+    """
 
     normalized = _norm(path)
     if normalized is None:
@@ -287,9 +416,14 @@ def path_looks_like_original(
         normalized == original or _is_under(normalized, original)
     ):
         return True
+    if path_has_forbidden_productive_marker(normalized):
+        return True
     probe = f"/{normalized}"
     if _ORIGINAL_LOOKING_PATH_RE.search(probe):
         return True
+    # Positive sandbox/test override — do not weaken hard blocks above.
+    if is_explicit_copied_sandbox_test_path(normalized):
+        return False
     if _DESKTOP_ORIGINAL_RE.search(normalized):
         return True
     return False
@@ -528,6 +662,7 @@ __all__ = (
     "CoreDryRunSafetyProof",
     "CoreDryRunStatus",
     "CoreDryRunSummary",
+    "ENV_COPIED_SANDBOX_TEST_ROOTS",
     "ERROR_COPIED_DATA_CONFIRMATION",
     "ERROR_DRY_RUN_REQUIRED",
     "ERROR_MISSING_CONFIGURATION",
@@ -542,9 +677,13 @@ __all__ = (
     "ERROR_PRODUCTIVE_BLOCKED",
     "ERROR_SAFETY_FLAG",
     "ERROR_SAME_INPUT_OUTPUT",
+    "MSG_ORIGINAL_LOOKING",
     "build_blocked_core_dry_run_result",
     "build_core_dry_run_contract_requirements",
     "empty_safety_proof",
+    "is_explicit_copied_sandbox_test_path",
+    "path_has_forbidden_productive_marker",
+    "path_has_positive_sandbox_test_signal",
     "path_looks_like_original",
     "summarize_core_dry_run_buckets",
     "validate_core_dry_run_request",

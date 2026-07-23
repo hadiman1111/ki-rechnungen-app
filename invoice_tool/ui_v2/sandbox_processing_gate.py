@@ -6,12 +6,16 @@ no PDF processing, no processing-core import, no Track-A import.
 
 Productive execution remains blocked. Original invoice folders must never be
 accepted as processing input.
+
+Also exposes the Track-B copied sandbox/test path policy used to positively
+identify controlled test folders without weakening original-folder protection.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from invoice_tool.ui_v2.clarity_copy import (
@@ -19,6 +23,13 @@ from invoice_tool.ui_v2.clarity_copy import (
     MSG_CLARITY_PRODUCTIVE_NOT_RELEASED,
     MSG_CLARITY_SANDBOX_COPIED_DATA_ONLY,
     MSG_CLARITY_SANDBOX_COPIED_RUN,
+)
+from invoice_tool.ui_v2.core_dry_run_contract import (
+    ENV_COPIED_SANDBOX_TEST_ROOTS,
+    is_explicit_copied_sandbox_test_path,
+    path_has_forbidden_productive_marker,
+    path_has_positive_sandbox_test_signal,
+    path_looks_like_original,
 )
 from invoice_tool.ui_v2.processing_contract import (
     SOURCE_EXPLICIT_USER_SELECTION,
@@ -81,7 +92,7 @@ MSG_BLOCKED_ORIGINAL_AS_INPUT = (
     "Original-Quellordner darf nicht als Verarbeitungseingang verwendet werden."
 )
 MSG_BLOCKED_SAME_INPUT_OUTPUT = (
-    "Eingangs- und Ausgabeordner dürfen nicht identisch sein."
+    "Input und Output dürfen nicht identisch sein"
 )
 MSG_BLOCKED_OUTPUT_INSIDE_ORIGINAL = (
     "Ausgabeordner darf nicht innerhalb des Original-Quellordners liegen."
@@ -89,11 +100,28 @@ MSG_BLOCKED_OUTPUT_INSIDE_ORIGINAL = (
 MSG_BLOCKED_OUTSIDE_SANDBOX = (
     "Ordner liegt außerhalb der expliziten Sandbox-Wurzel."
 )
-MSG_BLOCKED_PRODUCTIVE = MSG_SANDBOX_PRODUCTIVE_BLOCKED
+MSG_BLOCKED_PRODUCTIVE = "Produktivmodus gesperrt"
 MSG_BLOCKED_MISSING_ORIGINAL_SOURCE = (
     "Original-Quellordner fehlt. Ohne expliziten Originalpfad kann der "
     "Ausschluss vom Sandbox-Eingang nicht geprüft werden."
 )
+MSG_PATH_ORIGINAL_LOOKING = "Pfad wirkt wie Original-/Produktivordner"
+MSG_PATH_COPIED_SANDBOX_MISSING = "Kopierter Sandbox-/Testordner fehlt"
+MSG_PATH_SAME_INPUT_OUTPUT = MSG_BLOCKED_SAME_INPUT_OUTPUT
+MSG_PATH_PRODUCTIVE_BLOCKED = MSG_BLOCKED_PRODUCTIVE
+MSG_PATH_INPUT_MISSING = "Eingangsordner fehlt oder ist kein Ordner."
+MSG_PATH_OUTPUT_MISSING = "Ausgabeordner fehlt oder ist kein Ordner."
+MSG_SAFETY_COPIED_SANDBOX_CONFIRMED = "Kopierter Sandbox-/Testordner bestätigt"
+MSG_SAFETY_ORIGINAL_EXCLUDED = "Originalordner ausgeschlossen"
+MSG_SAFETY_PRODUCTIVE_BLOCKED = "Produktivmodus gesperrt"
+MSG_SAFETY_DRY_RUN_NO_MUTATION = "Dry-Run ohne Mutation"
+
+CopiedSandboxPathKind = Literal[
+    "forbidden_productive_original",
+    "original_looking",
+    "safe_copied_sandbox_test",
+    "unsafe_unknown",
+]
 
 WORKSPACE_SANDBOX_READINESS_LINES = (
     MSG_SANDBOX_COPIED_RUN,
@@ -138,6 +166,188 @@ def _is_under(child: str | None, parent: str | None) -> bool:
         return True
     prefix = p.rstrip("/") + "/"
     return c.startswith(prefix)
+
+
+@dataclass(frozen=True)
+class CopiedSandboxPathClassification:
+    """Outcome of positive copied sandbox/test path classification."""
+
+    kind: CopiedSandboxPathKind
+    approved: bool
+    reason_code: str
+    message: str
+    input_folder: str | None = None
+    output_folder: str | None = None
+    sandbox_root: str | None = None
+    safety_proof_lines: tuple[str, ...] = ()
+    checks_filesystem: bool = False
+
+
+def classify_copied_sandbox_test_paths(
+    input_folder: str | None,
+    output_folder: str | None,
+    *,
+    sandbox_root: str | None = None,
+    productive_mode_requested: bool = False,
+    check_filesystem: bool = False,
+) -> CopiedSandboxPathClassification:
+    """Classify input/output as safe copied sandbox/test or blocked.
+
+    Positive sandbox/test signals are required. Desktop/Rechnung alone never
+    unlocks a path. Hard productive markers remain blocked.
+    """
+
+    input_key = _normalize_path_key(input_folder)
+    output_key = _normalize_path_key(output_folder)
+    root_key = _normalize_path_key(sandbox_root)
+
+    if productive_mode_requested:
+        return CopiedSandboxPathClassification(
+            kind="forbidden_productive_original",
+            approved=False,
+            reason_code="blocked_productive_execution",
+            message=MSG_PATH_PRODUCTIVE_BLOCKED,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if input_key is None:
+        return CopiedSandboxPathClassification(
+            kind="unsafe_unknown",
+            approved=False,
+            reason_code="blocked_missing_input",
+            message=MSG_PATH_INPUT_MISSING,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if output_key is None:
+        return CopiedSandboxPathClassification(
+            kind="unsafe_unknown",
+            approved=False,
+            reason_code="blocked_missing_output",
+            message=MSG_PATH_OUTPUT_MISSING,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if _paths_equal(input_key, output_key):
+        return CopiedSandboxPathClassification(
+            kind="unsafe_unknown",
+            approved=False,
+            reason_code="blocked_same_input_output",
+            message=MSG_PATH_SAME_INPUT_OUTPUT,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if path_has_forbidden_productive_marker(input_key) or path_has_forbidden_productive_marker(
+        output_key
+    ):
+        return CopiedSandboxPathClassification(
+            kind="forbidden_productive_original",
+            approved=False,
+            reason_code="blocked_original_looking",
+            message=MSG_PATH_ORIGINAL_LOOKING,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if path_looks_like_original(input_key) or path_looks_like_original(output_key):
+        return CopiedSandboxPathClassification(
+            kind="original_looking",
+            approved=False,
+            reason_code="blocked_original_looking",
+            message=MSG_PATH_ORIGINAL_LOOKING,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    input_ok = is_explicit_copied_sandbox_test_path(input_key)
+    output_ok = is_explicit_copied_sandbox_test_path(output_key)
+    if not input_ok or not output_ok:
+        missing_signal = not path_has_positive_sandbox_test_signal(
+            input_key
+        ) or not path_has_positive_sandbox_test_signal(output_key)
+        return CopiedSandboxPathClassification(
+            kind="unsafe_unknown" if missing_signal else "original_looking",
+            approved=False,
+            reason_code="blocked_missing_copied_sandbox_signal",
+            message=MSG_PATH_COPIED_SANDBOX_MISSING,
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if root_key is not None and (
+        not _is_under(input_key, root_key) or not _is_under(output_key, root_key)
+    ):
+        return CopiedSandboxPathClassification(
+            kind="unsafe_unknown",
+            approved=False,
+            reason_code="blocked_outside_sandbox",
+            message=f"{MSG_BLOCKED_OUTSIDE_SANDBOX}",
+            input_folder=input_key,
+            output_folder=output_key,
+            sandbox_root=root_key,
+            checks_filesystem=check_filesystem,
+        )
+
+    if check_filesystem:
+        input_path = Path(input_key)
+        output_path = Path(output_key)
+        if not input_path.is_dir():
+            return CopiedSandboxPathClassification(
+                kind="unsafe_unknown",
+                approved=False,
+                reason_code="blocked_input_not_dir",
+                message=MSG_PATH_INPUT_MISSING,
+                input_folder=input_key,
+                output_folder=output_key,
+                sandbox_root=root_key,
+                checks_filesystem=True,
+            )
+        if not output_path.is_dir():
+            return CopiedSandboxPathClassification(
+                kind="unsafe_unknown",
+                approved=False,
+                reason_code="blocked_output_not_dir",
+                message=MSG_PATH_OUTPUT_MISSING,
+                input_folder=input_key,
+                output_folder=output_key,
+                sandbox_root=root_key,
+                checks_filesystem=True,
+            )
+
+    return CopiedSandboxPathClassification(
+        kind="safe_copied_sandbox_test",
+        approved=True,
+        reason_code="copied_sandbox_test_confirmed",
+        message=MSG_SAFETY_COPIED_SANDBOX_CONFIRMED,
+        input_folder=input_key,
+        output_folder=output_key,
+        sandbox_root=root_key,
+        safety_proof_lines=(
+            MSG_SAFETY_COPIED_SANDBOX_CONFIRMED,
+            MSG_SAFETY_ORIGINAL_EXCLUDED,
+            MSG_SAFETY_PRODUCTIVE_BLOCKED,
+            MSG_SAFETY_DRY_RUN_NO_MUTATION,
+        ),
+        checks_filesystem=check_filesystem,
+    )
 
 
 @dataclass(frozen=True)
@@ -426,6 +636,9 @@ def workspace_sandbox_readiness_copy() -> tuple[str, ...]:
 
 # Re-export for callers that need the unset sentinel without importing contract.
 __all__ = (
+    "CopiedSandboxPathClassification",
+    "CopiedSandboxPathKind",
+    "ENV_COPIED_SANDBOX_TEST_ROOTS",
     "ExecutionScope",
     "MSG_BLOCKED_MISSING_COPIED_DATA",
     "MSG_BLOCKED_MISSING_SANDBOX",
@@ -434,6 +647,14 @@ __all__ = (
     "MSG_BLOCKED_OUTPUT_INSIDE_ORIGINAL",
     "MSG_BLOCKED_PRODUCTIVE",
     "MSG_BLOCKED_SAME_INPUT_OUTPUT",
+    "MSG_PATH_COPIED_SANDBOX_MISSING",
+    "MSG_PATH_ORIGINAL_LOOKING",
+    "MSG_PATH_PRODUCTIVE_BLOCKED",
+    "MSG_PATH_SAME_INPUT_OUTPUT",
+    "MSG_SAFETY_COPIED_SANDBOX_CONFIRMED",
+    "MSG_SAFETY_DRY_RUN_NO_MUTATION",
+    "MSG_SAFETY_ORIGINAL_EXCLUDED",
+    "MSG_SAFETY_PRODUCTIVE_BLOCKED",
     "MSG_SANDBOX_COPIED_DATA_ONLY",
     "MSG_SANDBOX_COPIED_RUN",
     "MSG_SANDBOX_CORE_DRY_ABSENT",
@@ -450,7 +671,12 @@ __all__ = (
     "SandboxReasonCode",
     "WORKSPACE_SANDBOX_READINESS_LINES",
     "build_sandbox_run_request",
+    "classify_copied_sandbox_test_paths",
     "evaluate_sandbox_gate",
+    "is_explicit_copied_sandbox_test_path",
+    "path_has_forbidden_productive_marker",
+    "path_has_positive_sandbox_test_signal",
+    "path_looks_like_original",
     "sandbox_gate_from_request",
     "validate_sandbox_paths",
     "workspace_sandbox_readiness_copy",
