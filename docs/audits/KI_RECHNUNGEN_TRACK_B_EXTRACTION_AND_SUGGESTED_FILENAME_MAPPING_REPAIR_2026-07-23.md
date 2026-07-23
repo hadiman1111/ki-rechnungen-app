@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_EXTRACTION_AND_SUGGESTED_FILENAME_MAPPING_REPAIR_01`
 2. **Masterplan position:** Prompt 18/34
 3. **HEAD before:** `333872a93219402eea5ee1ee6eaa1d75598c72d7`  
-   **HEAD after:** *(filled after commit)*
+   **HEAD after:** `6d8dd654f6d212d0b6c5d9447044cf043beb41b5`
 4. **Baseline:** Prompt 17 — Preview-Export Filename Quality improved; 5 Real-PDFs ohne sinnvolle Vorschläge
 5. **Internal app naming diagnosis:** AI/OCR-Extraktion + Template-Filename + produktiver Write/Archive-Pfad; Core-Dry-Run absichtlich ohne OCR/AI
 6. **Track-B gap diagnosis:** fehlende Extraktionsfelder im Sandbox-Pfad; Preview-Export war vorbereitet, Mapping/Bridge fehlte
