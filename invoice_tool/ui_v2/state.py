@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from invoice_tool.ui_v2.configuration_rule_draft import ConfigurationRuleDraft
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
 from invoice_tool.ui_v2.saas_profile_state import SaasProfileStateStore, new_saas_profile_state_store
@@ -115,6 +116,11 @@ class UiV2State:
     processing_run_state: ProcessingRunState = field(default_factory=idle_processing_state)
     # Prompt 15/34 — Review-bucket preview selection / actions (in-memory only).
     review_preview_ui: ReviewPreviewUiState = field(default_factory=ReviewPreviewUiState)
+    # Prompt 26/34 — configuration rule draft from coverage guidance (unsaved until confirm).
+    configuration_rule_draft: ConfigurationRuleDraft | None = None
+    configuration_rule_draft_feedback: str = ""
+    configuration_rule_draft_feedback_error: bool = False
+    configuration_rule_manual_keep_unclear: bool = False
 
     page: Any = None
     refresh: Callable[[], None] | None = None

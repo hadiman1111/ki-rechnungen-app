@@ -117,6 +117,25 @@ from invoice_tool.ui_v2.review_workflow import (
     build_review_item_view_model,
     build_review_queue_view_model,
 )
+from invoice_tool.ui_v2.configuration_rule_draft import (
+    ACTION_CREATE_FROM_GUIDANCE,
+    ACTION_EDIT_EXISTING,
+    ACTION_MANUAL_KEEP_UNCLEAR,
+    MSG_FIELD_CONFIGURATION_RULE_DRAFT_AVAILABLE,
+    MSG_FIELD_DRAFT_WARNING,
+    MSG_FIELD_PROPOSED_CONDITION,
+    MSG_FIELD_PROPOSED_CONFIGURATION_NAME,
+    MSG_FIELD_PROPOSED_FILENAME_PATTERN,
+    MSG_FIELD_REQUIRES_USER_CONFIRMATION,
+    attach_configuration_rule_draft_report_fields,
+    coverage_gap_actions_available,
+    draft_from_coverage_guidance,
+)
+from invoice_tool.ui_v2.configuration_rule_editor import (
+    build_configuration_coverage_action_row,
+    build_configuration_rule_action_labels,
+    build_configuration_rule_draft_panel,
+)
 from invoice_tool.ui_v2.state import UiV2State
 
 # Re-exports used by existing tests / callers.
@@ -206,6 +225,13 @@ class ReviewDetailItemVM:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    configuration_rule_draft_available: bool = False
+    proposed_configuration_name: str | None = None
+    proposed_condition: str | None = None
+    proposed_filename_pattern: str | None = None
+    configuration_rule_draft_warning: str | None = None
+    requires_user_confirmation: bool = True
+    configuration_coverage_action_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -295,6 +321,13 @@ class ReviewSelectedDetailVM:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    configuration_rule_draft_available: bool = False
+    proposed_configuration_name: str | None = None
+    proposed_condition: str | None = None
+    proposed_filename_pattern: str | None = None
+    configuration_rule_draft_warning: str | None = None
+    requires_user_confirmation: bool = True
+    configuration_coverage_action_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -335,6 +368,8 @@ class ReviewPageVM:
     preview_actions_enabled: bool = True
     preview_only_banner: str = MSG_PREVIEW_ONLY_BANNER
     empty_output_explanation: str = MSG_EMPTY_OUTPUT_EXPLAIN
+    configuration_coverage_action_labels: tuple[str, ...] = ()
+    configuration_rule_draft_available: bool = False
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -343,7 +378,99 @@ class ReviewPageVM:
     claims_production_ready: bool = False
 
 
+def _suggested_rule_draft_fields(
+    *,
+    configuration_coverage_status: str | None,
+    missing_configuration_type: str | None,
+    user_guidance: str | None,
+    suggested_configuration_action: str | None,
+    guidance_severity: str | None,
+    selected_payment_field: str | None,
+    payment_account: str | None,
+    source_filename: str | None,
+    source_review_item_id: str | None,
+    matched_configuration_reason: str | None,
+    missing_configuration_rule: str | None,
+    unmatched_reasons: tuple[str, ...],
+    available_configurations: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    """Attach suggested draft report fields for coverage gaps (unsaved)."""
+
+    labels = build_configuration_rule_action_labels()
+    if not coverage_gap_actions_available(
+        configuration_coverage_status=configuration_coverage_status,
+        missing_configuration_type=missing_configuration_type,
+    ):
+        return {
+            "configuration_rule_draft_available": False,
+            "proposed_configuration_name": None,
+            "proposed_condition": None,
+            "proposed_filename_pattern": None,
+            "configuration_rule_draft_warning": None,
+            "requires_user_confirmation": True,
+            "configuration_coverage_action_labels": (),
+        }
+    draft = draft_from_coverage_guidance(
+        selected_payment_field=selected_payment_field,
+        payment_account=payment_account,
+        source_review_item_id=source_review_item_id,
+        source_filename=source_filename,
+        matched_configuration_reason=matched_configuration_reason,
+        missing_configuration_rule=missing_configuration_rule,
+        unmatched_reasons=unmatched_reasons,
+        available_configurations=available_configurations,
+        guidance={
+            "configuration_coverage_status": configuration_coverage_status,
+            "missing_configuration_type": missing_configuration_type,
+            "user_guidance": user_guidance,
+            "suggested_configuration_action": suggested_configuration_action,
+            "guidance_severity": guidance_severity or "warning",
+        },
+    )
+    if draft is None:
+        return {
+            "configuration_rule_draft_available": False,
+            "proposed_configuration_name": None,
+            "proposed_condition": None,
+            "proposed_filename_pattern": None,
+            "configuration_rule_draft_warning": None,
+            "requires_user_confirmation": True,
+            "configuration_coverage_action_labels": labels,
+        }
+    report = attach_configuration_rule_draft_report_fields({}, draft)
+    return {
+        "configuration_rule_draft_available": bool(
+            report.get(MSG_FIELD_CONFIGURATION_RULE_DRAFT_AVAILABLE)
+        ),
+        "proposed_configuration_name": report.get(
+            MSG_FIELD_PROPOSED_CONFIGURATION_NAME
+        ),
+        "proposed_condition": report.get(MSG_FIELD_PROPOSED_CONDITION),
+        "proposed_filename_pattern": report.get(MSG_FIELD_PROPOSED_FILENAME_PATTERN),
+        "configuration_rule_draft_warning": report.get(MSG_FIELD_DRAFT_WARNING),
+        "requires_user_confirmation": bool(
+            report.get(MSG_FIELD_REQUIRES_USER_CONFIRMATION, True)
+        ),
+        "configuration_coverage_action_labels": labels,
+    }
+
+
 def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
+    draft_fields = _suggested_rule_draft_fields(
+        configuration_coverage_status=item.configuration_coverage_status,
+        missing_configuration_type=item.missing_configuration_type,
+        user_guidance=item.user_guidance,
+        suggested_configuration_action=item.suggested_configuration_action,
+        guidance_severity=item.guidance_severity,
+        selected_payment_field=item.selected_payment_field,
+        payment_account=item.payment_account,
+        source_filename=item.source_filename or item.document_label,
+        source_review_item_id=item.item_key or item.document_id,
+        matched_configuration_reason=item.matched_configuration_reason,
+        missing_configuration_rule=item.missing_configuration_rule,
+        unmatched_reasons=tuple(item.unmatched_reasons or ()),
+        available_configurations=tuple(item.available_configurations or ()),
+    )
     return ReviewDetailItemVM(
         document_label=item.document_label,
         document_id=item.document_id,
@@ -411,6 +538,35 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         user_guidance=item.user_guidance,
         suggested_configuration_action=item.suggested_configuration_action,
         guidance_severity=item.guidance_severity,
+        configuration_rule_draft_available=bool(
+            draft_fields["configuration_rule_draft_available"]
+        ),
+        proposed_configuration_name=(
+            str(draft_fields["proposed_configuration_name"])
+            if draft_fields["proposed_configuration_name"]
+            else None
+        ),
+        proposed_condition=(
+            str(draft_fields["proposed_condition"])
+            if draft_fields["proposed_condition"]
+            else None
+        ),
+        proposed_filename_pattern=(
+            str(draft_fields["proposed_filename_pattern"])
+            if draft_fields["proposed_filename_pattern"]
+            else None
+        ),
+        configuration_rule_draft_warning=(
+            str(draft_fields["configuration_rule_draft_warning"])
+            if draft_fields["configuration_rule_draft_warning"]
+            else None
+        ),
+        requires_user_confirmation=bool(
+            draft_fields["requires_user_confirmation"]
+        ),
+        configuration_coverage_action_labels=tuple(
+            draft_fields["configuration_coverage_action_labels"] or ()
+        ),
     )
 
 
@@ -687,6 +843,13 @@ def _build_selected_detail(
             or detail.suggested_configuration_action
         ),
         guidance_severity=naming.guidance_severity or detail.guidance_severity,
+        configuration_rule_draft_available=detail.configuration_rule_draft_available,
+        proposed_configuration_name=detail.proposed_configuration_name,
+        proposed_condition=detail.proposed_condition,
+        proposed_filename_pattern=detail.proposed_filename_pattern,
+        configuration_rule_draft_warning=detail.configuration_rule_draft_warning,
+        requires_user_confirmation=detail.requires_user_confirmation,
+        configuration_coverage_action_labels=detail.configuration_coverage_action_labels,
     )
 
 
@@ -736,6 +899,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         excluded_keys=bag.excluded_from_export_preview_keys,
     )
     selected_detail = None
+    coverage_action_labels: tuple[str, ...] = ()
+    draft_available = False
     if selected_key:
         for detail in detail_items:
             key = detail.item_key or detail.document_id
@@ -747,7 +912,11 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
                     excluded=key in bag.excluded_from_export_preview_keys,
                     checked=key in bag.checked_preview_keys,
                 )
+                coverage_action_labels = detail.configuration_coverage_action_labels
+                draft_available = bool(detail.configuration_rule_draft_available)
                 break
+    if state.configuration_rule_draft is not None:
+        draft_available = True
 
     return ReviewPageVM(
         title=queue.title,
@@ -781,6 +950,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         preview_actions_enabled=bool(detail_items),
         preview_only_banner=MSG_PREVIEW_ONLY_BANNER,
         empty_output_explanation=MSG_EMPTY_OUTPUT_EXPLAIN,
+        configuration_coverage_action_labels=coverage_action_labels,
+        configuration_rule_draft_available=draft_available,
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1045,6 +1216,62 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 ),
             )
             insert_at += 1
+        if detail.configuration_rule_draft_available:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_CONFIGURATION_RULE_DRAFT_AVAILABLE,
+                    "true",
+                ),
+            )
+            insert_at += 1
+        if detail.proposed_configuration_name:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_PROPOSED_CONFIGURATION_NAME,
+                    detail.proposed_configuration_name,
+                ),
+            )
+            insert_at += 1
+        if detail.proposed_condition:
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_PROPOSED_CONDITION, detail.proposed_condition),
+            )
+            insert_at += 1
+        if detail.proposed_filename_pattern:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_PROPOSED_FILENAME_PATTERN,
+                    detail.proposed_filename_pattern,
+                ),
+            )
+            insert_at += 1
+        if detail.configuration_rule_draft_warning:
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_DRAFT_WARNING, detail.configuration_rule_draft_warning),
+            )
+            insert_at += 1
+        if detail.configuration_coverage_action_labels:
+            detail_fields.insert(
+                insert_at,
+                (
+                    "Konfigurationsaktionen",
+                    " · ".join(detail.configuration_coverage_action_labels),
+                ),
+            )
+            insert_at += 1
+        detail_fields.insert(
+            insert_at,
+            (
+                MSG_FIELD_REQUIRES_USER_CONFIRMATION,
+                "true" if detail.requires_user_confirmation else "false",
+            ),
+        )
+        insert_at += 1
         pattern_label = (
             detail.matched_configuration_pattern or detail.filename_pattern
         )
@@ -1166,6 +1393,27 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 subtitle="Auswahl aus der Prüfliste",
             )
         )
+        action_row = build_configuration_coverage_action_row(state, detail)
+        if action_row is not None:
+            items.append(action_row)
+        if state.configuration_rule_draft is not None:
+            items.append(
+                build_configuration_rule_draft_panel(
+                    state, state.configuration_rule_draft
+                )
+            )
+        elif state.configuration_rule_manual_keep_unclear:
+            items.append(
+                section_block(
+                    ACTION_MANUAL_KEEP_UNCLEAR,
+                    ft.Text(
+                        state.configuration_rule_draft_feedback
+                        or "Keine Regel gespeichert — Unklar bleibt aktiv.",
+                        size=12,
+                    ),
+                    subtitle="Manuelle Prüfung",
+                )
+            )
 
     detail_bits = [
         MSG_REVIEW_NO_FILE_MUTATION,
