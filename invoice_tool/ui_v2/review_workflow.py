@@ -155,6 +155,14 @@ class ReviewItemViewModel:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    # Prompt 27/34 — apply/rerun preview transparency.
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +285,13 @@ def build_review_item_view_model(
     user_guidance = None
     suggested_configuration_action = None
     guidance_severity = None
+    rule_applied = False
+    applied_configuration_name = None
+    applied_configuration_condition = None
+    rerun_preview_after_rule_change = False
+    matched_after_rule_change = False
+    previous_matched_configuration = None
+    new_matched_configuration = None
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -361,6 +376,23 @@ def build_review_item_view_model(
             (planned.suggested_configuration_action or "").strip() or None
         )
         guidance_severity = (planned.guidance_severity or "").strip() or None
+        rule_applied = bool(planned.rule_applied)
+        applied_configuration_name = (
+            (planned.applied_configuration_name or "").strip() or None
+        )
+        applied_configuration_condition = (
+            (planned.applied_configuration_condition or "").strip() or None
+        )
+        rerun_preview_after_rule_change = bool(
+            planned.rerun_preview_after_rule_change
+        )
+        matched_after_rule_change = bool(planned.matched_after_rule_change)
+        previous_matched_configuration = (
+            (planned.previous_matched_configuration or "").strip() or None
+        )
+        new_matched_configuration = (
+            (planned.new_matched_configuration or "").strip() or None
+        )
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -426,6 +458,13 @@ def build_review_item_view_model(
         user_guidance=user_guidance,
         suggested_configuration_action=suggested_configuration_action,
         guidance_severity=guidance_severity,
+        rule_applied=rule_applied,
+        applied_configuration_name=applied_configuration_name,
+        applied_configuration_condition=applied_configuration_condition,
+        rerun_preview_after_rule_change=rerun_preview_after_rule_change,
+        matched_after_rule_change=matched_after_rule_change,
+        previous_matched_configuration=previous_matched_configuration,
+        new_matched_configuration=new_matched_configuration,
     )
 
 

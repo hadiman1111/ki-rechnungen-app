@@ -252,6 +252,14 @@ class PreviewNamingDecision:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    # Prompt 27/34 — apply saved rule + preview rerun transparency.
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
@@ -327,6 +335,14 @@ class PreviewExportItem:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    # Prompt 27/34 — apply saved rule + preview rerun transparency.
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
@@ -506,6 +522,13 @@ def _meta_from_planned(
             "user_guidance": None,
             "suggested_configuration_action": None,
             "guidance_severity": None,
+            "rule_applied": False,
+            "applied_configuration_name": None,
+            "applied_configuration_condition": None,
+            "rerun_preview_after_rule_change": False,
+            "matched_after_rule_change": False,
+            "previous_matched_configuration": None,
+            "new_matched_configuration": None,
             "source_filename": None,
         }
     fields = tuple(planned.suggested_filename_fields or ())
@@ -561,6 +584,15 @@ def _meta_from_planned(
         "user_guidance": planned.user_guidance,
         "suggested_configuration_action": planned.suggested_configuration_action,
         "guidance_severity": planned.guidance_severity,
+        "rule_applied": bool(planned.rule_applied),
+        "applied_configuration_name": planned.applied_configuration_name,
+        "applied_configuration_condition": planned.applied_configuration_condition,
+        "rerun_preview_after_rule_change": bool(
+            planned.rerun_preview_after_rule_change
+        ),
+        "matched_after_rule_change": bool(planned.matched_after_rule_change),
+        "previous_matched_configuration": planned.previous_matched_configuration,
+        "new_matched_configuration": planned.new_matched_configuration,
         "source_filename": planned.document_name,
     }
     return {**base, **ensure_guidance_fields(base)}
@@ -615,6 +647,21 @@ def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "condition_results": tuple(meta.get("condition_results") or ()),
         "alternative_matches": tuple(meta.get("alternative_matches") or ()),
         "missing_configuration_rule": meta.get("missing_configuration_rule"),
+        "rule_applied": bool(meta.get("rule_applied") or False),
+        "applied_configuration_name": meta.get("applied_configuration_name"),
+        "applied_configuration_condition": meta.get(
+            "applied_configuration_condition"
+        ),
+        "rerun_preview_after_rule_change": bool(
+            meta.get("rerun_preview_after_rule_change") or False
+        ),
+        "matched_after_rule_change": bool(
+            meta.get("matched_after_rule_change") or False
+        ),
+        "previous_matched_configuration": meta.get(
+            "previous_matched_configuration"
+        ),
+        "new_matched_configuration": meta.get("new_matched_configuration"),
         **ensure_guidance_fields(meta),
     }
 
@@ -1309,6 +1356,33 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(
                 "  - Sichere nächste Schritte: " + "; ".join(SAFE_NEXT_ACTIONS)
             )
+        if item.rerun_preview_after_rule_change:
+            lines.append("  - rerun_preview_after_rule_change: true")
+            lines.append(
+                "  - previous_matched_configuration: "
+                f"`{item.previous_matched_configuration or '—'}`"
+            )
+            lines.append(
+                "  - new_matched_configuration: "
+                f"`{item.new_matched_configuration or '—'}`"
+            )
+            lines.append(
+                f"  - rule_applied: {'true' if item.rule_applied else 'false'}"
+            )
+            if item.applied_configuration_name:
+                lines.append(
+                    "  - applied_configuration_name: "
+                    f"`{item.applied_configuration_name}`"
+                )
+            if item.applied_configuration_condition:
+                lines.append(
+                    "  - applied_configuration_condition: "
+                    f"`{item.applied_configuration_condition}`"
+                )
+            lines.append(
+                "  - matched_after_rule_change: "
+                f"{'true' if item.matched_after_rule_change else 'false'}"
+            )
         if item.matched_configuration_pattern or item.filename_pattern:
             lines.append(
                 f"  - {MSG_FIELD_FILENAME_PATTERN}: `"
@@ -1435,6 +1509,13 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "user_guidance",
             "suggested_configuration_action",
             "guidance_severity",
+            "rule_applied",
+            "applied_configuration_name",
+            "applied_configuration_condition",
+            "rerun_preview_after_rule_change",
+            "matched_after_rule_change",
+            "previous_matched_configuration",
+            "new_matched_configuration",
             "filename_pattern",
             "placeholder_values",
             "missing_placeholders",
@@ -1493,6 +1574,13 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.user_guidance or "",
                 item.suggested_configuration_action or "",
                 item.guidance_severity or "",
+                "true" if item.rule_applied else "false",
+                item.applied_configuration_name or "",
+                item.applied_configuration_condition or "",
+                "true" if item.rerun_preview_after_rule_change else "false",
+                "true" if item.matched_after_rule_change else "false",
+                item.previous_matched_configuration or "",
+                item.new_matched_configuration or "",
                 item.filename_pattern or "",
                 placeholder_text,
                 "|".join(item.missing_placeholders or ()),
@@ -1604,6 +1692,15 @@ def _manifest_payload(
                 "user_guidance": item.user_guidance,
                 "suggested_configuration_action": item.suggested_configuration_action,
                 "guidance_severity": item.guidance_severity,
+                "rule_applied": bool(item.rule_applied),
+                "applied_configuration_name": item.applied_configuration_name,
+                "applied_configuration_condition": item.applied_configuration_condition,
+                "rerun_preview_after_rule_change": bool(
+                    item.rerun_preview_after_rule_change
+                ),
+                "matched_after_rule_change": bool(item.matched_after_rule_change),
+                "previous_matched_configuration": item.previous_matched_configuration,
+                "new_matched_configuration": item.new_matched_configuration,
                 "filename_pattern": item.filename_pattern,
                 "placeholder_values": {
                     key: value for key, value in (item.placeholder_values or ())
@@ -1935,6 +2032,21 @@ def write_preview_export_package(
                             naming.suggested_configuration_action
                         ),
                         guidance_severity=naming.guidance_severity,
+                        rule_applied=bool(naming.rule_applied),
+                        applied_configuration_name=naming.applied_configuration_name,
+                        applied_configuration_condition=(
+                            naming.applied_configuration_condition
+                        ),
+                        rerun_preview_after_rule_change=bool(
+                            naming.rerun_preview_after_rule_change
+                        ),
+                        matched_after_rule_change=bool(
+                            naming.matched_after_rule_change
+                        ),
+                        previous_matched_configuration=(
+                            naming.previous_matched_configuration
+                        ),
+                        new_matched_configuration=naming.new_matched_configuration,
                     )
                 )
                 continue
@@ -2020,6 +2132,21 @@ def write_preview_export_package(
                         naming.suggested_configuration_action
                     ),
                     guidance_severity=naming.guidance_severity,
+                    rule_applied=bool(naming.rule_applied),
+                    applied_configuration_name=naming.applied_configuration_name,
+                    applied_configuration_condition=(
+                        naming.applied_configuration_condition
+                    ),
+                    rerun_preview_after_rule_change=bool(
+                        naming.rerun_preview_after_rule_change
+                    ),
+                    matched_after_rule_change=bool(
+                        naming.matched_after_rule_change
+                    ),
+                    previous_matched_configuration=(
+                        naming.previous_matched_configuration
+                    ),
+                    new_matched_configuration=naming.new_matched_configuration,
                 )
             )
 

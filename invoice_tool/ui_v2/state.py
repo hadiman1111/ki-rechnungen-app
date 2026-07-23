@@ -121,6 +121,13 @@ class UiV2State:
     configuration_rule_draft_feedback: str = ""
     configuration_rule_draft_feedback_error: bool = False
     configuration_rule_manual_keep_unclear: bool = False
+    # Prompt 27/34 — after explicit save, expose preview-only apply/rerun action.
+    configuration_rule_apply_available: bool = False
+    configuration_rule_apply_feedback: str = ""
+    configuration_rule_apply_feedback_error: bool = False
+    configuration_rule_last_saved_draft: ConfigurationRuleDraft | None = None
+    configuration_rule_last_saved_configuration_id: str | None = None
+    configuration_rule_apply_last_result: Any | None = None
 
     page: Any = None
     refresh: Callable[[], None] | None = None

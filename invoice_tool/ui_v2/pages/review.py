@@ -131,6 +131,16 @@ from invoice_tool.ui_v2.configuration_rule_draft import (
     coverage_gap_actions_available,
     draft_from_coverage_guidance,
 )
+from invoice_tool.ui_v2.configuration_rule_apply_preview import (
+    MSG_APPLY_PREVIEW_ONLY,
+    MSG_NO_FINAL_PROCESSING,
+    MSG_ORIGINALS_UNCHANGED,
+    MSG_PREVIEW_RECOMPUTED,
+    MSG_RULE_SAVED,
+    PREVIEW_RERUN_ACTION_LABELS,
+    build_configuration_rule_apply_panel,
+    preview_rerun_action_labels,
+)
 from invoice_tool.ui_v2.configuration_rule_editor import (
     build_configuration_coverage_action_row,
     build_configuration_rule_action_labels,
@@ -232,6 +242,13 @@ class ReviewDetailItemVM:
     configuration_rule_draft_warning: str | None = None
     requires_user_confirmation: bool = True
     configuration_coverage_action_labels: tuple[str, ...] = ()
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +345,13 @@ class ReviewSelectedDetailVM:
     configuration_rule_draft_warning: str | None = None
     requires_user_confirmation: bool = True
     configuration_coverage_action_labels: tuple[str, ...] = ()
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
@@ -370,6 +394,8 @@ class ReviewPageVM:
     empty_output_explanation: str = MSG_EMPTY_OUTPUT_EXPLAIN
     configuration_coverage_action_labels: tuple[str, ...] = ()
     configuration_rule_draft_available: bool = False
+    preview_rerun_action_labels: tuple[str, ...] = PREVIEW_RERUN_ACTION_LABELS
+    configuration_rule_apply_available: bool = False
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -567,6 +593,15 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         configuration_coverage_action_labels=tuple(
             draft_fields["configuration_coverage_action_labels"] or ()
         ),
+        rule_applied=bool(item.rule_applied),
+        applied_configuration_name=item.applied_configuration_name,
+        applied_configuration_condition=item.applied_configuration_condition,
+        rerun_preview_after_rule_change=bool(
+            item.rerun_preview_after_rule_change
+        ),
+        matched_after_rule_change=bool(item.matched_after_rule_change),
+        previous_matched_configuration=item.previous_matched_configuration,
+        new_matched_configuration=item.new_matched_configuration,
     )
 
 
@@ -850,6 +885,15 @@ def _build_selected_detail(
         configuration_rule_draft_warning=detail.configuration_rule_draft_warning,
         requires_user_confirmation=detail.requires_user_confirmation,
         configuration_coverage_action_labels=detail.configuration_coverage_action_labels,
+        rule_applied=bool(detail.rule_applied),
+        applied_configuration_name=detail.applied_configuration_name,
+        applied_configuration_condition=detail.applied_configuration_condition,
+        rerun_preview_after_rule_change=bool(
+            detail.rerun_preview_after_rule_change
+        ),
+        matched_after_rule_change=bool(detail.matched_after_rule_change),
+        previous_matched_configuration=detail.previous_matched_configuration,
+        new_matched_configuration=detail.new_matched_configuration,
     )
 
 
@@ -952,6 +996,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         empty_output_explanation=MSG_EMPTY_OUTPUT_EXPLAIN,
         configuration_coverage_action_labels=coverage_action_labels,
         configuration_rule_draft_available=draft_available,
+        preview_rerun_action_labels=preview_rerun_action_labels(),
+        configuration_rule_apply_available=bool(
+            getattr(state, "configuration_rule_apply_available", False)
+        ),
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1381,6 +1429,61 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 insert_at, (MSG_FIELD_PLANNED_TARGET, detail.planned_target)
             )
             insert_at += 1
+        if detail.rerun_preview_after_rule_change:
+            detail_fields.insert(
+                insert_at,
+                (MSG_PREVIEW_RECOMPUTED, "true"),
+            )
+            insert_at += 1
+            detail_fields.insert(
+                insert_at,
+                (
+                    "previous_matched_configuration",
+                    detail.previous_matched_configuration or "—",
+                ),
+            )
+            insert_at += 1
+            detail_fields.insert(
+                insert_at,
+                (
+                    "new_matched_configuration",
+                    detail.new_matched_configuration or "—",
+                ),
+            )
+            insert_at += 1
+            detail_fields.insert(
+                insert_at,
+                ("rule_applied", "true" if detail.rule_applied else "false"),
+            )
+            insert_at += 1
+            if detail.applied_configuration_name:
+                detail_fields.insert(
+                    insert_at,
+                    (
+                        "applied_configuration_name",
+                        detail.applied_configuration_name,
+                    ),
+                )
+                insert_at += 1
+            if detail.applied_configuration_condition:
+                detail_fields.insert(
+                    insert_at,
+                    (
+                        "applied_configuration_condition",
+                        detail.applied_configuration_condition,
+                    ),
+                )
+                insert_at += 1
+            detail_fields.insert(
+                insert_at,
+                (MSG_RULE_SAVED, MSG_APPLY_PREVIEW_ONLY),
+            )
+            insert_at += 1
+            detail_fields.insert(
+                insert_at,
+                (MSG_NO_FINAL_PROCESSING, MSG_ORIGINALS_UNCHANGED),
+            )
+            insert_at += 1
         detail_fields.insert(
             insert_at, ("Benennung noch nicht final", detail.naming_not_final)
         )
@@ -1414,6 +1517,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
                     subtitle="Manuelle Prüfung",
                 )
             )
+        apply_panel = build_configuration_rule_apply_panel(state)
+        if apply_panel is not None:
+            items.append(apply_panel)
 
     detail_bits = [
         MSG_REVIEW_NO_FILE_MUTATION,

@@ -25,6 +25,9 @@ from invoice_tool.ui_v2.adapters.configuration_write_adapter import (
 from invoice_tool.ui_v2.adapters.write_result import WriteOperationResult
 from invoice_tool.ui_v2.components import secondary_button, section_block
 from invoice_tool.ui_v2.configuration_matching import load_active_configuration_candidates
+from invoice_tool.ui_v2.configuration_rule_apply_preview import (
+    mark_rule_saved_for_preview_apply,
+)
 from invoice_tool.ui_v2.configuration_rule_draft import (
     ACTION_CANCEL_DRAFT,
     ACTION_CREATE_FROM_GUIDANCE,
@@ -423,6 +426,17 @@ def build_configuration_rule_draft_panel(
         state.configuration_rule_draft = result.draft
         state.configuration_rule_draft_feedback = result.message
         state.configuration_rule_draft_feedback_error = not result.ok
+        if result.ok and result.draft is not None:
+            # Prompt 27/34 — expose explicit preview-only apply/rerun (no auto run).
+            mark_rule_saved_for_preview_apply(
+                state,
+                draft=result.draft,
+                configuration_id=result.configuration_id,
+            )
+            state.configuration_rule_draft_feedback = (
+                f"{result.message} — Vorschau mit neuer Regel kann neu berechnet werden "
+                "(Preview only — keine finale Verarbeitung)."
+            )
         if state.refresh is not None:
             state.refresh()
 

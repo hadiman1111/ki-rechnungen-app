@@ -196,6 +196,14 @@ class ProcessingPlannedDestination:
     user_guidance: str | None = None
     suggested_configuration_action: str | None = None
     guidance_severity: str | None = None
+    # Prompt 27/34 — apply saved rule + preview-only matching rerun.
+    rule_applied: bool = False
+    applied_configuration_name: str | None = None
+    applied_configuration_condition: str | None = None
+    rerun_preview_after_rule_change: bool = False
+    matched_after_rule_change: bool = False
+    previous_matched_configuration: str | None = None
+    new_matched_configuration: str | None = None
 
 
 @dataclass(frozen=True)
