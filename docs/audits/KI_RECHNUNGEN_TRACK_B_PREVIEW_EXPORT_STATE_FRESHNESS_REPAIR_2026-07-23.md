@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_PREVIEW_EXPORT_STATE_FRESHNESS_REPAIR_01`
 2. **Masterplan position:** Prompt 24/34
 3. **HEAD before:** `9b10343946e89533278dd538b68412093277cc55`  
-   **HEAD after:** *(gesetzt nach Commit)*
+   **HEAD after:** `f509294ed96cdde86b9326e9f3dc2d9e0db0ad69`
 4. **User manual evidence:** Review-UI zeigte aktuelle Werte (LUMITOP 476,00 / Bootshop 105,75 / Storno er_storno); neuester Export-Ordner `preview-export-track-b-dry-a9609610b265-20260723T105958144956Z` enthielt noch 500,00 / 80,55 / er_er.
 5. **Baseline:** Prompt 23 Configuration Coverage Guidance ready; HEAD `9b10343946e89533278dd538b68412093277cc55`.
 6. **Files changed:**
