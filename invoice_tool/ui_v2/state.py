@@ -98,6 +98,10 @@ class UiV2State:
     workspace_export_path_draft: str = ""
     workspace_export_feedback: str = ""
     workspace_export_feedback_error: bool = False
+    # Prompt 16/34 — controlled Preview Export package feedback (sandbox output only).
+    workspace_preview_export_feedback: str = ""
+    workspace_preview_export_feedback_error: bool = False
+    workspace_last_preview_export_folder: str = ""
     # Last CTA feedback for the workspace start/sandbox button (always visible after click).
     workspace_start_feedback: str = ""
     # Compact run-interaction state for manual-test UX (idle → checking → blocked/…).
@@ -421,6 +425,17 @@ class UiV2State:
             self.workspace_export_feedback = result.error or "Export fehlgeschlagen."
             self.workspace_export_feedback_error = True
         return result
+
+    def write_preview_export_to_output(self):
+        """Write a controlled Preview Export package into the sandbox output folder.
+
+        Preview copies + manifests only — never mutates inputs, never final productive
+        write, never calls run_once.
+        """
+
+        from invoice_tool.ui_v2.preview_export import apply_workspace_preview_export
+
+        return apply_workspace_preview_export(self)
 
     def import_saas_draft(
         self,

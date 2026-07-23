@@ -84,6 +84,10 @@ from invoice_tool.ui_v2.export_reporting import (
     build_run_report_view_model,
     render_export_preview_text,
 )
+from invoice_tool.ui_v2.preview_export import (
+    apply_workspace_preview_export,
+    preview_export_available,
+)
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
 from invoice_tool.saas_product_model import default_classification_policy
 from invoice_tool.ui_v2.policy_runtime_bridge import (
@@ -230,6 +234,21 @@ FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
 RUN_REPORT_SECTION_LABEL = "Export-Vorschau"
 EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
 EXPORT_ACTION_LABEL = "Export-Vorschau lokal speichern"
+# Prompt 16/34 — controlled package export CTA (literal copy; no mock runtime data).
+PACKAGE_EXPORT_ACTION_LABEL = "Preview-Export in Output-Ordner schreiben"
+PACKAGE_EXPORT_HELPER = (
+    "Preview Export: schreibt nur ein Preview-Paket · "
+    "Originale bleiben unverändert · "
+    "keine finale Verarbeitung · "
+    "Produktiv gesperrt"
+)
+# Productive final export must never appear in Track-B UI-v2.
+PRODUCTIVE_FINAL_EXPORT_LABELS = (
+    "Produktiv-Export",
+    "Finalen Export schreiben",
+    "Finale Dateien schreiben",
+    "Produktivverarbeitung starten",
+)
 START_FEEDBACK_SECTION_LABEL = "Laufstatus"
 ONBOARDING_SECTION_LABEL_COMPACT = "Pilotstatus"
 
@@ -482,6 +501,10 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
         apply_workspace_export_preview(state, path)
         _refresh()
 
+    def _preview_package_click(_e: ft.ControlEvent) -> None:
+        apply_workspace_preview_export_package(state)
+        _refresh()
+
     rows: list[ft.Control] = [
         compact_info_row("Titel", report.title),
         compact_info_row("Status", report.status_label),
@@ -510,6 +533,25 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
             title="Export-Vorschau-Details anzeigen",
         ),
     ]
+    # Prompt 16/34 — controlled Preview Export package into sandbox output folder.
+    if preview_export_available(state.processing_run_state):
+        panel_controls.extend(
+            [
+                helper_text(PACKAGE_EXPORT_HELPER),
+                action_button(
+                    PACKAGE_EXPORT_ACTION_LABEL,
+                    on_click=_preview_package_click,
+                    primary=True,
+                ),
+            ]
+        )
+        if state.workspace_last_preview_export_folder:
+            panel_controls.append(
+                compact_info_row(
+                    "Preview-Export-Ordner",
+                    state.workspace_last_preview_export_folder,
+                )
+            )
     if report.export_available:
         export_field = ft.TextField(
             value=state.workspace_export_path_draft,
@@ -527,17 +569,23 @@ def _build_run_report_panel(state: UiV2State, report: RunReportViewModel) -> lis
                 action_button(
                     EXPORT_ACTION_LABEL,
                     on_click=lambda e, field=export_field: _export_click(e, field),
-                    primary=True,
+                    primary=False,
                 ),
             ]
         )
     else:
         panel_controls.append(helper_text(MSG_NO_SANDBOX_RUN))
-    if state.workspace_export_feedback:
+    preview_feedback = (
+        state.workspace_preview_export_feedback or state.workspace_export_feedback or ""
+    ).strip()
+    preview_error = bool(
+        state.workspace_preview_export_feedback_error
+        if state.workspace_preview_export_feedback
+        else state.workspace_export_feedback_error
+    )
+    if preview_feedback:
         panel_controls.append(
-            inline_warning(state.workspace_export_feedback)
-            if state.workspace_export_feedback_error
-            else summary_alert(state.workspace_export_feedback)
+            inline_warning(preview_feedback) if preview_error else summary_alert(preview_feedback)
         )
     return panel_controls
 
@@ -578,6 +626,25 @@ def apply_workspace_export_preview(
         state.workspace_export_feedback = result.error or "Export fehlgeschlagen."
         state.workspace_export_feedback_error = True
     return result
+
+
+def apply_workspace_preview_export_package(state: UiV2State):
+    """Write controlled Preview Export package into the sandbox output folder."""
+
+    return apply_workspace_preview_export(state)
+
+
+def workspace_exposes_preview_export_cta(state: UiV2State) -> bool:
+    """UI gate: Preview-Export CTA only after successful sandbox result state."""
+
+    return preview_export_available(state.processing_run_state)
+
+
+def workspace_exposes_productive_final_export(_state: UiV2State | None = None) -> bool:
+    """Track-B must never expose productive final export actions."""
+
+    _ = _state
+    return False
 
 
 @dataclass(frozen=True)
