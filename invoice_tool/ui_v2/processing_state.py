@@ -131,6 +131,18 @@ class ProcessingPlannedDestination:
     reason: str | None = None
     applied: bool = False
     preview_only: bool = True
+    # Track-B suggested naming / local extraction (Prompt 18/34) — optional.
+    suggested_filename: str | None = None
+    filename_source: str | None = None
+    naming_confidence: str | None = None
+    naming_reason: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
+    suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
+    extraction_method: str | None = None
 
 
 @dataclass(frozen=True)

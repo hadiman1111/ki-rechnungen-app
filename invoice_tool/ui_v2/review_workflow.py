@@ -96,6 +96,16 @@ class ReviewItemViewModel:
     preview_only_badge: str = MSG_BADGE_PREVIEW
     no_final_write_badge: str = MSG_BADGE_NO_FINAL_WRITE
     productive_blocked_badge: str = MSG_BADGE_PRODUCTIVE_BLOCKED
+    # Prompt 18/34 — suggested naming metadata from Track-B enrichment.
+    suggested_filename: str | None = None
+    naming_confidence: str | None = None
+    naming_reason: str | None = None
+    filename_source: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,11 +180,29 @@ def build_review_item_view_model(
     key = review_item_key(item)
     planned_path = None
     planned_action = None
+    suggested_filename = None
+    naming_confidence = None
+    naming_reason = None
+    filename_source = None
+    supplier = None
+    invoice_date = None
+    amount = None
+    document_type = None
+    payment_account = None
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
         if not planned_action and planned_path:
             planned_action = "Geplantes Ziel (Vorschau)"
+        suggested_filename = (planned.suggested_filename or "").strip() or None
+        naming_confidence = (planned.naming_confidence or "").strip() or None
+        naming_reason = (planned.naming_reason or "").strip() or None
+        filename_source = (planned.filename_source or "").strip() or None
+        supplier = (planned.supplier or "").strip() or None
+        invoice_date = (planned.invoice_date or "").strip() or None
+        amount = (planned.amount or "").strip() or None
+        document_type = (planned.document_type or "").strip() or None
+        payment_account = (planned.payment_account or "").strip() or None
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -192,6 +220,15 @@ def build_review_item_view_model(
         preview_only_badge=MSG_BADGE_PREVIEW,
         no_final_write_badge=MSG_BADGE_NO_FINAL_WRITE,
         productive_blocked_badge=MSG_BADGE_PRODUCTIVE_BLOCKED,
+        suggested_filename=suggested_filename,
+        naming_confidence=naming_confidence,
+        naming_reason=naming_reason,
+        filename_source=filename_source,
+        supplier=supplier,
+        invoice_date=invoice_date,
+        amount=amount,
+        document_type=document_type,
+        payment_account=payment_account,
     )
 
 

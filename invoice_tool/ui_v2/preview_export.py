@@ -139,6 +139,13 @@ class PreviewNamingDecision:
     filename_source: FilenameSource
     naming_reason: str
     review_required: bool
+    naming_confidence: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
+    suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -158,6 +165,13 @@ class PreviewExportItem:
     filename_source: FilenameSource = FILENAME_SOURCE_ORIGINAL_FALLBACK
     naming_reason: str = MSG_NAMING_REASON_NO_SUGGESTED
     review_reason: str | None = None
+    naming_confidence: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
+    suggested_filename_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -246,6 +260,35 @@ def _basename_differs_from_source(planned_name: str, source_filename: str) -> bo
     ).lower()
 
 
+def _meta_from_planned(
+    planned: ProcessingPlannedDestination | None,
+) -> dict[str, Any]:
+    if planned is None:
+        return {
+            "naming_confidence": None,
+            "supplier": None,
+            "invoice_date": None,
+            "amount": None,
+            "document_type": None,
+            "payment_account": None,
+            "suggested_filename_fields": (),
+            "planned_naming_reason": None,
+            "planned_filename_source": None,
+        }
+    fields = tuple(planned.suggested_filename_fields or ())
+    return {
+        "naming_confidence": planned.naming_confidence,
+        "supplier": planned.supplier,
+        "invoice_date": planned.invoice_date,
+        "amount": planned.amount,
+        "document_type": planned.document_type,
+        "payment_account": planned.payment_account,
+        "suggested_filename_fields": fields,
+        "planned_naming_reason": planned.naming_reason,
+        "planned_filename_source": planned.filename_source,
+    }
+
+
 def resolve_preview_naming(
     *,
     source_filename: str,
@@ -263,12 +306,21 @@ def resolve_preview_naming(
     if planned_target is not None:
         planned_target = str(planned_target).strip() or None
 
+    meta = _meta_from_planned(planned)
     planned_name = _planned_basename(planned)
+    planned_suggested = None
+    if planned is not None and (planned.suggested_filename or "").strip():
+        planned_suggested = Path(str(planned.suggested_filename).strip()).name
+        if not planned_suggested.lower().endswith(".pdf") or ".." in planned_suggested:
+            planned_suggested = None
+
     explicit_suggested = (suggested_filename or "").strip() or None
     if explicit_suggested:
         explicit_suggested = Path(explicit_suggested).name
         if not explicit_suggested.lower().endswith(".pdf") or ".." in explicit_suggested:
             explicit_suggested = None
+    if explicit_suggested is None:
+        explicit_suggested = planned_suggested
 
     # Prefer an explicit suggested mapping name when it safely differs.
     candidate: str | None = None
@@ -277,10 +329,16 @@ def resolve_preview_naming(
         explicit_suggested, source_filename
     ):
         candidate = explicit_suggested
-        source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
+        planned_source = str(meta.get("planned_filename_source") or "").strip()
+        if planned_source == FILENAME_SOURCE_PLANNED_RESULT:
+            source_kind = FILENAME_SOURCE_PLANNED_RESULT
+        else:
+            source_kind = FILENAME_SOURCE_SUGGESTED_MAPPING
     elif planned_name and _basename_differs_from_source(planned_name, source_filename):
         candidate = planned_name
         source_kind = FILENAME_SOURCE_PLANNED_RESULT
+
+    naming_reason_override = meta.get("planned_naming_reason")
 
     if review_required:
         if candidate is not None:
@@ -290,13 +348,23 @@ def resolve_preview_naming(
                 suggested_filename=safe_suggested,
                 planned_target=planned_target,
                 filename_source=source_kind,
-                naming_reason=MSG_NAMING_REASON_SUGGESTED,
+                naming_reason=naming_reason_override or MSG_NAMING_REASON_SUGGESTED,
                 review_required=True,
+                naming_confidence=meta["naming_confidence"],
+                supplier=meta["supplier"],
+                invoice_date=meta["invoice_date"],
+                amount=meta["amount"],
+                document_type=meta["document_type"],
+                payment_account=meta["payment_account"],
+                suggested_filename_fields=meta["suggested_filename_fields"],
             )
         reason = (
-            MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE
-            if planned_target
-            else MSG_NAMING_REASON_NO_SUGGESTED
+            naming_reason_override
+            or (
+                MSG_NAMING_REASON_PLANNED_SAME_AS_SOURCE
+                if planned_target
+                else MSG_NAMING_REASON_NO_SUGGESTED
+            )
         )
         return PreviewNamingDecision(
             preview_filename=review_required_preview_filename(source_filename),
@@ -305,6 +373,13 @@ def resolve_preview_naming(
             filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
             naming_reason=reason,
             review_required=True,
+            naming_confidence=meta["naming_confidence"],
+            supplier=meta["supplier"],
+            invoice_date=meta["invoice_date"],
+            amount=meta["amount"],
+            document_type=meta["document_type"],
+            payment_account=meta["payment_account"],
+            suggested_filename_fields=meta["suggested_filename_fields"],
         )
 
     if candidate is not None:
@@ -313,16 +388,30 @@ def resolve_preview_naming(
             suggested_filename=sanitize_preview_filename(candidate),
             planned_target=planned_target,
             filename_source=source_kind,
-            naming_reason=MSG_NAMING_REASON_RECOGNIZED_PLANNED,
+            naming_reason=naming_reason_override or MSG_NAMING_REASON_RECOGNIZED_PLANNED,
             review_required=False,
+            naming_confidence=meta["naming_confidence"],
+            supplier=meta["supplier"],
+            invoice_date=meta["invoice_date"],
+            amount=meta["amount"],
+            document_type=meta["document_type"],
+            payment_account=meta["payment_account"],
+            suggested_filename_fields=meta["suggested_filename_fields"],
         )
     return PreviewNamingDecision(
         preview_filename=sanitize_preview_filename(source_filename),
         suggested_filename=None,
         planned_target=planned_target,
         filename_source=FILENAME_SOURCE_ORIGINAL_FALLBACK,
-        naming_reason=MSG_NAMING_REASON_RECOGNIZED_SOURCE,
+        naming_reason=naming_reason_override or MSG_NAMING_REASON_RECOGNIZED_SOURCE,
         review_required=False,
+        naming_confidence=meta["naming_confidence"],
+        supplier=meta["supplier"],
+        invoice_date=meta["invoice_date"],
+        amount=meta["amount"],
+        document_type=meta["document_type"],
+        payment_account=meta["payment_account"],
+        suggested_filename_fields=meta["suggested_filename_fields"],
     )
 
 
@@ -542,7 +631,8 @@ def _readme_text(
             f"- `{REVIEW_REQUIRED_SUGGESTED_PREFIX}<name>` = Prüffall mit sicherem Vorschlagsnamen",
             f"- {MSG_SUGGESTED_PREVIEW_ONLY}",
             f"- {MSG_NAMING_NOT_FINAL}",
-            "- Manifest fields: `filename_source`, `naming_reason`, `suggested_filename`, `planned_target`",
+            "- Manifest fields: `filename_source`, `naming_reason`, `naming_confidence`, "
+            "`suggested_filename`, `planned_target`, `supplier`, `invoice_date`, `amount`",
             "",
             "## Safety",
             "",
@@ -581,6 +671,18 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(f"  - Vorgeschlagener Dateiname: `{item.suggested_filename}`")
         else:
             lines.append("  - Vorgeschlagener Dateiname: nicht verfügbar")
+        if item.naming_confidence:
+            lines.append(f"  - naming_confidence: `{item.naming_confidence}`")
+        if item.supplier:
+            lines.append(f"  - supplier: `{item.supplier}`")
+        if item.invoice_date:
+            lines.append(f"  - invoice_date: `{item.invoice_date}`")
+        if item.amount:
+            lines.append(f"  - amount: `{item.amount}`")
+        if item.document_type:
+            lines.append(f"  - document_type: `{item.document_type}`")
+        if item.payment_account:
+            lines.append(f"  - payment_account: `{item.payment_account}`")
         if item.planned_target:
             lines.append(f"  - {MSG_FIELD_PLANNED_TARGET} (Vorschau): `{item.planned_target}`")
         else:
@@ -605,6 +707,12 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "suggested_filename",
             "filename_source",
             "naming_reason",
+            "naming_confidence",
+            "supplier",
+            "invoice_date",
+            "amount",
+            "document_type",
+            "payment_account",
             "review_required",
             "source_sha256",
             "preview_sha256",
@@ -622,6 +730,12 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.suggested_filename or "",
                 item.filename_source,
                 item.naming_reason,
+                item.naming_confidence or "",
+                item.supplier or "",
+                item.invoice_date or "",
+                item.amount or "",
+                item.document_type or "",
+                item.payment_account or "",
                 "yes" if item.review_required else "no",
                 item.source_sha256,
                 item.preview_sha256,
@@ -678,6 +792,13 @@ def _manifest_payload(
                 "suggested_filename": item.suggested_filename,
                 "filename_source": item.filename_source,
                 "naming_reason": item.naming_reason,
+                "naming_confidence": item.naming_confidence,
+                "supplier": item.supplier,
+                "invoice_date": item.invoice_date,
+                "amount": item.amount,
+                "document_type": item.document_type,
+                "payment_account": item.payment_account,
+                "suggested_filename_fields": list(item.suggested_filename_fields or ()),
                 "review_reason": item.review_reason,
                 "review_required": item.review_required,
                 "source_sha256": item.source_sha256,
@@ -862,6 +983,13 @@ def write_preview_export_package(
                         filename_source=naming.filename_source,
                         naming_reason=naming.naming_reason,
                         review_reason=review_reason,
+                        naming_confidence=naming.naming_confidence,
+                        supplier=naming.supplier,
+                        invoice_date=naming.invoice_date,
+                        amount=naming.amount,
+                        document_type=naming.document_type,
+                        payment_account=naming.payment_account,
+                        suggested_filename_fields=naming.suggested_filename_fields,
                     )
                 )
                 continue
@@ -893,6 +1021,13 @@ def write_preview_export_package(
                     filename_source=naming.filename_source,
                     naming_reason=naming.naming_reason,
                     review_reason=review_reason,
+                    naming_confidence=naming.naming_confidence,
+                    supplier=naming.supplier,
+                    invoice_date=naming.invoice_date,
+                    amount=naming.amount,
+                    document_type=naming.document_type,
+                    payment_account=naming.payment_account,
+                    suggested_filename_fields=naming.suggested_filename_fields,
                 )
             )
 

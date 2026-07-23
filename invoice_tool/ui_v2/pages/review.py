@@ -134,6 +134,15 @@ class ReviewDetailItemVM:
     preview_only_badge: str = MSG_BADGE_PREVIEW
     no_final_write_badge: str = MSG_BADGE_NO_FINAL_WRITE
     productive_blocked_badge: str = MSG_BADGE_PRODUCTIVE_BLOCKED
+    suggested_filename: str | None = None
+    naming_confidence: str | None = None
+    naming_reason: str | None = None
+    filename_source: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +185,14 @@ class ReviewSelectedDetailVM:
     preview_filename: str | None = None
     naming_reason: str | None = None
     naming_not_final: str = MSG_NAMING_NOT_FINAL
+    suggested_filename: str | None = None
+    naming_confidence: str | None = None
+    filename_source: str | None = None
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    document_type: str | None = None
+    payment_account: str | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +259,15 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         preview_only_badge=item.preview_only_badge,
         no_final_write_badge=item.no_final_write_badge,
         productive_blocked_badge=item.productive_blocked_badge,
+        suggested_filename=item.suggested_filename,
+        naming_confidence=item.naming_confidence,
+        naming_reason=item.naming_reason,
+        filename_source=item.filename_source,
+        supplier=item.supplier,
+        invoice_date=item.invoice_date,
+        amount=item.amount,
+        document_type=item.document_type,
+        payment_account=item.payment_account,
     )
 
 
@@ -323,18 +349,31 @@ def _build_selected_detail(
     elif detail.planned_action and not planned_target:
         planned_target = detail.planned_action
     planned_for_naming = None
-    if detail.planned_destination:
+    if detail.planned_destination or detail.suggested_filename:
         planned_for_naming = ProcessingPlannedDestination(
             document_name=detail.source_filename or detail.document_label,
-            planned_path=detail.planned_destination,
+            planned_path=detail.planned_destination
+            or detail.suggested_filename
+            or detail.source_filename
+            or detail.document_label,
             destination_label=detail.planned_action,
             preview_only=True,
             applied=False,
+            suggested_filename=detail.suggested_filename,
+            filename_source=detail.filename_source,
+            naming_confidence=detail.naming_confidence,
+            naming_reason=detail.naming_reason,
+            supplier=detail.supplier,
+            invoice_date=detail.invoice_date,
+            amount=detail.amount,
+            document_type=detail.document_type,
+            payment_account=detail.payment_account,
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
         review_required=True,
         planned=planned_for_naming,
+        suggested_filename=detail.suggested_filename,
     )
     return ReviewSelectedDetailVM(
         item_key=detail.item_key or detail.document_id,
@@ -351,8 +390,16 @@ def _build_selected_detail(
         confidence_or_status=_preview_status_label(checked=checked, excluded=excluded),
         originals_unchanged=MSG_BADGE_ORIGINALS_UNCHANGED,
         preview_filename=naming.preview_filename,
-        naming_reason=naming.naming_reason,
+        naming_reason=naming.naming_reason or detail.naming_reason,
         naming_not_final=MSG_NAMING_NOT_FINAL,
+        suggested_filename=naming.suggested_filename or detail.suggested_filename,
+        naming_confidence=naming.naming_confidence or detail.naming_confidence,
+        filename_source=naming.filename_source or detail.filename_source,
+        supplier=naming.supplier or detail.supplier,
+        invoice_date=naming.invoice_date or detail.invoice_date,
+        amount=naming.amount or detail.amount,
+        document_type=naming.document_type or detail.document_type,
+        payment_account=naming.payment_account or detail.payment_account,
     )
 
 
@@ -628,9 +675,19 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 insert_at, (MSG_FIELD_PREVIEW_FILENAME, detail.preview_filename)
             )
             insert_at += 1
+        if detail.suggested_filename:
+            detail_fields.insert(
+                insert_at, ("Vorgeschlagener Dateiname", detail.suggested_filename)
+            )
+            insert_at += 1
         if detail.naming_reason:
             detail_fields.insert(
                 insert_at, (MSG_FIELD_NAMING_REASON, detail.naming_reason)
+            )
+            insert_at += 1
+        if detail.naming_confidence:
+            detail_fields.insert(
+                insert_at, ("naming_confidence", detail.naming_confidence)
             )
             insert_at += 1
         if detail.planned_target:

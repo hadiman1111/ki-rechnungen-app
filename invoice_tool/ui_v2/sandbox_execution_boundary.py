@@ -193,6 +193,20 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
             )
             for path in bridge_result.planned_moves
         )
+    # Prompt 18/34 — local text-layer naming enrichment on sandbox input only.
+    # Never calls run_once / OCR / AI; never mutates files.
+    from invoice_tool.ui_v2.extraction_mapping import (  # noqa: PLC0415
+        enrich_planned_destinations_with_local_extraction,
+    )
+
+    planned = enrich_planned_destinations_with_local_extraction(
+        planned,
+        input_folder=args.input_folder,
+    )
+    naming_warning = "track_b_local_suggested_filename_enrichment"
+    warnings = tuple(bridge_result.warnings)
+    if naming_warning not in warnings:
+        warnings = warnings + (naming_warning,)
     outcome: OutcomeKind | None
     if bridge_result.outcome_kind in {
         "idle",
@@ -218,9 +232,10 @@ def sandbox_core_runner(args: SandboxCoreCallArgs) -> SandboxCoreCallResult:
         results=tuple(bridge_result.results),
         review_items=tuple(bridge_result.review_items),
         errors=errors,
-        warnings=tuple(bridge_result.warnings),
+        warnings=warnings,
         planned_moves=tuple(bridge_result.planned_moves),
-        planned_destination_count=bridge_result.planned_destination_count,
+        planned_destination_count=bridge_result.planned_destination_count
+        or len(planned),
         safety_proof_summary=bridge_result.safety_proof_summary
         or MSG_SAFETY_PROOF_COMPACT,
         bridge_status=bridge_result.status.value,
