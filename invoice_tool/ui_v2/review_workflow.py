@@ -140,6 +140,16 @@ class ReviewItemViewModel:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)
@@ -251,6 +261,12 @@ def build_review_item_view_model(
     selected_art = None
     selected_art_reason = None
     art_ambiguity = False
+    available_configurations: tuple[dict[str, object], ...] = ()
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = ()
+    unmatched_reasons: tuple[str, ...] = ()
+    condition_results: tuple[dict[str, object], ...] = ()
+    alternative_matches: tuple[dict[str, object], ...] = ()
+    missing_configuration_rule = None
     if planned is not None:
         planned_path = (planned.planned_path or "").strip() or None
         planned_action = (planned.destination_label or "").strip() or None
@@ -314,6 +330,16 @@ def build_review_item_view_model(
         selected_art = (planned.selected_art or "").strip() or None
         selected_art_reason = (planned.selected_art_reason or "").strip() or None
         art_ambiguity = bool(planned.art_ambiguity)
+        available_configurations = tuple(planned.available_configurations or ())
+        evaluated_configuration_candidates = tuple(
+            planned.evaluated_configuration_candidates or ()
+        )
+        unmatched_reasons = tuple(planned.unmatched_reasons or ())
+        condition_results = tuple(planned.condition_results or ())
+        alternative_matches = tuple(planned.alternative_matches or ())
+        missing_configuration_rule = (
+            (planned.missing_configuration_rule or "").strip() or None
+        )
     return ReviewItemViewModel(
         document_label=document_label,
         document_id=document_id,
@@ -368,6 +394,12 @@ def build_review_item_view_model(
         selected_art=selected_art,
         selected_art_reason=selected_art_reason,
         art_ambiguity=art_ambiguity,
+        available_configurations=available_configurations,
+        evaluated_configuration_candidates=evaluated_configuration_candidates,
+        unmatched_reasons=unmatched_reasons,
+        condition_results=condition_results,
+        alternative_matches=alternative_matches,
+        missing_configuration_rule=missing_configuration_rule,
     )
 
 

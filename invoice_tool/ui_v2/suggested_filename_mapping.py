@@ -200,6 +200,16 @@ class SuggestedFilenameMappingResult:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
 
 
 def sanitize_suggested_filename(name: str | None) -> str | None:
@@ -271,6 +281,28 @@ def _candidate_meta(fields: SuggestedFilenameFields) -> dict[str, Any]:
     }
 
 
+def _empty_match_transparency() -> dict[str, Any]:
+    return {
+        "matched_configuration_name": None,
+        "matched_configuration_id": None,
+        "matched_configuration_pattern": None,
+        "matched_configuration_reason": None,
+        "matched_configuration_confidence": None,
+        "available_configurations": (),
+        "evaluated_configuration_candidates": (),
+        "unmatched_reasons": (),
+        "condition_results": (),
+        "alternative_matches": (),
+        "missing_configuration_rule": None,
+    }
+
+
+def _match_transparency(match: ConfigurationMatchResult | None) -> dict[str, Any]:
+    if match is None:
+        return _empty_match_transparency()
+    return match.transparency_fields()
+
+
 def _canonical_fallback(
     fields: SuggestedFilenameFields,
     *,
@@ -288,17 +320,7 @@ def _canonical_fallback(
 
     has_core = bool(supplier or fields.counterparty_name or invoice_date or amount)
     match_meta = {
-        "matched_configuration_name": match.matched_configuration_name if match else None,
-        "matched_configuration_id": match.matched_configuration_id if match else None,
-        "matched_configuration_pattern": (
-            match.matched_configuration_pattern if match else None
-        ),
-        "matched_configuration_reason": (
-            match.matched_configuration_reason if match else None
-        ),
-        "matched_configuration_confidence": (
-            match.matched_configuration_confidence if match else None
-        ),
+        **_match_transparency(match),
         **_candidate_meta(fields),
     }
     if not has_core:
@@ -503,26 +525,46 @@ def map_suggested_filename(
     match: ConfigurationMatchResult | None = None
     config_pattern = _clean_optional(fields.filename_pattern)
     if use_configuration_bridge and has_core:
-        if config_pattern:
-            match = ConfigurationMatchResult(
-                matched_configuration_name=fields.matched_configuration_name,
-                matched_configuration_id=fields.matched_configuration_id,
+        match = match_active_configuration(
+            payment_field=payment_field,
+            payment_account=payment_account,
+            supplier=supplier,
+            recipient=_clean_optional(fields.counterparty_name),
+            document_type=document_type,
+            raw_text_head=fields.raw_text_head,
+            configurations=configurations,
+            unmatched=unmatched,
+        )
+        if not config_pattern:
+            config_pattern = match.matched_configuration_pattern
+        elif fields.matched_configuration_name or fields.matched_configuration_id:
+            # Explicit pattern/name from caller wins for rendering; keep evaluator
+            # transparency for review/manifest.
+            from dataclasses import replace as _dc_replace
+
+            match = _dc_replace(
+                match,
+                matched_configuration_name=(
+                    fields.matched_configuration_name
+                    or match.matched_configuration_name
+                ),
+                matched_configuration_id=(
+                    fields.matched_configuration_id or match.matched_configuration_id
+                ),
                 matched_configuration_pattern=config_pattern,
                 matched_configuration_reason=(
-                    "Explizites Dateinamensmuster am Mapping-Input."
+                    match.matched_configuration_reason
+                    or "Explizites Dateinamensmuster am Mapping-Input."
                 ),
-                matched_configuration_confidence="medium",
-                matched_payment_field=payment_field,
+                matched_payment_field=payment_field or match.matched_payment_field,
             )
         else:
-            match = match_active_configuration(
-                payment_field=payment_field,
-                payment_account=payment_account,
-                raw_text_head=fields.raw_text_head,
-                configurations=configurations,
-                unmatched=unmatched,
+            from dataclasses import replace as _dc_replace
+
+            match = _dc_replace(
+                match,
+                matched_configuration_pattern=config_pattern,
             )
-            config_pattern = match.matched_configuration_pattern
 
     if use_configuration_bridge and has_core and config_pattern:
         placeholders = build_configuration_placeholder_values(
@@ -604,24 +646,15 @@ def map_suggested_filename(
                 business_category_display=canonical.business_category_display,
                 counterparty_name=canonical.counterparty_name,
                 missing_fields=missing_fields,
-                matched_configuration_name=(
-                    match.matched_configuration_name if match else None
-                ),
-                matched_configuration_id=(
-                    match.matched_configuration_id if match else None
-                ),
-                matched_configuration_pattern=config_pattern,
-                matched_configuration_reason=(
-                    match.matched_configuration_reason if match else None
-                ),
-                matched_configuration_confidence=(
-                    match.matched_configuration_confidence if match else None
-                ),
                 filename_pattern=config_pattern,
                 rendered_filename=None,
                 placeholder_values=rendered.placeholder_values,
                 missing_placeholders=rendered.missing_placeholders,
                 amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+                **{
+                    **_match_transparency(match),
+                    "matched_configuration_pattern": config_pattern,
+                },
                 **candidate_meta,
             )
         reason = rendered.naming_reason
@@ -658,22 +691,15 @@ def map_suggested_filename(
             business_category_display=canonical.business_category_display,
             counterparty_name=canonical.counterparty_name,
             missing_fields=missing_fields,
-            matched_configuration_name=(
-                match.matched_configuration_name if match else None
-            ),
-            matched_configuration_id=match.matched_configuration_id if match else None,
-            matched_configuration_pattern=config_pattern,
-            matched_configuration_reason=(
-                match.matched_configuration_reason if match else None
-            ),
-            matched_configuration_confidence=(
-                match.matched_configuration_confidence if match else None
-            ),
             filename_pattern=config_pattern,
             rendered_filename=suggested,
             placeholder_values=rendered.placeholder_values,
             missing_placeholders=rendered.missing_placeholders,
             amount_format=rendered.amount_format or AMOUNT_FORMAT_COMMA_2,
+            **{
+                **_match_transparency(match),
+                "matched_configuration_pattern": config_pattern,
+            },
             **candidate_meta,
         )
 

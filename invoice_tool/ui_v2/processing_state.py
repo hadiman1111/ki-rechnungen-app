@@ -180,6 +180,16 @@ class ProcessingPlannedDestination:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)

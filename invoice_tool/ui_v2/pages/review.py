@@ -50,8 +50,13 @@ from invoice_tool.ui_v2.preview_export import (
     MSG_FIELD_AMOUNT_REASON,
     MSG_FIELD_ART_REASON,
     MSG_FIELD_BUSINESS_CATEGORY,
+    MSG_FIELD_AVAILABLE_CONFIGURATIONS,
+    MSG_FIELD_CONDITION_RESULTS,
     MSG_FIELD_CONFIGURATION,
     MSG_FIELD_COUNTERPARTY_NAME,
+    MSG_FIELD_EVALUATED_CANDIDATES,
+    MSG_FIELD_MATCHING_REASON,
+    MSG_FIELD_MISSING_CONFIGURATION_RULE,
     MSG_FIELD_DOCUMENT_ART,
     MSG_FIELD_DOCUMENT_DIRECTION,
     MSG_FIELD_FILENAME_PATTERN,
@@ -187,6 +192,12 @@ class ReviewDetailItemVM:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = ()
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = ()
+    unmatched_reasons: tuple[str, ...] = ()
+    condition_results: tuple[dict[str, object], ...] = ()
+    alternative_matches: tuple[dict[str, object], ...] = ()
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)
@@ -265,6 +276,12 @@ class ReviewSelectedDetailVM:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = ()
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = ()
+    unmatched_reasons: tuple[str, ...] = ()
+    condition_results: tuple[dict[str, object], ...] = ()
+    alternative_matches: tuple[dict[str, object], ...] = ()
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)
@@ -368,6 +385,14 @@ def _detail_from_item_vm(item: ReviewItemViewModel) -> ReviewDetailItemVM:
         selected_art=item.selected_art,
         selected_art_reason=item.selected_art_reason,
         art_ambiguity=bool(item.art_ambiguity),
+        available_configurations=tuple(item.available_configurations or ()),
+        evaluated_configuration_candidates=tuple(
+            item.evaluated_configuration_candidates or ()
+        ),
+        unmatched_reasons=tuple(item.unmatched_reasons or ()),
+        condition_results=tuple(item.condition_results or ()),
+        alternative_matches=tuple(item.alternative_matches or ()),
+        missing_configuration_rule=item.missing_configuration_rule,
     )
 
 
@@ -496,6 +521,14 @@ def _build_selected_detail(
             selected_art=detail.selected_art,
             selected_art_reason=detail.selected_art_reason,
             art_ambiguity=bool(detail.art_ambiguity),
+            available_configurations=tuple(detail.available_configurations or ()),
+            evaluated_configuration_candidates=tuple(
+                detail.evaluated_configuration_candidates or ()
+            ),
+            unmatched_reasons=tuple(detail.unmatched_reasons or ()),
+            condition_results=tuple(detail.condition_results or ()),
+            alternative_matches=tuple(detail.alternative_matches or ()),
+            missing_configuration_rule=detail.missing_configuration_rule,
         )
     naming = resolve_preview_naming(
         source_filename=detail.source_filename or detail.document_label,
@@ -598,6 +631,26 @@ def _build_selected_detail(
         selected_art=naming.selected_art or detail.selected_art,
         selected_art_reason=naming.selected_art_reason or detail.selected_art_reason,
         art_ambiguity=bool(naming.art_ambiguity or detail.art_ambiguity),
+        available_configurations=tuple(
+            naming.available_configurations or detail.available_configurations or ()
+        ),
+        evaluated_configuration_candidates=tuple(
+            naming.evaluated_configuration_candidates
+            or detail.evaluated_configuration_candidates
+            or ()
+        ),
+        unmatched_reasons=tuple(
+            naming.unmatched_reasons or detail.unmatched_reasons or ()
+        ),
+        condition_results=tuple(
+            naming.condition_results or detail.condition_results or ()
+        ),
+        alternative_matches=tuple(
+            naming.alternative_matches or detail.alternative_matches or ()
+        ),
+        missing_configuration_rule=(
+            naming.missing_configuration_rule or detail.missing_configuration_rule
+        ),
     )
 
 
@@ -882,6 +935,52 @@ def build_review_page(state: UiV2State) -> ft.Control:
             detail_fields.insert(
                 insert_at,
                 (MSG_FIELD_CONFIGURATION, detail.matched_configuration_name),
+            )
+            insert_at += 1
+        if detail.matched_configuration_reason:
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_MATCHING_REASON, detail.matched_configuration_reason),
+            )
+            insert_at += 1
+        if detail.condition_results:
+            cond_txt = "; ".join(
+                str(c.get("reason") or c.get("condition_type") or c)
+                for c in detail.condition_results
+            )
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_CONDITION_RESULTS, cond_txt)
+            )
+            insert_at += 1
+        if detail.missing_configuration_rule:
+            detail_fields.insert(
+                insert_at,
+                (
+                    MSG_FIELD_MISSING_CONFIGURATION_RULE,
+                    detail.missing_configuration_rule,
+                ),
+            )
+            insert_at += 1
+        if detail.available_configurations:
+            names = ", ".join(
+                str(c.get("configuration_name") or c.get("name") or "?")
+                for c in detail.available_configurations
+            )
+            detail_fields.insert(
+                insert_at, (MSG_FIELD_AVAILABLE_CONFIGURATIONS, names)
+            )
+            insert_at += 1
+        if detail.evaluated_configuration_candidates:
+            parts = []
+            for candidate in detail.evaluated_configuration_candidates:
+                status = "ja" if candidate.get("matched") else "nein"
+                parts.append(
+                    f"{candidate.get('configuration_name')}: {status}"
+                    f" ({candidate.get('reason') or ''})"
+                )
+            detail_fields.insert(
+                insert_at,
+                (MSG_FIELD_EVALUATED_CANDIDATES, "; ".join(parts)),
             )
             insert_at += 1
         pattern_label = (

@@ -68,6 +68,11 @@ FILENAME_SOURCE_CANONICAL_FALLBACK: FilenameSource = (
 )
 
 MSG_FIELD_CONFIGURATION = "Konfiguration"
+MSG_FIELD_MATCHING_REASON = "Matching-Grund"
+MSG_FIELD_CONDITION_RESULTS = "geprüfte Bedingungen"
+MSG_FIELD_MISSING_CONFIGURATION_RULE = "fehlende Konfigurationsregel"
+MSG_FIELD_AVAILABLE_CONFIGURATIONS = "verfügbare Konfigurationen"
+MSG_FIELD_EVALUATED_CANDIDATES = "geprüfte Konfigurationen"
 MSG_FIELD_FILENAME_PATTERN = "Dateinamensmuster"
 MSG_FIELD_PLACEHOLDER_VALUES = "Platzhalterwerte"
 MSG_FIELD_MISSING_PLACEHOLDERS = "fehlende Platzhalter"
@@ -209,6 +214,16 @@ class PreviewNamingDecision:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)
@@ -269,6 +284,16 @@ class PreviewExportItem:
     selected_art: str | None = None
     selected_art_reason: str | None = None
     art_ambiguity: bool = False
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +449,12 @@ def _meta_from_planned(
             "selected_art": None,
             "selected_art_reason": None,
             "art_ambiguity": False,
+            "available_configurations": (),
+            "evaluated_configuration_candidates": (),
+            "unmatched_reasons": (),
+            "condition_results": (),
+            "alternative_matches": (),
+            "missing_configuration_rule": None,
         }
     fields = tuple(planned.suggested_filename_fields or ())
     return {
@@ -465,6 +496,14 @@ def _meta_from_planned(
         "selected_art": planned.selected_art,
         "selected_art_reason": planned.selected_art_reason,
         "art_ambiguity": bool(planned.art_ambiguity),
+        "available_configurations": tuple(planned.available_configurations or ()),
+        "evaluated_configuration_candidates": tuple(
+            planned.evaluated_configuration_candidates or ()
+        ),
+        "unmatched_reasons": tuple(planned.unmatched_reasons or ()),
+        "condition_results": tuple(planned.condition_results or ()),
+        "alternative_matches": tuple(planned.alternative_matches or ()),
+        "missing_configuration_rule": planned.missing_configuration_rule,
     }
 
 
@@ -509,6 +548,14 @@ def _naming_decision_fields(meta: dict[str, Any]) -> dict[str, Any]:
         "selected_art": meta.get("selected_art"),
         "selected_art_reason": meta.get("selected_art_reason"),
         "art_ambiguity": bool(meta.get("art_ambiguity") or False),
+        "available_configurations": tuple(meta.get("available_configurations") or ()),
+        "evaluated_configuration_candidates": tuple(
+            meta.get("evaluated_configuration_candidates") or ()
+        ),
+        "unmatched_reasons": tuple(meta.get("unmatched_reasons") or ()),
+        "condition_results": tuple(meta.get("condition_results") or ()),
+        "alternative_matches": tuple(meta.get("alternative_matches") or ()),
+        "missing_configuration_rule": meta.get("missing_configuration_rule"),
     }
 
 
@@ -932,6 +979,41 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
             lines.append(
                 f"  - {MSG_FIELD_CONFIGURATION}: `{item.matched_configuration_name}`"
             )
+        if item.matched_configuration_reason:
+            lines.append(
+                f"  - {MSG_FIELD_MATCHING_REASON}: {item.matched_configuration_reason}"
+            )
+        if item.condition_results:
+            cond_txt = "; ".join(
+                str(c.get("reason") or c.get("condition_type") or c)
+                for c in item.condition_results
+            )
+            lines.append(f"  - {MSG_FIELD_CONDITION_RESULTS}: {cond_txt}")
+        if item.missing_configuration_rule:
+            lines.append(
+                f"  - {MSG_FIELD_MISSING_CONFIGURATION_RULE}: "
+                f"{item.missing_configuration_rule}"
+            )
+        if item.available_configurations:
+            names = ", ".join(
+                str(c.get("configuration_name") or c.get("name") or "?")
+                for c in item.available_configurations
+            )
+            lines.append(f"  - {MSG_FIELD_AVAILABLE_CONFIGURATIONS}: {names}")
+        if item.evaluated_configuration_candidates:
+            parts = []
+            for c in item.evaluated_configuration_candidates:
+                status = "matched" if c.get("matched") else "no"
+                parts.append(
+                    f"{c.get('configuration_name')}: {status} ({c.get('reason') or ''})"
+                )
+            lines.append(
+                f"  - {MSG_FIELD_EVALUATED_CANDIDATES}: " + "; ".join(parts)
+            )
+        if item.unmatched_reasons:
+            lines.append(
+                "  - unmatched_reasons: " + " | ".join(item.unmatched_reasons)
+            )
         if item.matched_configuration_pattern or item.filename_pattern:
             lines.append(
                 f"  - {MSG_FIELD_FILENAME_PATTERN}: `"
@@ -1050,6 +1132,9 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "matched_configuration_name",
             "matched_configuration_id",
             "matched_configuration_pattern",
+            "matched_configuration_reason",
+            "available_configurations",
+            "missing_configuration_rule",
             "filename_pattern",
             "placeholder_values",
             "missing_placeholders",
@@ -1097,6 +1182,12 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.matched_configuration_name or "",
                 item.matched_configuration_id or "",
                 item.matched_configuration_pattern or "",
+                item.matched_configuration_reason or "",
+                "|".join(
+                    str(c.get("configuration_name") or "")
+                    for c in (item.available_configurations or ())
+                ),
+                item.missing_configuration_rule or "",
                 item.filename_pattern or "",
                 placeholder_text,
                 "|".join(item.missing_placeholders or ()),
@@ -1183,6 +1274,14 @@ def _manifest_payload(
                 "matched_configuration_confidence": (
                     item.matched_configuration_confidence
                 ),
+                "available_configurations": list(item.available_configurations or ()),
+                "evaluated_configuration_candidates": list(
+                    item.evaluated_configuration_candidates or ()
+                ),
+                "unmatched_reasons": list(item.unmatched_reasons or ()),
+                "condition_results": list(item.condition_results or ()),
+                "alternative_matches": list(item.alternative_matches or ()),
+                "missing_configuration_rule": item.missing_configuration_rule,
                 "filename_pattern": item.filename_pattern,
                 "placeholder_values": {
                     key: value for key, value in (item.placeholder_values or ())
@@ -1441,6 +1540,14 @@ def write_preview_export_package(
                         selected_art=naming.selected_art,
                         selected_art_reason=naming.selected_art_reason,
                         art_ambiguity=naming.art_ambiguity,
+                        available_configurations=naming.available_configurations,
+                        evaluated_configuration_candidates=(
+                            naming.evaluated_configuration_candidates
+                        ),
+                        unmatched_reasons=naming.unmatched_reasons,
+                        condition_results=naming.condition_results,
+                        alternative_matches=naming.alternative_matches,
+                        missing_configuration_rule=naming.missing_configuration_rule,
                     )
                 )
                 continue
@@ -1511,6 +1618,14 @@ def write_preview_export_package(
                     selected_art=naming.selected_art,
                     selected_art_reason=naming.selected_art_reason,
                     art_ambiguity=naming.art_ambiguity,
+                    available_configurations=naming.available_configurations,
+                    evaluated_configuration_candidates=(
+                        naming.evaluated_configuration_candidates
+                    ),
+                    unmatched_reasons=naming.unmatched_reasons,
+                    condition_results=naming.condition_results,
+                    alternative_matches=naming.alternative_matches,
+                    missing_configuration_rule=naming.missing_configuration_rule,
                 )
             )
 

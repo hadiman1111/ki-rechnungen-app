@@ -1,9 +1,8 @@
-"""Track-B active profile/configuration matching bridge (Prompt 20/34).
+"""Track-B active profile/configuration matching (Prompt 22/34).
 
 Resolves the matched active configuration (or configured Unklar/fallback)
-and exposes its filename pattern for Track-B preview naming.
+from configured matching conditions — no private/category hardcodes.
 
-Uses existing profile/configuration data — no private hardcodes.
 Preview-only — no productive processing.
 """
 
@@ -22,6 +21,22 @@ MatchingConfidence = Literal["none", "low", "medium", "high"]
 
 UNMATCHED_CONFIGURATION_ID = "unmatched"
 
+_CONFIDENCE_RANK: dict[str, int] = {
+    "none": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+}
+
+_PAYMENT_FEATURE_KEYS = frozenset(
+    {"payment_field", "payment_account", "konto", "zahlungsart"}
+)
+_GENERIC_CARD_VALUES = frozenset(
+    {"card", "credit_card", "card_generic", "kreditkarte", "credit card"}
+)
+_PAYPAL_VALUES = frozenset({"paypal", "pay pal"})
+_AMEX_VALUES = frozenset({"amex", "american express", "americanexpress"})
+
 
 @dataclass(frozen=True)
 class ConfigurationCandidate:
@@ -32,8 +47,61 @@ class ConfigurationCandidate:
     active: bool = True
     is_unmatched: bool = False
     matching_feature_key: str | None = None
+    matching_operator: str = "ist"
     matching_values: tuple[str, ...] = field(default_factory=tuple)
     filename_pattern: str | None = None
+
+
+@dataclass(frozen=True)
+class ConditionResult:
+    """One evaluated matching condition for a configuration candidate."""
+
+    condition_type: str
+    feature_key: str | None
+    expected_value: str | None
+    actual_value: str | None
+    matched: bool
+    reason: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "condition_type": self.condition_type,
+            "feature_key": self.feature_key,
+            "expected_value": self.expected_value,
+            "actual_value": self.actual_value,
+            "matched": self.matched,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluatedConfigurationCandidate:
+    """Full candidate evaluation for manifest / review transparency."""
+
+    configuration_name: str
+    configuration_id: str
+    active: bool
+    is_unmatched: bool = False
+    conditions: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    condition_results: tuple[ConditionResult, ...] = field(default_factory=tuple)
+    matched: bool = False
+    reason: str = ""
+    confidence: MatchingConfidence = "none"
+    filename_pattern: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "configuration_name": self.configuration_name,
+            "configuration_id": self.configuration_id,
+            "active": self.active,
+            "is_unmatched": self.is_unmatched,
+            "conditions": list(self.conditions),
+            "condition_results": [item.to_dict() for item in self.condition_results],
+            "matched": self.matched,
+            "reason": self.reason,
+            "confidence": self.confidence,
+            "filename_pattern": self.filename_pattern,
+        }
 
 
 @dataclass(frozen=True)
@@ -48,6 +116,35 @@ class ConfigurationMatchResult:
     is_unmatched_fallback: bool = False
     unmatched_reason: str | None = None
     matched_payment_field: str | None = None
+    available_configurations: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    evaluated_configuration_candidates: tuple[dict[str, object], ...] = field(
+        default_factory=tuple
+    )
+    unmatched_reasons: tuple[str, ...] = field(default_factory=tuple)
+    condition_results: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    alternative_matches: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    missing_configuration_rule: str | None = None
+
+    def transparency_fields(self) -> dict[str, Any]:
+        """Fields to propagate into mapping / export / review."""
+
+        return {
+            "matched_configuration_name": self.matched_configuration_name,
+            "matched_configuration_id": self.matched_configuration_id,
+            "matched_configuration_pattern": self.matched_configuration_pattern,
+            "matched_configuration_reason": self.matched_configuration_reason,
+            "matched_configuration_confidence": self.matched_configuration_confidence,
+            "available_configurations": tuple(self.available_configurations),
+            "evaluated_configuration_candidates": tuple(
+                self.evaluated_configuration_candidates
+            ),
+            "unmatched_reasons": tuple(self.unmatched_reasons),
+            "condition_results": tuple(self.condition_results),
+            "alternative_matches": tuple(self.alternative_matches),
+            "missing_configuration_rule": self.missing_configuration_rule,
+        }
 
 
 def _candidate_from_configuration(config: Configuration) -> ConfigurationCandidate:
@@ -59,8 +156,10 @@ def _candidate_from_configuration(config: Configuration) -> ConfigurationCandida
     matching = config.matching
     values: tuple[str, ...] = ()
     feature_key = None
+    operator = "ist"
     if matching is not None:
         feature_key = str(matching.feature_key or "").strip() or None
+        operator = str(matching.operator or "ist").strip() or "ist"
         values = tuple(
             str(value).strip()
             for value in (matching.values or [])
@@ -72,6 +171,7 @@ def _candidate_from_configuration(config: Configuration) -> ConfigurationCandida
         active=bool(config.active),
         is_unmatched=False,
         matching_feature_key=feature_key,
+        matching_operator=operator,
         matching_values=values,
         filename_pattern=pattern,
     )
@@ -116,6 +216,7 @@ def load_active_configuration_candidates(
             active=True,
             is_unmatched=True,
             matching_feature_key=None,
+            matching_operator="fallback",
             matching_values=(),
             filename_pattern=unmatched_pattern,
         )
@@ -134,7 +235,11 @@ def _value_matches(candidate_value: str, probe: str) -> bool:
         return True
     compact_left = left.replace(" ", "")
     compact_right = right.replace(" ", "")
-    return compact_left == compact_right or compact_left in compact_right or compact_right in compact_left
+    return (
+        compact_left == compact_right
+        or compact_left in compact_right
+        or compact_right in compact_left
+    )
 
 
 def _text_contains_value(text: str, candidate_value: str) -> bool:
@@ -143,7 +248,6 @@ def _text_contains_value(text: str, candidate_value: str) -> bool:
     if not hay or not needle:
         return False
     # Short codes like "ai"/"ep" are too ambiguous for free-text substring hits.
-    # Require equality-style token presence (word boundary) for short needles.
     compact_hay = hay.replace(" ", "")
     compact_needle = needle.replace(" ", "")
     if len(compact_needle) <= 3:
@@ -152,141 +256,379 @@ def _text_contains_value(text: str, candidate_value: str) -> bool:
     return needle in hay or compact_needle in compact_hay
 
 
-def match_active_configuration(
+def _norm(value: str | None) -> str:
+    return normalize_for_matching(str(value or "").strip())
+
+
+def _is_amex_config(config: ConfigurationCandidate) -> bool:
+    if _norm(config.configuration_id) in _AMEX_VALUES:
+        return True
+    if "american express" in _norm(config.name):
+        return True
+    return any(_norm(value) in _AMEX_VALUES for value in config.matching_values)
+
+
+def _is_paypal_signal(payment_field: str | None, payment_account: str | None) -> bool:
+    return any(_norm(value) in _PAYPAL_VALUES for value in (payment_field, payment_account))
+
+
+def _is_generic_card_signal(
+    payment_field: str | None, payment_account: str | None
+) -> bool:
+    return any(
+        _norm(value) in _GENERIC_CARD_VALUES for value in (payment_field, payment_account)
+    )
+
+
+def _has_explicit_amex_evidence(
     *,
-    payment_field: str | None = None,
-    payment_account: str | None = None,
-    raw_text_head: str | None = None,
-    configurations: Sequence[ConfigurationCandidate] | None = None,
-    unmatched: ConfigurationCandidate | None = None,
-    profile_id: str | None = None,
-) -> ConfigurationMatchResult:
-    """Match extraction/result signals against active configuration rules.
+    payment_field: str | None,
+    payment_account: str | None,
+) -> bool:
+    for probe in (payment_field, payment_account):
+        normalized = _norm(probe)
+        if not normalized:
+            continue
+        if normalized in _AMEX_VALUES:
+            return True
+        if "amex" in normalized.replace(" ", "") or "americanexpress" in normalized.replace(
+            " ", ""
+        ):
+            return True
+    return False
 
-    Prefer explicit payment_field / payment_account equality against configured
-    matching values. Optionally use raw text hits against those same values.
-    If uncertain, use the configured Unklar/unmatched configuration (not a
-    hardcoded business category).
-    """
 
-    active: tuple[ConfigurationCandidate, ...]
-    unmatched_candidate: ConfigurationCandidate | None
-    if configurations is None:
-        active, unmatched_candidate = load_active_configuration_candidates(
-            profile_id=profile_id
-        )
-    else:
-        active = tuple(
-            item for item in configurations if item.active and not item.is_unmatched
-        )
-        unmatched_candidate = unmatched
-
-    probes = [
-        str(value).strip()
-        for value in (payment_field, payment_account)
-        if str(value or "").strip()
-    ]
-    text = str(raw_text_head or "")
-
-    direct_hits: list[tuple[ConfigurationCandidate, str, str]] = []
-    text_hits: list[tuple[ConfigurationCandidate, str]] = []
+def _available_configuration_dicts(
+    active: Sequence[ConfigurationCandidate],
+    unmatched: ConfigurationCandidate | None,
+) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
     for config in active:
-        if not config.matching_values:
-            continue
-        for configured_value in config.matching_values:
-            for probe in probes:
-                if _value_matches(configured_value, probe):
-                    direct_hits.append((config, configured_value, probe))
-                    break
-            else:
-                continue
-            break
-        if any(hit[0].configuration_id == config.configuration_id for hit in direct_hits):
-            continue
-        # Free-text body matching is unsafe for payment_field rules: recipient /
-        # letterhead names (e.g. "Architektur & Innenarchitektur") collide with
-        # payment routing values. Only non-payment features may use text hits.
-        feature = (config.matching_feature_key or "").strip().lower()
-        if text and feature and feature not in {"payment_field", "payment_account", "konto"}:
-            for configured_value in config.matching_values:
-                if _text_contains_value(text, configured_value):
-                    text_hits.append((config, configured_value))
-                    break
+        rows.append(
+            {
+                "configuration_name": config.name,
+                "configuration_id": config.configuration_id,
+                "active": config.active,
+                "is_unmatched": False,
+                "matching_feature_key": config.matching_feature_key,
+                "matching_operator": config.matching_operator,
+                "matching_values": list(config.matching_values),
+                "filename_pattern": config.filename_pattern,
+            }
+        )
+    if unmatched is not None:
+        rows.append(
+            {
+                "configuration_name": unmatched.name,
+                "configuration_id": unmatched.configuration_id,
+                "active": unmatched.active,
+                "is_unmatched": True,
+                "matching_feature_key": unmatched.matching_feature_key,
+                "matching_operator": "fallback",
+                "matching_values": [],
+                "filename_pattern": unmatched.filename_pattern,
+            }
+        )
+    return tuple(rows)
 
-    if len(direct_hits) == 1:
-        config, matched_value, probe = direct_hits[0]
-        return ConfigurationMatchResult(
-            matched_configuration_name=config.name,
-            matched_configuration_id=config.configuration_id,
-            matched_configuration_pattern=config.filename_pattern,
-            matched_configuration_reason=(
-                f"Aktive Konfiguration „{config.name}“ über "
-                f"{config.matching_feature_key or 'Merkmal'}="
-                f"„{matched_value}“ (Signal: {probe})."
+
+def _condition_specs(config: ConfigurationCandidate) -> tuple[dict[str, object], ...]:
+    feature = (config.matching_feature_key or "").strip() or None
+    operator = (config.matching_operator or "ist").strip() or "ist"
+    if not config.matching_values:
+        return (
+            {
+                "condition_type": "fallback_unmatched"
+                if config.is_unmatched
+                else "no_conditions",
+                "feature_key": feature,
+                "operator": operator,
+                "values": [],
+            },
+        )
+    feature_l = (feature or "").lower()
+    if feature_l in _PAYMENT_FEATURE_KEYS:
+        condition_type = "payment_field_equals" if operator in {"ist", "equals", "="} else "payment_field_contains"
+    elif feature_l in {"supplier", "lieferant", "vendor"}:
+        condition_type = "supplier_contains"
+    elif feature_l in {"recipient", "company", "empfaenger", "empfänger", "firma"}:
+        condition_type = "recipient_contains"
+    elif feature_l in {"document_type", "art", "dokumenttyp"}:
+        condition_type = "document_type_equals"
+    elif feature_l in {"text", "raw_text", "inhalt"}:
+        condition_type = "text_contains"
+    else:
+        condition_type = "field_equals" if operator in {"ist", "equals", "="} else "field_contains"
+    return (
+        {
+            "condition_type": condition_type,
+            "feature_key": feature,
+            "operator": operator,
+            "values": list(config.matching_values),
+        },
+    )
+
+
+def _field_probe_for_feature(
+    feature_key: str | None,
+    *,
+    payment_field: str | None,
+    payment_account: str | None,
+    supplier: str | None,
+    recipient: str | None,
+    document_type: str | None,
+    raw_text_head: str | None,
+) -> tuple[str | None, str]:
+    feature = (feature_key or "").strip().lower()
+    if feature in _PAYMENT_FEATURE_KEYS:
+        value = (payment_field or payment_account or "").strip() or None
+        return value, "payment_field"
+    if feature in {"supplier", "lieferant", "vendor"}:
+        return (supplier or "").strip() or None, "supplier"
+    if feature in {"recipient", "company", "empfaenger", "empfänger", "firma"}:
+        return (recipient or "").strip() or None, "recipient"
+    if feature in {"document_type", "art", "dokumenttyp"}:
+        return (document_type or "").strip() or None, "document_type"
+    if feature in {"text", "raw_text", "inhalt"}:
+        return (raw_text_head or "").strip() or None, "text"
+    # Unknown feature: prefer payment signals, then text.
+    if payment_field or payment_account:
+        return (payment_field or payment_account or "").strip() or None, "payment_field"
+    return (raw_text_head or "").strip() or None, "text"
+
+
+def _evaluate_active_candidate(
+    config: ConfigurationCandidate,
+    *,
+    payment_field: str | None,
+    payment_account: str | None,
+    supplier: str | None,
+    recipient: str | None,
+    document_type: str | None,
+    raw_text_head: str | None,
+) -> EvaluatedConfigurationCandidate:
+    conditions = _condition_specs(config)
+    condition_results: list[ConditionResult] = []
+
+    if not config.active:
+        return EvaluatedConfigurationCandidate(
+            configuration_name=config.name,
+            configuration_id=config.configuration_id,
+            active=False,
+            conditions=conditions,
+            condition_results=(
+                ConditionResult(
+                    condition_type="active",
+                    feature_key=None,
+                    expected_value="true",
+                    actual_value="false",
+                    matched=False,
+                    reason="Konfiguration ist inaktiv und darf nicht matchen.",
+                ),
             ),
-            matched_configuration_confidence="high",
-            is_unmatched_fallback=False,
-            matched_payment_field=matched_value,
+            matched=False,
+            reason="Inaktive Konfiguration — ausgeschlossen.",
+            confidence="none",
+            filename_pattern=config.filename_pattern,
         )
 
-    if len(direct_hits) > 1:
-        names = ", ".join(sorted({hit[0].name for hit in direct_hits}))
-        return _unmatched_result(
-            unmatched_candidate,
-            reason=(
-                f"Mehrdeutige Konfigurations-Treffer ({names}) — "
-                "Unklar/Fallback-Konfiguration verwendet."
-            ),
-            confidence="low",
-        )
-
-    if len(text_hits) == 1:
-        config, matched_value = text_hits[0]
-        return ConfigurationMatchResult(
-            matched_configuration_name=config.name,
-            matched_configuration_id=config.configuration_id,
-            matched_configuration_pattern=config.filename_pattern,
-            matched_configuration_reason=(
-                f"Aktive Konfiguration „{config.name}“ über Texttreffer "
-                f"auf Erkennungswert „{matched_value}“."
-            ),
-            matched_configuration_confidence="medium",
-            is_unmatched_fallback=False,
-            matched_payment_field=matched_value,
-        )
-
-    if len(text_hits) > 1:
-        names = ", ".join(sorted({hit[0].name for hit in text_hits}))
-        return _unmatched_result(
-            unmatched_candidate,
-            reason=(
-                f"Mehrdeutige Text-Treffer ({names}) — "
-                "Unklar/Fallback-Konfiguration verwendet."
-            ),
-            confidence="low",
-        )
-
-    if not active and unmatched_candidate is None:
-        return ConfigurationMatchResult(
-            matched_configuration_name=None,
-            matched_configuration_id=None,
-            matched_configuration_pattern=None,
-            matched_configuration_reason=(
-                "Keine aktiven Konfigurationen und kein Unklar-Fallback verfügbar."
-            ),
-            matched_configuration_confidence="none",
-            is_unmatched_fallback=True,
-            unmatched_reason="no_active_configuration_or_unmatched",
-        )
-
-    return _unmatched_result(
-        unmatched_candidate,
-        reason=_precise_unmatched_reason(
+    # Hard guards: PayPal / generic card never match American Express.
+    if _is_amex_config(config):
+        if _is_paypal_signal(payment_field, payment_account):
+            result = ConditionResult(
+                condition_type="payment_field_equals",
+                feature_key="payment_field",
+                expected_value="amex",
+                actual_value=payment_field or payment_account,
+                matched=False,
+                reason="PayPal matcht nicht American Express.",
+            )
+            return EvaluatedConfigurationCandidate(
+                configuration_name=config.name,
+                configuration_id=config.configuration_id,
+                active=True,
+                conditions=conditions,
+                condition_results=(result,),
+                matched=False,
+                reason=result.reason,
+                confidence="none",
+                filename_pattern=config.filename_pattern,
+            )
+        if _is_generic_card_signal(payment_field, payment_account) and not _has_explicit_amex_evidence(
             payment_field=payment_field,
             payment_account=payment_account,
-            active=active,
+        ):
+            result = ConditionResult(
+                condition_type="payment_field_equals",
+                feature_key="payment_field",
+                expected_value="amex",
+                actual_value=payment_field or payment_account,
+                matched=False,
+                reason="generic credit card detected, AMEX not proven",
+            )
+            return EvaluatedConfigurationCandidate(
+                configuration_name=config.name,
+                configuration_id=config.configuration_id,
+                active=True,
+                conditions=conditions,
+                condition_results=(result,),
+                matched=False,
+                reason=result.reason,
+                confidence="none",
+                filename_pattern=config.filename_pattern,
+            )
+        if not _has_explicit_amex_evidence(
+            payment_field=payment_field,
+            payment_account=payment_account,
+        ):
+            # AMEX config requires explicit AMEX evidence on payment signals.
+            result = ConditionResult(
+                condition_type="payment_field_equals",
+                feature_key="payment_field",
+                expected_value="amex / American Express",
+                actual_value=payment_field or payment_account,
+                matched=False,
+                reason="AMEX nur bei explizitem AMEX-/American-Express-Nachweis.",
+            )
+            return EvaluatedConfigurationCandidate(
+                configuration_name=config.name,
+                configuration_id=config.configuration_id,
+                active=True,
+                conditions=conditions,
+                condition_results=(result,),
+                matched=False,
+                reason=result.reason,
+                confidence="none",
+                filename_pattern=config.filename_pattern,
+            )
+
+    if not config.matching_values:
+        result = ConditionResult(
+            condition_type="no_conditions",
+            feature_key=config.matching_feature_key,
+            expected_value=None,
+            actual_value=None,
+            matched=False,
+            reason="Keine Matching-Werte konfiguriert.",
+        )
+        return EvaluatedConfigurationCandidate(
+            configuration_name=config.name,
+            configuration_id=config.configuration_id,
+            active=True,
+            conditions=conditions,
+            condition_results=(result,),
+            matched=False,
+            reason=result.reason,
+            confidence="none",
+            filename_pattern=config.filename_pattern,
+        )
+
+    probe, probe_name = _field_probe_for_feature(
+        config.matching_feature_key,
+        payment_field=payment_field,
+        payment_account=payment_account,
+        supplier=supplier,
+        recipient=recipient,
+        document_type=document_type,
+        raw_text_head=raw_text_head,
+    )
+    feature = (config.matching_feature_key or "").strip().lower()
+    condition_type = str(conditions[0].get("condition_type") or "field_equals")
+
+    direct_hit_value: str | None = None
+    if probe:
+        for configured_value in config.matching_values:
+            if _value_matches(configured_value, probe):
+                direct_hit_value = configured_value
+                break
+
+    if direct_hit_value is not None:
+        result = ConditionResult(
+            condition_type=condition_type,
+            feature_key=config.matching_feature_key,
+            expected_value=direct_hit_value,
+            actual_value=probe,
+            matched=True,
+            reason=(
+                f"{probe_name} „{probe}“ erfüllt Bedingung "
+                f"{config.matching_feature_key or 'Merkmal'}={direct_hit_value}."
+            ),
+        )
+        return EvaluatedConfigurationCandidate(
+            configuration_name=config.name,
+            configuration_id=config.configuration_id,
+            active=True,
+            conditions=conditions,
+            condition_results=(result,),
+            matched=True,
+            reason=(
+                f"Aktive Konfiguration „{config.name}“ über "
+                f"{config.matching_feature_key or 'Merkmal'}="
+                f"„{direct_hit_value}“ (Signal: {probe})."
+            ),
+            confidence="high",
+            filename_pattern=config.filename_pattern,
+        )
+
+    # Free-text body matching is unsafe for payment_field rules.
+    text_hit_value: str | None = None
+    text = str(raw_text_head or "")
+    if text and feature and feature not in _PAYMENT_FEATURE_KEYS:
+        for configured_value in config.matching_values:
+            if _text_contains_value(text, configured_value):
+                text_hit_value = configured_value
+                break
+
+    if text_hit_value is not None:
+        result = ConditionResult(
+            condition_type="text_contains",
+            feature_key=config.matching_feature_key,
+            expected_value=text_hit_value,
+            actual_value="raw_text_head",
+            matched=True,
+            reason=f"Text enthält Erkennungswert „{text_hit_value}“.",
+        )
+        return EvaluatedConfigurationCandidate(
+            configuration_name=config.name,
+            configuration_id=config.configuration_id,
+            active=True,
+            conditions=conditions,
+            condition_results=(result,),
+            matched=True,
+            reason=(
+                f"Aktive Konfiguration „{config.name}“ über Texttreffer "
+                f"auf Erkennungswert „{text_hit_value}“."
+            ),
+            confidence="medium",
+            filename_pattern=config.filename_pattern,
+        )
+
+    missing = probe is None
+    result = ConditionResult(
+        condition_type=condition_type,
+        feature_key=config.matching_feature_key,
+        expected_value=", ".join(config.matching_values),
+        actual_value=probe,
+        matched=False,
+        reason=(
+            f"Feld {probe_name} fehlt — Bedingung nicht auswertbar."
+            if missing
+            else (
+                f"{probe_name} „{probe}“ erfüllt keine Werte "
+                f"{list(config.matching_values)}."
+            )
         ),
-        confidence="low" if unmatched_candidate and unmatched_candidate.filename_pattern else "none",
+    )
+    return EvaluatedConfigurationCandidate(
+        configuration_name=config.name,
+        configuration_id=config.configuration_id,
+        active=True,
+        conditions=conditions,
+        condition_results=(result,),
+        matched=False,
+        reason=result.reason,
+        confidence="none",
+        filename_pattern=config.filename_pattern,
     )
 
 
@@ -295,40 +637,50 @@ def _precise_unmatched_reason(
     payment_field: str | None,
     payment_account: str | None,
     active: Sequence[ConfigurationCandidate],
-) -> str:
-    """Explain Unklar fallback precisely for review/manifest."""
+) -> tuple[str, str | None]:
+    """Return (reason, missing_configuration_rule)."""
 
     signal = str(payment_field or payment_account or "").strip()
     if not signal:
         return (
             "payment_field fehlt — keine Zahlungsart erkannt; "
-            "konfiguriertes Unklar/Fallback verwendet."
+            "konfiguriertes Unklar/Fallback verwendet.",
+            "payment_field fehlt",
         )
-    signal_l = signal.lower()
-    active_values = {
-        normalize_for_matching(value)
+    signal_l = signal.lower().replace(" ", "_")
+    supports_paypal = any(
+        any(_norm(value) in _PAYPAL_VALUES for value in config.matching_values)
+        or "paypal" in _norm(config.name)
         for config in active
-        for value in config.matching_values
-    }
-    if signal_l in {"paypal"}:
+    )
+    if signal_l in {"paypal"} or _norm(signal) in _PAYPAL_VALUES:
+        if not supports_paypal:
+            reason = (
+                "payment_field paypal detected, but no active configuration supports PayPal"
+            )
+            return reason, "keine aktive PayPal-Konfiguration"
         return (
-            "payment_field paypal erkannt, keine aktive PayPal-Konfiguration "
-            "gematcht — Unklar/Fallback verwendet."
+            "payment_field paypal erkannt, aber keine aktive PayPal-Konfiguration "
+            "gematcht — Unklar/Fallback verwendet.",
+            "PayPal-Bedingung nicht erfüllt",
         )
-    if signal_l in {"card", "credit_card", "card_generic"}:
+    if signal_l in _GENERIC_CARD_VALUES or _norm(signal) in _GENERIC_CARD_VALUES:
         return (
-            "payment_field card (Kreditkarte generisch) erkannt; kein AMEX-Nachweis "
-            "und keine passende aktive Konfiguration — Unklar/Fallback "
-            "(nicht American Express)."
+            "generic credit card detected, AMEX not proven",
+            "kein AMEX-Nachweis / keine passende Nicht-AMEX-Karten-Konfiguration",
         )
-    if signal_l in {"amex", "american express"} and "amex" not in active_values:
-        return (
-            "payment_field amex erkannt, aber keine aktive American-Express-"
-            "Konfiguration verfügbar — Unklar/Fallback verwendet."
-        )
+    if _norm(signal) in _AMEX_VALUES:
+        has_amex = any(_is_amex_config(config) for config in active)
+        if not has_amex:
+            return (
+                "payment_field amex erkannt, aber keine aktive American-Express-"
+                "Konfiguration verfügbar — Unklar/Fallback verwendet.",
+                "keine aktive American-Express-Konfiguration",
+            )
     return (
         f"payment_field „{signal}“ erkannt, aber keine aktive Konfiguration "
-        "erfüllt die Bedingungen — Unklar/Fallback verwendet."
+        "erfüllt die Bedingungen — Unklar/Fallback verwendet.",
+        f"keine passende Regel für payment_field={signal}",
     )
 
 
@@ -337,6 +689,10 @@ def _unmatched_result(
     *,
     reason: str,
     confidence: MatchingConfidence,
+    available: tuple[dict[str, object], ...],
+    evaluated: tuple[dict[str, object], ...],
+    unmatched_reasons: tuple[str, ...],
+    missing_configuration_rule: str | None,
 ) -> ConfigurationMatchResult:
     if unmatched is None:
         return ConfigurationMatchResult(
@@ -347,6 +703,11 @@ def _unmatched_result(
             matched_configuration_confidence="none",
             is_unmatched_fallback=True,
             unmatched_reason=reason,
+            available_configurations=available,
+            evaluated_configuration_candidates=evaluated,
+            unmatched_reasons=unmatched_reasons or (reason,),
+            condition_results=(),
+            missing_configuration_rule=missing_configuration_rule,
         )
     return ConfigurationMatchResult(
         matched_configuration_name=unmatched.name,
@@ -357,6 +718,178 @@ def _unmatched_result(
         is_unmatched_fallback=True,
         unmatched_reason=reason,
         matched_payment_field=None,
+        available_configurations=available,
+        evaluated_configuration_candidates=evaluated
+        + (
+            {
+                "configuration_name": unmatched.name,
+                "configuration_id": unmatched.configuration_id,
+                "active": True,
+                "is_unmatched": True,
+                "conditions": [{"condition_type": "fallback_unmatched"}],
+                "condition_results": [
+                    {
+                        "condition_type": "fallback_unmatched",
+                        "feature_key": None,
+                        "expected_value": None,
+                        "actual_value": None,
+                        "matched": True,
+                        "reason": "Kein Nicht-Fallback-Treffer — Unklar/Fallback gewählt.",
+                    }
+                ],
+                "matched": True,
+                "reason": reason,
+                "confidence": confidence,
+                "filename_pattern": unmatched.filename_pattern,
+            },
+        ),
+        unmatched_reasons=unmatched_reasons or (reason,),
+        condition_results=(
+            {
+                "condition_type": "fallback_unmatched",
+                "feature_key": None,
+                "expected_value": None,
+                "actual_value": None,
+                "matched": True,
+                "reason": reason,
+            },
+        ),
+        missing_configuration_rule=missing_configuration_rule,
+    )
+
+
+def match_active_configuration(
+    *,
+    payment_field: str | None = None,
+    payment_account: str | None = None,
+    supplier: str | None = None,
+    recipient: str | None = None,
+    document_type: str | None = None,
+    raw_text_head: str | None = None,
+    configurations: Sequence[ConfigurationCandidate] | None = None,
+    unmatched: ConfigurationCandidate | None = None,
+    profile_id: str | None = None,
+) -> ConfigurationMatchResult:
+    """Match extraction/result signals against active configuration rules.
+
+    Only active configs may match. Unklar/fallback is used only when no
+    non-fallback config matches. PayPal/generic card never map to AMEX without
+    explicit AMEX evidence.
+    """
+
+    active: tuple[ConfigurationCandidate, ...]
+    unmatched_candidate: ConfigurationCandidate | None
+    if configurations is None:
+        active, unmatched_candidate = load_active_configuration_candidates(
+            profile_id=profile_id
+        )
+    else:
+        # Include inactive in evaluation for transparency, but never match them.
+        active = tuple(item for item in configurations if not item.is_unmatched)
+        unmatched_candidate = unmatched
+
+    available = _available_configuration_dicts(
+        tuple(item for item in active if item.active),
+        unmatched_candidate,
+    )
+
+    evaluated_models: list[EvaluatedConfigurationCandidate] = []
+    for config in active:
+        evaluated_models.append(
+            _evaluate_active_candidate(
+                config,
+                payment_field=payment_field,
+                payment_account=payment_account,
+                supplier=supplier,
+                recipient=recipient,
+                document_type=document_type,
+                raw_text_head=raw_text_head,
+            )
+        )
+
+    evaluated = tuple(item.to_dict() for item in evaluated_models)
+    unmatched_reasons = tuple(
+        item.reason for item in evaluated_models if not item.matched and item.reason
+    )
+
+    matches = [item for item in evaluated_models if item.matched and item.active]
+    if matches:
+        matches_sorted = sorted(
+            matches,
+            key=lambda item: _CONFIDENCE_RANK.get(item.confidence, 0),
+            reverse=True,
+        )
+        winner = matches_sorted[0]
+        alternatives = tuple(item.to_dict() for item in matches_sorted[1:])
+        winner_config = next(
+            (cfg for cfg in active if cfg.configuration_id == winner.configuration_id),
+            None,
+        )
+        matched_payment = None
+        if winner_config and (winner_config.matching_feature_key or "").lower() in _PAYMENT_FEATURE_KEYS:
+            for condition in winner.condition_results:
+                if condition.matched and condition.expected_value:
+                    matched_payment = condition.expected_value
+                    break
+        reason = winner.reason
+        if alternatives:
+            alt_names = ", ".join(
+                str(item.get("configuration_name") or "?") for item in alternatives
+            )
+            reason = (
+                f"{reason} Alternativen mit niedrigerer/gleicher Konfidenz: {alt_names}."
+            )
+        return ConfigurationMatchResult(
+            matched_configuration_name=winner.configuration_name,
+            matched_configuration_id=winner.configuration_id,
+            matched_configuration_pattern=winner.filename_pattern,
+            matched_configuration_reason=reason,
+            matched_configuration_confidence=winner.confidence,
+            is_unmatched_fallback=False,
+            matched_payment_field=matched_payment or payment_field or payment_account,
+            available_configurations=available,
+            evaluated_configuration_candidates=evaluated,
+            unmatched_reasons=unmatched_reasons,
+            condition_results=tuple(
+                item.to_dict() for item in winner.condition_results
+            ),
+            alternative_matches=alternatives,
+            missing_configuration_rule=None,
+        )
+
+    if not any(item.active for item in active) and unmatched_candidate is None:
+        return ConfigurationMatchResult(
+            matched_configuration_name=None,
+            matched_configuration_id=None,
+            matched_configuration_pattern=None,
+            matched_configuration_reason=(
+                "Keine aktiven Konfigurationen und kein Unklar-Fallback verfügbar."
+            ),
+            matched_configuration_confidence="none",
+            is_unmatched_fallback=True,
+            unmatched_reason="no_active_configuration_or_unmatched",
+            available_configurations=available,
+            evaluated_configuration_candidates=evaluated,
+            unmatched_reasons=unmatched_reasons
+            or ("Keine aktiven Konfigurationen und kein Unklar-Fallback verfügbar.",),
+            missing_configuration_rule="keine aktiven Konfigurationen",
+        )
+
+    reason, missing_rule = _precise_unmatched_reason(
+        payment_field=payment_field,
+        payment_account=payment_account,
+        active=tuple(item for item in active if item.active),
+    )
+    return _unmatched_result(
+        unmatched_candidate,
+        reason=reason,
+        confidence="low"
+        if unmatched_candidate and unmatched_candidate.filename_pattern
+        else "none",
+        available=available,
+        evaluated=evaluated,
+        unmatched_reasons=unmatched_reasons + (reason,),
+        missing_configuration_rule=missing_rule,
     )
 
 
@@ -381,6 +914,7 @@ def configurations_from_raw(
                     str(item.get("matching_feature_key") or item.get("feature_key") or "").strip()
                     or None
                 ),
+                matching_operator=str(item.get("matching_operator") or item.get("operator") or "ist"),
                 matching_values=tuple(str(v).strip() for v in values if str(v or "").strip()),
                 filename_pattern=(
                     str(item.get("filename_pattern") or item.get("pattern") or "").strip()
@@ -392,8 +926,10 @@ def configurations_from_raw(
 
 
 __all__ = (
+    "ConditionResult",
     "ConfigurationCandidate",
     "ConfigurationMatchResult",
+    "EvaluatedConfigurationCandidate",
     "UNMATCHED_CONFIGURATION_ID",
     "configurations_from_raw",
     "load_active_configuration_candidates",

@@ -334,6 +334,12 @@ def _planned_with_suggestion(
         selected_art=mapping.selected_art,
         selected_art_reason=mapping.selected_art_reason,
         art_ambiguity=mapping.art_ambiguity,
+        available_configurations=mapping.available_configurations,
+        evaluated_configuration_candidates=mapping.evaluated_configuration_candidates,
+        unmatched_reasons=mapping.unmatched_reasons,
+        condition_results=mapping.condition_results,
+        alternative_matches=mapping.alternative_matches,
+        missing_configuration_rule=mapping.missing_configuration_rule,
     )
 
 
