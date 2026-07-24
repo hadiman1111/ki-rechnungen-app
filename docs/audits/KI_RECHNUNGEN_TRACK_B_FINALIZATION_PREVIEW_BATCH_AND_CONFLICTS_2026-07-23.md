@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_FINALIZATION_PREVIEW_BATCH_AND_CONFLICTS_01`
 2. **Masterplan position:** Prompt 30/34
 3. **HEAD before:** `d44047231fc5a5d469854436b4e02940224204f7`  
-   **HEAD after:** (see feature commit after push)
+   **HEAD after:** `fbb9d32481a1c5493e78aed4b8dade3b3694d20e` (feature); tip after docs: see remote `main`
 4. **Baseline:** Prompt 29 Review Decision State & UI Flow ready (`TRACK_B_REVIEW_DECISION_STATE_AND_UI_FLOW_READY`); Decision-/Readiness-Modelle und Manifest-Felder vorhanden; Finalization Preview Batch fehlte.
 5. **Files changed:**
    - `invoice_tool/ui_v2/finalization_preview_batch.py` (neu)
@@ -21,7 +21,10 @@
 10. **UI summary result:** Review-VM/Panel „Finalisierungs-Vorschau“ mit Counts und Safety-Text „Noch kein finales Schreiben — Originale bleiben unverändert.“
 11. **Preview export/manifest result:** Manifest erhält `finalization_preview_batch` + Counts/Conflicts/Safety; Items erhalten `finalization_status`/`finalization_blockers`/`finalization_warnings`/`target_conflict_status`; `final_write_allowed=false`.
 12. **Safety result:** kein `run_once`, keine Input-Mutation, keine finalen PDFs, keine realen Rechnungsordner, Track A/Core unberührt, Tags unverändert.
-13. **Tests run/results:** siehe Final Report nach Suite-Lauf.
+13. **Tests run/results:**
+    - Focused: `test_track_b_finalization_preview_batch_and_conflicts.py` + Review-Decision + Design-Docs + Apply/Rerun + Track-A-Protection → **150 passed**
+    - UI-v2/SaaS: `tests/test_ui_v2_*.py tests/test_saas_ui_v2_*.py` → **576 passed, 44 skipped**
+    - `git diff --check` → clean
 14. **No productive processing:** ja
 15. **No real invoice folders:** ja
 16. **No release tag changes:** ja (`internal-working-version-2026-07-21`, `product-v1-local-pilot-2026-07-22` unverändert)
