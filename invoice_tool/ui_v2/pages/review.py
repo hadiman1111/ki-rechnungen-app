@@ -25,6 +25,15 @@ from invoice_tool.ui_v2.components import (
     stacked_list,
     status_badge,
 )
+from invoice_tool.ui_v2.dev_defaults import (
+    ACTION_CREATE_CONTROLLED_FOLDERS,
+    ACTION_START_CONTROLLED_PREVIEW,
+    MSG_EMPTY_REVIEW_HELP,
+    apply_track_b_dev_folder_defaults_to_state,
+    ensure_track_b_dev_folders_if_requested,
+    is_track_b_dev_defaults_enabled,
+)
+from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
 from invoice_tool.ui_v2.export_reporting import (
     MSG_EXPORT_PREVIEW_TITLE,
     MSG_NO_FINAL_FILES_WRITTEN,
@@ -1592,6 +1601,46 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 compact=True,
             )
         )
+        if is_track_b_dev_defaults_enabled():
+            apply_track_b_dev_folder_defaults_to_state(state)
+
+            def _on_go_workspace(_e: ft.ControlEvent) -> None:
+                # Explicit click only — never auto-start a run from empty review.
+                if state.navigate is not None:
+                    state.navigate(NAV_WORKSPACE)
+                elif state.refresh is not None:
+                    state.refresh()
+
+            def _on_create_folders(_e: ft.ControlEvent) -> None:
+                result = ensure_track_b_dev_folders_if_requested(
+                    explicit_user_action=True
+                )
+                state.track_b_dev_defaults_folder_feedback = result.message
+                state.track_b_dev_defaults_folder_feedback_error = not result.ok
+                if state.refresh is not None:
+                    state.refresh()
+
+            items.append(ft.Text(MSG_EMPTY_REVIEW_HELP, size=12))
+            items.append(
+                ft.Row(
+                    [
+                        secondary_button(
+                            ACTION_START_CONTROLLED_PREVIEW,
+                            on_click=_on_go_workspace,
+                        ),
+                        secondary_button(
+                            ACTION_CREATE_CONTROLLED_FOLDERS,
+                            on_click=_on_create_folders,
+                        ),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                )
+            )
+            if state.track_b_dev_defaults_folder_feedback:
+                items.append(
+                    ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
+                )
         items.append(
             collapsible_details(
                 MSG_REVIEW_FROM_REAL_RUN,

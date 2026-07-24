@@ -155,6 +155,12 @@ class UiV2State:
     track_b_duplicate_remediation_feedback: str = ""
     track_b_duplicate_remediation_feedback_error: bool = False
 
+    # Track-B UI-v2 development-only folder defaults (manual smoke). Not product/SaaS.
+    track_b_dev_defaults_active: bool = False
+    track_b_dev_defaults_note: str = ""
+    track_b_dev_defaults_folder_feedback: str = ""
+    track_b_dev_defaults_folder_feedback_error: bool = False
+
     page: Any = None
     refresh: Callable[[], None] | None = None
     navigate: Callable[[str], None] | None = None

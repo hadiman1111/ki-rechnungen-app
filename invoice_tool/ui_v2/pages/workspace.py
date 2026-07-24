@@ -140,6 +140,14 @@ from invoice_tool.ui_v2.run_result_display import (
     RunResultDisplayShellVM,
     build_run_result_display_shell,
 )
+from invoice_tool.ui_v2.dev_defaults import (
+    ACTION_CREATE_CONTROLLED_FOLDERS,
+    MSG_DEV_NOTE,
+    apply_track_b_dev_folder_defaults_to_state,
+    controlled_folders_status_message,
+    ensure_track_b_dev_folders_if_requested,
+    is_track_b_dev_defaults_enabled,
+)
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.view_models import ResultSummaryVM, UiV2ReadOnlySnapshot
 from invoice_tool.ui_v2.workspace_configuration_selection import (
@@ -754,6 +762,10 @@ class WorkspaceFolderSelectionVM:
 
 def build_workspace_folder_selection_vm(state: UiV2State) -> WorkspaceFolderSelectionVM:
     """Build honest input/output folder display state from explicit UI overrides only."""
+
+    # Track-B UI-v2 local smoke: prefill empty folders once (never overrides user paths).
+    if is_track_b_dev_defaults_enabled():
+        apply_track_b_dev_folder_defaults_to_state(state)
 
     input_folder = (state.workspace_input_folder_override or "").strip() or None
     output_folder = (state.workspace_output_folder_override or "").strip() or None
@@ -1538,6 +1550,40 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         pick_disabled=not folder_selection.picker_wired,
     )
 
+    track_b_dev_blocks: list[ft.Control] = []
+    if is_track_b_dev_defaults_enabled() or state.track_b_dev_defaults_active:
+        note = (state.track_b_dev_defaults_note or "").strip() or MSG_DEV_NOTE
+        track_b_dev_blocks.append(ft.Text(note, size=11, color="#6B7280"))
+        missing_msg = controlled_folders_status_message()
+        if missing_msg:
+            track_b_dev_blocks.append(inline_warning(missing_msg))
+
+        def _on_create_controlled_folders(_e: ft.ControlEvent) -> None:
+            result = ensure_track_b_dev_folders_if_requested(explicit_user_action=True)
+            state.track_b_dev_defaults_folder_feedback = result.message
+            state.track_b_dev_defaults_folder_feedback_error = not result.ok
+            if state.refresh is not None:
+                state.refresh()
+
+        track_b_dev_blocks.append(
+            action_button(
+                ACTION_CREATE_CONTROLLED_FOLDERS,
+                on_click=_on_create_controlled_folders,
+            )
+        )
+        if state.track_b_dev_defaults_folder_feedback:
+            track_b_dev_blocks.append(
+                ft.Text(
+                    state.track_b_dev_defaults_folder_feedback,
+                    size=11,
+                    color=(
+                        "#B91C1C"
+                        if state.track_b_dev_defaults_folder_feedback_error
+                        else "#374151"
+                    ),
+                )
+            )
+
     run_panel = make_workspace_run_panel(
         folder_path=input_path,
         on_change_folder=pick_input_folder if input_path else None,
@@ -1752,6 +1798,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             onboarding_panel,
             make_section_label(FOLDER_SELECTION_SECTION_LABEL),
             folder_selection_panel,
+            *track_b_dev_blocks,
             make_section_label(START_FEEDBACK_SECTION_LABEL),
             run_status_panel,
             make_context_strip(

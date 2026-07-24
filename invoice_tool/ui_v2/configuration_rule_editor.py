@@ -52,6 +52,14 @@ from invoice_tool.ui_v2.configuration_rule_draft import (
     load_unmatched_filename_pattern,
     validate_configuration_rule_draft,
 )
+from invoice_tool.ui_v2.dev_defaults import (
+    ACTION_CREATE_CONTROLLED_FOLDERS,
+    MSG_PAYPAL_TARGET_MISSING,
+    ensure_track_b_dev_folders_if_requested,
+    is_track_b_dev_defaults_enabled,
+    maybe_prefill_track_b_dev_paypal_target,
+    paypal_target_status_message,
+)
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, MatchingRuleDraftVM
 from invoice_tool.ui_v2.edit_components import full_width_field
 from invoice_tool.ui_v2.theme import COLOR_TEXT_MUTED, COLOR_TEXT_SECONDARY
@@ -102,7 +110,7 @@ def open_create_draft_from_review_detail(
 
     available = getter("available_configurations") or ()
     unmatched_pattern = load_unmatched_filename_pattern(profile_id=profile_id)
-    return draft_from_coverage_guidance(
+    draft = draft_from_coverage_guidance(
         selected_payment_field=str(getter("selected_payment_field") or "") or None,
         payment_account=str(getter("payment_account") or "") or None,
         source_review_item_id=str(
@@ -134,6 +142,9 @@ def open_create_draft_from_review_detail(
         },
         draft_type="create_new_configuration",
     )
+    # Track-B UI-v2 smoke: prefill PayPal target only (never auto-save).
+    prefill = maybe_prefill_track_b_dev_paypal_target(draft)
+    return prefill.draft if prefill.draft is not None else draft
 
 
 def open_edit_existing_draft_from_review_detail(
@@ -540,6 +551,13 @@ def build_configuration_rule_draft_panel(
         ),
         multiline=True,
     )
+    # Track-B UI-v2 smoke: keep PayPal destination prefilled when empty (no auto-save).
+    if is_track_b_dev_defaults_enabled() and is_paypal_smoke_draft(draft):
+        prefill = maybe_prefill_track_b_dev_paypal_target(draft)
+        if prefill.applied and prefill.draft is not None:
+            draft = prefill.draft
+            state.configuration_rule_draft = draft
+
     destination_field = _smoke_field(
         value=draft.proposed_destination_path,
         on_change=lambda e: _update_draft_field(
@@ -560,6 +578,11 @@ def build_configuration_rule_draft_panel(
 
     can_save = draft.draft_type != "manual_review_only" and not draft.saved
     paypal_ready = is_paypal_smoke_draft(draft) and can_save
+    paypal_missing_msg = (
+        paypal_target_status_message()
+        if is_track_b_dev_defaults_enabled() and is_paypal_smoke_draft(draft)
+        else None
+    )
 
     def _profile_id() -> str:
         from invoice_tool.app_paths import resolve_active_profile_id
@@ -665,35 +688,60 @@ def build_configuration_rule_draft_panel(
         if state.refresh is not None:
             state.refresh()
 
+    def _on_create_controlled_folders(_e: ft.ControlEvent) -> None:
+        result = ensure_track_b_dev_folders_if_requested(explicit_user_action=True)
+        state.configuration_rule_draft_feedback = (
+            result.message
+            if result.ok
+            else (result.message or MSG_PAYPAL_TARGET_MISSING)
+        )
+        state.configuration_rule_draft_feedback_error = not result.ok
+        if state.refresh is not None:
+            state.refresh()
+
+    action_buttons: list[ft.Control] = [
+        secondary_button(
+            ACTION_SAVE_DRAFT,
+            on_click=_on_save,
+            disabled=not can_save,
+        ),
+        secondary_button(
+            ACTION_SAVE_AND_RERUN,
+            on_click=_on_save_and_rerun,
+            disabled=not can_save,
+        ),
+        secondary_button(
+            ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
+            on_click=_on_paypal_smoke,
+            disabled=not paypal_ready,
+        ),
+        secondary_button(ACTION_CANCEL_DRAFT, on_click=_on_cancel),
+    ]
+    if is_track_b_dev_defaults_enabled() and paypal_missing_msg:
+        action_buttons.append(
+            secondary_button(
+                ACTION_CREATE_CONTROLLED_FOLDERS,
+                on_click=_on_create_controlled_folders,
+            )
+        )
+
     action_row = ft.Container(
         content=ft.Row(
-            [
-                secondary_button(
-                    ACTION_SAVE_DRAFT,
-                    on_click=_on_save,
-                    disabled=not can_save,
-                ),
-                secondary_button(
-                    ACTION_SAVE_AND_RERUN,
-                    on_click=_on_save_and_rerun,
-                    disabled=not can_save,
-                ),
-                secondary_button(
-                    ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
-                    on_click=_on_paypal_smoke,
-                    disabled=not paypal_ready,
-                ),
-                secondary_button(ACTION_CANCEL_DRAFT, on_click=_on_cancel),
-            ],
+            action_buttons,
             spacing=8,
             wrap=True,
         ),
         padding=_content_padding(horizontal=0, vertical=4),
     )
 
+    meta_lines: list[ft.Control] = [
+        ft.Text(SMOKE_DEV_UI_LAYOUT_MARKER, size=10, color=COLOR_TEXT_MUTED),
+    ]
+    if paypal_missing_msg:
+        meta_lines.append(ft.Text(paypal_missing_msg, size=12, color="#B91C1C"))
     meta = ft.Column(
         [
-            ft.Text(SMOKE_DEV_UI_LAYOUT_MARKER, size=10, color=COLOR_TEXT_MUTED),
+            *meta_lines,
             ft.Text(
                 f"Entwurfstyp: {draft.draft_type}",
                 size=12,

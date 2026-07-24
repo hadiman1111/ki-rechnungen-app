@@ -19,6 +19,10 @@ from invoice_tool.ui_v2.pages.profiles import build_profiles_page
 from invoice_tool.ui_v2.pages.review import build_review_page
 from invoice_tool.ui_v2.pages.settings import build_settings_page
 from invoice_tool.ui_v2.pages.workspace import build_workspace_page
+from invoice_tool.ui_v2.dev_defaults import (
+    apply_track_b_dev_folder_defaults_to_state,
+    is_track_b_dev_defaults_enabled,
+)
 from invoice_tool.ui_v2.processing_contract import make_local_processing_adapter
 from invoice_tool.ui_v2.shell import ShellHandles, build_shell, replace_content, set_active_nav
 from invoice_tool.ui_v2.state import UiV2State
@@ -56,6 +60,9 @@ def build_ui_v2(page: ft.Page) -> None:
         processing_service=make_local_processing_adapter(),
     )
     state.page = page
+    # Development-only Track-B smoke prefills — no auto-run, no profile mutation.
+    if is_track_b_dev_defaults_enabled():
+        apply_track_b_dev_folder_defaults_to_state(state)
 
     dialog_ref: list[ft.AlertDialog | None] = [None]
 
