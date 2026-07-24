@@ -13,6 +13,11 @@ from invoice_tool.configuration_model import (
 from invoice_tool.profile_store import load_profile_bundle, save_profile_bundle
 from invoice_tool.scan_models import matching_features
 from invoice_tool.ui_v2.adapters.write_result import WriteOperationResult
+from invoice_tool.ui_v2.configuration_duplicate_remediation import (
+    analyze_active_configuration_duplicates,
+    profile_issue_warnings_for_unrelated_save,
+    validate_bundle_for_track_b_rule_save,
+)
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM
 from invoice_tool.ui_v2.validation import (
     validate_bundle_for_save,
@@ -65,15 +70,33 @@ def update_configuration(profile_id: str, draft: ConfigurationDraftVM) -> WriteO
         return WriteOperationResult.fail(*errors)
 
     _apply_draft_to_bundle(bundle, draft)
-    bundle_errors = validate_bundle_for_save(bundle)
+    # Track-B smoke: do not false-block unrelated saves (e.g. PayPal) because an
+    # existing Privat config has case-alias collisions (privat/Privat). Exact
+    # cross-config duplicates and draft-involving conflicts still block.
+    draft_values = list(draft.matching.values) if draft.matching else []
+    bundle_errors = validate_bundle_for_track_b_rule_save(
+        bundle,
+        draft_name=draft.name,
+        draft_values=draft_values,
+        draft_configuration_id=draft.configuration_id,
+    )
     if bundle_errors:
         return WriteOperationResult.fail(*bundle_errors)
+
+    analysis = analyze_active_configuration_duplicates(bundle.configurations)
+    raw_bundle_errors = validate_bundle_for_save(bundle)
+    warnings = profile_issue_warnings_for_unrelated_save(
+        raw_bundle_errors, analysis=analysis
+    )
+    warning_suffix = ""
+    if warnings:
+        warning_suffix = " · " + " | ".join(warnings[:2])
 
     try:
         save_profile_bundle(bundle)
         config_id = "unmatched" if draft.is_unmatched else draft.configuration_id
         return WriteOperationResult.ok(
-            message="Konfiguration gespeichert.",
+            message="Konfiguration gespeichert." + warning_suffix,
             profile_id=profile_id,
             configuration_id=config_id,
         )
@@ -93,9 +116,21 @@ def set_configuration_active(profile_id: str, configuration_id: str, *, active: 
             break
     else:
         return WriteOperationResult.fail("Konfiguration nicht gefunden.")
-    bundle_errors = validate_bundle_for_save(bundle)
-    if bundle_errors and active:
-        return WriteOperationResult.fail(*bundle_errors)
+    if active:
+        target = next(
+            (c for c in bundle.configurations if c.id == configuration_id),
+            None,
+        )
+        values = list(target.matching.values) if target and target.matching else []
+        name = target.name if target else None
+        bundle_errors = validate_bundle_for_track_b_rule_save(
+            bundle,
+            draft_name=name,
+            draft_values=values,
+            draft_configuration_id=configuration_id,
+        )
+        if bundle_errors:
+            return WriteOperationResult.fail(*bundle_errors)
     try:
         save_profile_bundle(bundle)
         return WriteOperationResult.ok(message="Konfiguration gespeichert.", configuration_id=configuration_id)

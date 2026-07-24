@@ -75,6 +75,10 @@ WARNING_DUPLICATE_CONDITION = (
     "Es existiert bereits eine aktive Konfiguration mit identischer "
     "Matching-Bedingung — Speichern überschreibt sie nicht automatisch."
 )
+ERROR_DUPLICATE_EXACT_ACTIVE_CONFIG = (
+    "duplicate_exact_active_config: Exakte aktive Duplikat-Regel "
+    "für dieselbe Bedingung/Ziel/Muster — betroffen"
+)
 WARNING_DESTINATION_REQUIRED = (
     "Zielordner muss vom Nutzer gesetzt werden — kein privater/Hadi-Default."
 )
@@ -250,7 +254,7 @@ def find_duplicate_condition_configs(
             item_op = _norm(item.matching_operator) or "ist"
             item_values = {_norm(value) for value in item.matching_values}
             name = item.name
-        else:
+        elif isinstance(item, Mapping):
             if bool(item.get("is_unmatched")) or not bool(item.get("active", True)):
                 continue
             item_feature = _norm(
@@ -260,8 +264,34 @@ def find_duplicate_condition_configs(
                 str(item.get("matching_operator") or item.get("operator") or "ist")
             ) or "ist"
             raw_values = item.get("matching_values") or item.get("values") or ()
+            matching = item.get("matching") or {}
+            if isinstance(matching, Mapping) and not item_feature:
+                item_feature = _norm(str(matching.get("feature_key") or ""))
+                item_op = _norm(str(matching.get("operator") or "ist")) or "ist"
+                raw_values = matching.get("values") or raw_values
             item_values = {_norm(str(value)) for value in raw_values}
             name = str(item.get("configuration_name") or item.get("name") or "?")
+        else:
+            # Configuration model objects and similar attribute bearers
+            matching = getattr(item, "matching", None)
+            if bool(getattr(item, "is_unmatched", False)) or not bool(
+                getattr(item, "active", True)
+            ):
+                continue
+            if matching is not None:
+                item_feature = _norm(str(getattr(matching, "feature_key", "") or ""))
+                item_op = _norm(str(getattr(matching, "operator", "ist") or "ist")) or "ist"
+                raw_values = getattr(matching, "values", ()) or ()
+            else:
+                item_feature = _norm(
+                    str(getattr(item, "matching_feature_key", "") or "")
+                )
+                item_op = _norm(
+                    str(getattr(item, "matching_operator", "ist") or "ist")
+                ) or "ist"
+                raw_values = getattr(item, "matching_values", ()) or ()
+            item_values = {_norm(str(value)) for value in raw_values}
+            name = str(getattr(item, "name", None) or getattr(item, "configuration_name", None) or "?")
         if item_feature == feature and item_op == op and item_values == expected:
             hits.append(name)
     return tuple(hits)
@@ -396,12 +426,43 @@ def validate_configuration_rule_draft(
             values=values,
             active_configurations=active_configurations,
         )
+        # Exact same name+condition among active configs is a clear draft error
+        # only when the draft itself would recreate that exact condition.
+        # Unrelated Privat alias noise must not be labeled as a PayPal duplicate.
+        from invoice_tool.ui_v2.configuration_duplicate_remediation import (
+            CODE_DUPLICATE_EXACT_ACTIVE_CONFIG,
+            analyze_active_configuration_duplicates,
+        )
+
+        analysis = analyze_active_configuration_duplicates(active_configurations)
+        for finding in analysis.findings:
+            if finding.code != CODE_DUPLICATE_EXACT_ACTIVE_CONFIG:
+                continue
+            # Only surface as draft error when the draft name matches the
+            # duplicate group — unrelated Privat exact-dups are profile issues.
+            if name and name.strip().casefold() in {
+                n.strip().casefold() for n in finding.affected_names
+            }:
+                errors.append(
+                    ERROR_DUPLICATE_EXACT_ACTIVE_CONFIG
+                    + f": {', '.join(finding.affected_names)}."
+                )
     duplicate_warning = bool(duplicate_names)
     if duplicate_warning and WARNING_DUPLICATE_CONDITION not in warnings:
-        warnings.append(
-            WARNING_DUPLICATE_CONDITION
-            + f" Betroffen: {', '.join(duplicate_names)}."
-        )
+        # Never claim the PayPal draft is a Privat duplicate.
+        affected = ", ".join(duplicate_names)
+        if name and any(
+            n.strip().casefold() == name.strip().casefold() for n in duplicate_names
+        ):
+            warnings.append(
+                WARNING_DUPLICATE_CONDITION + f" Betroffen: {affected}."
+            )
+        else:
+            warnings.append(
+                "Profilhinweis: andere aktive Konfiguration(en) mit gleicher "
+                f"Matching-Bedingung — Betroffen: {affected}. "
+                "Der aktuelle Entwurf ist davon getrennt."
+            )
 
     if WARNING_NO_BUSINESS_CATEGORY not in warnings:
         warnings.append(WARNING_NO_BUSINESS_CATEGORY)

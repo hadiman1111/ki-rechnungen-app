@@ -142,9 +142,23 @@ from invoice_tool.ui_v2.configuration_rule_apply_preview import (
     preview_rerun_action_labels,
 )
 from invoice_tool.ui_v2.configuration_rule_editor import (
+    ACTION_FINALIZATION_DRY_RUN,
+    ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
+    ACTION_SANDBOX_FINAL_WRITE,
+    ACTION_SAVE_AND_RERUN,
+    ACTION_SAVE_DRAFT,
     build_configuration_coverage_action_row,
     build_configuration_rule_action_labels,
     build_configuration_rule_draft_panel,
+    build_duplicate_config_remediation_panel,
+)
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_COPY_CASE,
+    ACTION_COPY_DIAGNOSIS,
+    SMOKE_DEV_UI_LAYOUT_MARKER,
+    build_diagnosis_copy_text,
+    build_prueffall_copy_text,
+    copy_text_to_state_and_clipboard,
 )
 from invoice_tool.ui_v2.review_decision import (
     ACTION_ACCEPT_SUGGESTION,
@@ -1976,18 +1990,241 @@ def build_review_page(state: UiV2State) -> ft.Control:
         detail_fields.insert(
             insert_at, ("Benennung noch nicht final", detail.naming_not_final)
         )
+
+        def _refresh() -> None:
+            if state.refresh is not None:
+                state.refresh()
+
+        def _copy_case(_e: ft.ControlEvent) -> None:
+            text = build_prueffall_copy_text(
+                detail,
+                draft=state.configuration_rule_draft,
+                profile_id=state.selected_profile_id,
+            )
+            copy_text_to_state_and_clipboard(
+                state, text, kind=ACTION_COPY_CASE
+            )
+            _refresh()
+
+        def _copy_diagnosis(_e: ft.ControlEvent) -> None:
+            text = build_diagnosis_copy_text(
+                detail,
+                draft=state.configuration_rule_draft,
+                profile_id=state.selected_profile_id,
+                duplicate_report=state.track_b_duplicate_report_text or None,
+                run_state=state.processing_run_state,
+            )
+            copy_text_to_state_and_clipboard(
+                state, text, kind=ACTION_COPY_DIAGNOSIS
+            )
+            _refresh()
+
+        def _profile_id() -> str:
+            from invoice_tool.app_paths import resolve_active_profile_id
+
+            return (
+                str(state.selected_profile_id or "").strip()
+                or resolve_active_profile_id()
+            )
+
+        def _on_top_save(_e: ft.ControlEvent) -> None:
+            from invoice_tool.ui_v2.configuration_rule_apply_preview import (
+                mark_rule_saved_for_preview_apply,
+            )
+            from invoice_tool.ui_v2.configuration_rule_editor import (
+                save_configuration_rule_draft,
+            )
+
+            current = state.configuration_rule_draft
+            if current is None:
+                state.configuration_rule_draft_feedback = (
+                    "Kein Entwurf geöffnet — zuerst Konfiguration aus Hinweis erstellen."
+                )
+                state.configuration_rule_draft_feedback_error = True
+                _refresh()
+                return
+            result = save_configuration_rule_draft(
+                profile_id=_profile_id(),
+                draft=current,
+                explicit_user_confirmation=True,
+            )
+            state.configuration_rule_draft = result.draft
+            state.configuration_rule_draft_feedback = result.message
+            state.configuration_rule_draft_feedback_error = not result.ok
+            if result.ok and result.draft is not None:
+                mark_rule_saved_for_preview_apply(
+                    state,
+                    draft=result.draft,
+                    configuration_id=result.configuration_id,
+                )
+            _refresh()
+
+        def _on_top_save_rerun(_e: ft.ControlEvent) -> None:
+            from invoice_tool.ui_v2.configuration_rule_apply_preview import (
+                mark_rule_saved_for_preview_apply,
+                rerun_preview_matching_after_rule_change,
+            )
+            from invoice_tool.ui_v2.configuration_rule_editor import (
+                save_configuration_rule_draft,
+            )
+
+            current = state.configuration_rule_draft
+            if current is None:
+                state.configuration_rule_draft_feedback = (
+                    "Kein Entwurf geöffnet — zuerst Konfiguration aus Hinweis erstellen."
+                )
+                state.configuration_rule_draft_feedback_error = True
+                _refresh()
+                return
+            result = save_configuration_rule_draft(
+                profile_id=_profile_id(),
+                draft=current,
+                explicit_user_confirmation=True,
+            )
+            state.configuration_rule_draft = result.draft
+            if result.ok and result.draft is not None:
+                mark_rule_saved_for_preview_apply(
+                    state,
+                    draft=result.draft,
+                    configuration_id=result.configuration_id,
+                )
+                apply = rerun_preview_matching_after_rule_change(
+                    run_state=state.processing_run_state,
+                    profile_id=_profile_id(),
+                    applied_configuration_name=result.draft.proposed_configuration_name,
+                    applied_configuration_condition=str(
+                        result.draft.proposed_condition or ""
+                    )
+                    or None,
+                    applied_configuration_id=result.configuration_id,
+                    explicit_user_action=True,
+                )
+                if apply.ok and apply.updated_run_state is not None:
+                    state.processing_run_state = apply.updated_run_state
+                state.configuration_rule_draft_feedback = (
+                    f"{result.message} — {apply.message}"
+                )
+                state.configuration_rule_draft_feedback_error = not apply.ok
+            else:
+                state.configuration_rule_draft_feedback = result.message
+                state.configuration_rule_draft_feedback_error = True
+            _refresh()
+
+        def _on_top_paypal(_e: ft.ControlEvent) -> None:
+            from invoice_tool.ui_v2.configuration_rule_editor import (
+                save_paypal_rule_and_rerun_matching,
+            )
+
+            current = state.configuration_rule_draft
+            if current is None:
+                state.configuration_rule_draft_feedback = (
+                    "Kein PayPal-Entwurf geöffnet."
+                )
+                state.configuration_rule_draft_feedback_error = True
+                _refresh()
+                return
+            result = save_paypal_rule_and_rerun_matching(
+                profile_id=_profile_id(),
+                draft=current,
+                run_state=state.processing_run_state,
+                explicit_user_confirmation=True,
+                require_controlled_target=True,
+            )
+            state.configuration_rule_draft = result.draft
+            state.configuration_rule_draft_feedback = result.message
+            state.configuration_rule_draft_feedback_error = not result.ok
+            if result.updated_run_state is not None:
+                state.processing_run_state = result.updated_run_state
+            _refresh()
+
+        def _on_top_dry_run(_e: ft.ControlEvent) -> None:
+            from invoice_tool.ui_v2.finalization_dry_run_package import (
+                apply_finalization_dry_run_package,
+            )
+
+            apply_finalization_dry_run_package(state)
+            _refresh()
+
+        def _on_top_sandbox(_e: ft.ControlEvent) -> None:
+            from invoice_tool.ui_v2.controlled_final_write_sandbox import (
+                apply_controlled_final_write_sandbox,
+            )
+
+            apply_controlled_final_write_sandbox(state, sandbox_final_write=True)
+            _refresh()
+
+        smoke_actions = ft.Column(
+            [
+                ft.Text(SMOKE_DEV_UI_LAYOUT_MARKER, size=10),
+                ft.Text(
+                    "Track-B Dev-Smoke Aktionen (sichtbar / sticky oben)",
+                    size=12,
+                ),
+                ft.Row(
+                    [
+                        secondary_button(ACTION_COPY_CASE, on_click=_copy_case),
+                        secondary_button(
+                            ACTION_COPY_DIAGNOSIS, on_click=_copy_diagnosis
+                        ),
+                        secondary_button(
+                            ACTION_SAVE_DRAFT, on_click=_on_top_save
+                        ),
+                        secondary_button(
+                            ACTION_SAVE_AND_RERUN, on_click=_on_top_save_rerun
+                        ),
+                        secondary_button(
+                            ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
+                            on_click=_on_top_paypal,
+                        ),
+                        secondary_button(
+                            ACTION_FINALIZATION_DRY_RUN,
+                            on_click=_on_top_dry_run,
+                        ),
+                        secondary_button(
+                            ACTION_SANDBOX_FINAL_WRITE,
+                            on_click=_on_top_sandbox,
+                        ),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                ),
+                ft.Text(
+                    f"Aktionen: {ACTION_SAVE_DRAFT} · {ACTION_SAVE_AND_RERUN} · "
+                    f"{ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN} · "
+                    f"{ACTION_FINALIZATION_DRY_RUN} · {ACTION_SANDBOX_FINAL_WRITE}",
+                    size=11,
+                ),
+            ],
+            spacing=6,
+            tight=True,
+        )
+        if state.track_b_smoke_copy_feedback:
+            smoke_actions.controls.append(
+                ft.Text(state.track_b_smoke_copy_feedback, size=12)
+            )
+
         items.append(
             section_block(
                 "Prüffall-Details",
-                stacked_list(
-                    compact_entry_row(detail.source_filename, *detail_fields)
+                ft.Column(
+                    [
+                        smoke_actions,
+                        stacked_list(
+                            compact_entry_row(
+                                detail.source_filename, *detail_fields
+                            )
+                        ),
+                    ],
+                    spacing=10,
+                    tight=True,
                 ),
-                subtitle="Auswahl aus der Prüfliste",
+                subtitle="Dev-Smoke Layout — Labels/Werte getrennt, Copy verfügbar",
             )
         )
         action_row = build_configuration_coverage_action_row(state, detail)
         if action_row is not None:
             items.append(action_row)
+        items.append(build_duplicate_config_remediation_panel(state))
         if state.configuration_rule_draft is not None:
             items.append(
                 build_configuration_rule_draft_panel(

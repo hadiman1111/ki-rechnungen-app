@@ -146,6 +146,15 @@ class UiV2State:
     configuration_rule_last_saved_configuration_id: str | None = None
     configuration_rule_apply_last_result: Any | None = None
 
+    # Track-B smoke blocker repair — copy/debug + duplicate remediation (UI-v2 only).
+    track_b_smoke_last_copy_text: str = ""
+    track_b_smoke_last_copy_kind: str = ""
+    track_b_smoke_copy_feedback: str = ""
+    track_b_smoke_copy_feedback_error: bool = False
+    track_b_duplicate_report_text: str = ""
+    track_b_duplicate_remediation_feedback: str = ""
+    track_b_duplicate_remediation_feedback_error: bool = False
+
     page: Any = None
     refresh: Callable[[], None] | None = None
     navigate: Callable[[str], None] | None = None
