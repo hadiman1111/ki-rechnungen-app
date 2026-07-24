@@ -33,9 +33,9 @@ MSG_PAYPAL_TARGET_MISSING = (
     "Der kontrollierte PayPal-Zielordner fehlt. Bitte Testordner erstellen."
 )
 MSG_EMPTY_REVIEW_HELP = (
-    "Keine Prüffälle geladen. Im Entwicklungsmodus sind Eingangs- und "
-    "Ausgangsordner vorbelegt. Bitte im Arbeitsbereich einen kontrollierten "
-    "Preview-/Sandbox-Lauf starten."
+    "Keine Prüffälle geladen. Im Entwicklungsmodus sind Testordner vorbelegt. "
+    "Bitte kontrollierten Preview-/Sandbox-Lauf starten oder den Terminal-Oracle "
+    "ausführen."
 )
 ACTION_CREATE_CONTROLLED_FOLDERS = "Kontrollierte Testordner erstellen"
 ACTION_START_CONTROLLED_PREVIEW = "Kontrollierten Preview-Lauf starten"

@@ -1,21 +1,92 @@
-"""Track-B developer smoke copy/debug text helpers.
+"""Track-B developer smoke copy/debug text helpers + review declutter labels.
 
-Builds plain-text diagnostics for manual smoke — no file mutation, no run_once.
+Builds plain-text diagnostics and German review-surface labels.
+No file mutation, no run_once, no auto-oracle execution.
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from invoice_tool.ui_v2.configuration_duplicate_remediation import (
     analyze_active_configuration_duplicates,
 )
 
 ACTION_COPY_CASE = "Prüffall als Text kopieren"
-ACTION_COPY_DIAGNOSIS = "Diagnose kopieren"
+ACTION_COPY_DIAGNOSIS = "Technische Diagnose kopieren"
+ACTION_COPY_ORACLE = "Oracle-Befehl kopieren"
+ACTION_OPEN_WORKSPACE = "Arbeitsbereich öffnen"
 
 # Layout marker for focused smoke UI tests / visual QA.
 SMOKE_DEV_UI_LAYOUT_MARKER = "track_b_smoke_dev_ui_layout_v1_no_overlap"
+REVIEW_DECLUTTER_LAYOUT_MARKER = "track_b_review_surface_declutter_v1"
+
+MSG_SAFETY_LINE_NO_FINAL = "Vorschau — keine finalen Dateien geschrieben"
+MSG_ORACLE_AVAILABLE = "Automatischer Smoke-Test verfügbar"
+ORACLE_COMMAND = (
+    "KI_RECHNUNGEN_UI_V2_DEV_DEFAULTS=1 .venv/bin/python "
+    "scripts/dev/track_b_automated_smoke_oracle.py"
+)
+MSG_ORACLE_NO_AUTO_RUN = (
+    "Der Oracle wird nicht automatisch aus der UI gestartet — "
+    "Befehl kopieren und im Terminal ausführen."
+)
+MSG_ER_ER_NOTE = (
+    "Hinweis: Das aktuelle technische Muster enthält einen festen er-Präfix "
+    "und die Dokumentart. Das wird später vereinfacht."
+)
+MSG_FILENAME_PREVIEW_ONLY = (
+    "Dateiname ist nur Vorschau — noch keine finalen Dateien geschrieben."
+)
+
+SECTION_KURZPRUEFUNG = "Kurzprüfung"
+SECTION_VORSCHLAG = "Vorschlag"
+SECTION_WARUM = "Warum zur Prüfung?"
+SECTION_NAECHSTE = "Nächste Aktion"
+SECTION_FINALISIERUNG = "Finalisierung"
+SECTION_TECHNISCHE = "Technische Details"
+
+REVIEW_SECTION_TITLES = (
+    SECTION_KURZPRUEFUNG,
+    SECTION_VORSCHLAG,
+    SECTION_WARUM,
+    SECTION_NAECHSTE,
+    SECTION_FINALISIERUNG,
+    SECTION_TECHNISCHE,
+)
+
+BADGE_PAYPAL = "PayPal"
+BADGE_UNKLAR = "Unklar"
+BADGE_MISSING_PAYMENT = "Missing payment"
+BADGE_NOT_AMEX = "Not AMEX"
+BADGE_STORNO = "Storno"
+BADGE_READY = "Ready for finalization"
+BADGE_BLOCKED = "Blocked"
+
+PRIMARY_PRUEFEN = "Prüfen"
+PRIMARY_ACCEPT = "Vorschlag akzeptieren"
+PRIMARY_PAYPAL = "PayPal-Regel anwenden"
+PRIMARY_UNKLAR = "Unklar lassen"
+
+MSG_WHY_MISSING_PAYMENT = (
+    "Zahlungsfeld fehlt oder konnte nicht sicher erkannt werden."
+)
+MSG_WHY_MISSING_CATEGORY = "Geschäftskategorie fehlt oder ist unklar."
+MSG_WHY_PAYPAL_MISSING = (
+    "PayPal erkannt, aber keine passende PayPal-Regel vorhanden."
+)
+MSG_WHY_PAYPAL_APPLIED = "PayPal-Regel ist vorhanden bzw. wurde angewendet."
+MSG_WHY_NOT_AMEX = (
+    "Kartenzahlung erkannt, aber AMEX ist nicht belegt — daher keine AMEX-Zuordnung."
+)
+MSG_WHY_STORNO = "Storno erkannt — der Beleg bleibt zur Prüfung."
+MSG_WHY_GENERIC = "Der Beleg ist unklar und muss geprüft werden."
+
+ACTION_PAYPAL_SAVE_RERUN = "PayPal-Regel speichern und Matching neu berechnen"
+ACTION_ACCEPT_SUGGESTION = "Vorschlag akzeptieren"
+ACTION_KEEP_UNCLEAR = "als Unklar belassen"
+ACTION_DEFER = "zurückstellen"
+ACTION_IGNORE_EXPORT = "ignorieren / nicht exportieren"
 
 
 def _g(obj: Any, key: str, default: Any = None) -> Any:
@@ -26,6 +97,219 @@ def _g(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _norm(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().replace("_", " ").split())
+
+
+def filename_has_er_er(name: str | None) -> bool:
+    return "_er_er_" in str(name or "")
+
+
+def er_er_note_for_filename(name: str | None) -> str | None:
+    if filename_has_er_er(name):
+        return MSG_ER_ER_NOTE
+    return None
+
+
+def build_oracle_command_copy_text() -> str:
+    return ORACLE_COMMAND
+
+
+def _blob(*parts: Any) -> str:
+    return " ".join(_norm(part) for part in parts if part is not None)
+
+
+def paypal_action_relevant(detail: Any) -> bool:
+    """True when PayPal CTA is useful for this document."""
+
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    guidance = _norm(_g(detail, "user_guidance"))
+    payment = _norm(
+        _g(detail, "selected_payment_field") or _g(detail, "payment_account")
+    )
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    if missing_type == "paypal":
+        return True
+    if "paypal" in guidance and (
+        "keine" in guidance or "fehl" in guidance or "missing" in coverage
+    ):
+        return True
+    if payment == "paypal" and matched in {"", "unklar", "unmatched", "fallback"}:
+        return True
+    if payment == "paypal" and "missing" in coverage:
+        return True
+    return False
+
+
+def derive_status_badges(
+    detail: Any,
+    *,
+    finalization_ready: bool = False,
+    finalization_blockers: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Compact status badges for review list / Kurzprüfung."""
+
+    badges: list[str] = []
+    payment = _norm(
+        _g(detail, "selected_payment_field") or _g(detail, "payment_account")
+    )
+    art = _norm(_g(detail, "selected_art") or _g(detail, "document_type"))
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    guidance = _norm(_g(detail, "user_guidance"))
+    reason = _norm(_g(detail, "review_reason") or _g(detail, "reason"))
+    blob = _blob(guidance, coverage, reason, missing_type, matched)
+
+    if art == "storno" or "storno" in blob:
+        badges.append(BADGE_STORNO)
+    if payment == "paypal" or "paypal" in blob:
+        badges.append(BADGE_PAYPAL)
+    if (
+        missing_type in {"payment field", "payment_field", "missing payment field"}
+        or "missing_payment_field" in coverage
+        or "zahlungsfeld" in guidance
+        or "payment_field fehlt" in reason
+        or "fehlt payment" in blob
+        or str(_g(detail, "suggested_filename") or "").endswith(
+            "FEHLT_payment_field.pdf"
+        )
+        or "fehlt_payment_field" in _norm(_g(detail, "suggested_filename"))
+    ):
+        if BADGE_MISSING_PAYMENT not in badges:
+            badges.append(BADGE_MISSING_PAYMENT)
+    if (
+        missing_type in {"generic card", "generic_card"}
+        or "amex not proven" in blob
+        or "nicht-amex" in blob
+        or "amex nicht belegt" in blob
+        or ("card" in payment and "amex" not in matched)
+    ):
+        if BADGE_NOT_AMEX not in badges:
+            badges.append(BADGE_NOT_AMEX)
+    if matched in {"unklar", "unmatched", "fallback"} or "unklar" in reason:
+        if BADGE_UNKLAR not in badges:
+            badges.append(BADGE_UNKLAR)
+    if finalization_ready:
+        badges.append(BADGE_READY)
+    elif finalization_blockers:
+        badges.append(BADGE_BLOCKED)
+    elif not badges:
+        badges.append(BADGE_UNKLAR)
+    # Stable unique order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for badge in badges:
+        if badge not in seen:
+            seen.add(badge)
+            ordered.append(badge)
+    return tuple(ordered)
+
+
+def derive_why_review_plain_german(detail: Any) -> tuple[str, ...]:
+    """Plain-German reasons — no raw internal enums as primary text."""
+
+    reasons: list[str] = []
+    payment = _norm(
+        _g(detail, "selected_payment_field") or _g(detail, "payment_account")
+    )
+    art = _norm(_g(detail, "selected_art") or _g(detail, "document_type"))
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    guidance = str(_g(detail, "user_guidance") or "").strip()
+    category = _norm(
+        _g(detail, "business_category_display") or _g(detail, "business_category")
+    )
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    blob = _blob(guidance, coverage, missing_type, _g(detail, "review_reason"))
+
+    if art == "storno" or "storno" in blob:
+        reasons.append(MSG_WHY_STORNO)
+    if (
+        missing_type in {"payment field", "payment_field"}
+        or "missing_payment_field" in coverage
+        or "zahlungsfeld" in _norm(guidance)
+        or not payment
+        and (
+            "payment" in blob
+            or "zahlungs" in blob
+            or "fehlt_payment_field" in _norm(_g(detail, "suggested_filename"))
+        )
+    ):
+        reasons.append(MSG_WHY_MISSING_PAYMENT)
+    if paypal_action_relevant(detail) or (
+        payment == "paypal" and matched in {"", "unklar"}
+    ):
+        if matched == "paypal" or "paypal" in matched:
+            reasons.append(MSG_WHY_PAYPAL_APPLIED)
+        else:
+            reasons.append(MSG_WHY_PAYPAL_MISSING)
+    elif payment == "paypal" and "paypal" in matched:
+        reasons.append(MSG_WHY_PAYPAL_APPLIED)
+    if (
+        missing_type in {"generic card", "generic_card"}
+        or "amex not proven" in blob
+        or "amex nicht belegt" in blob
+        or ("card" in payment and "amex" not in matched)
+    ):
+        reasons.append(MSG_WHY_NOT_AMEX)
+    if not category or category in {
+        "unklare zuordnung",
+        "unklar",
+        "missing",
+        "fehlt",
+    }:
+        if "kategorie" in blob or not category:
+            reasons.append(MSG_WHY_MISSING_CATEGORY)
+    if guidance and guidance not in reasons:
+        # Prefer plain German guidance already produced by coverage helper.
+        if not any(ch.isupper() and "_" in guidance for ch in [guidance]):
+            reasons.append(guidance)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in reasons:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    if not ordered:
+        ordered.append(MSG_WHY_GENERIC)
+    return tuple(ordered)
+
+
+def derive_primary_list_action(
+    detail: Any,
+    *,
+    finalization_ready: bool = False,
+) -> str:
+    if paypal_action_relevant(detail):
+        return PRIMARY_PAYPAL
+    if finalization_ready:
+        return PRIMARY_ACCEPT
+    badges = derive_status_badges(detail, finalization_ready=finalization_ready)
+    if BADGE_MISSING_PAYMENT in badges or BADGE_UNKLAR in badges:
+        return PRIMARY_UNKLAR
+    return PRIMARY_PRUEFEN
+
+
+def next_action_labels_for_detail(detail: Any) -> tuple[str, ...]:
+    labels: list[str] = []
+    if paypal_action_relevant(detail):
+        labels.append(ACTION_PAYPAL_SAVE_RERUN)
+    labels.extend(
+        [
+            ACTION_ACCEPT_SUGGESTION,
+            ACTION_KEEP_UNCLEAR,
+            ACTION_DEFER,
+            ACTION_IGNORE_EXPORT,
+        ]
+    )
+    return tuple(labels)
+
+
 def build_prueffall_copy_text(
     detail: Any,
     *,
@@ -34,10 +318,21 @@ def build_prueffall_copy_text(
 ) -> str:
     """Copy text for a single review case — includes PayPal guidance when present."""
 
+    badges = derive_status_badges(detail)
+    why = derive_why_review_plain_german(detail)
     lines = [
-        "# Prüffall (Track-B Smoke)",
+        "# Prüffall (Track-B Review)",
         f"source_file: {_g(detail, 'source_filename') or '—'}",
+        f"supplier: {_g(detail, 'counterparty_name') or _g(detail, 'supplier') or '—'}",
+        f"date: {_g(detail, 'invoice_date') or '—'}",
+        f"amount: {_g(detail, 'selected_amount') or _g(detail, 'amount') or '—'}",
+        f"payment_field: {_g(detail, 'selected_payment_field') or _g(detail, 'payment_account') or '—'}",
+        f"document_art: {_g(detail, 'selected_art') or _g(detail, 'document_type') or '—'}",
+        f"configuration: {_g(detail, 'matched_configuration_name') or '—'}",
+        f"status_badges: {', '.join(badges) if badges else '—'}",
         f"suggested_filename: {_g(detail, 'suggested_filename') or _g(detail, 'preview_filename') or '—'}",
+        f"why_review:",
+        *[f"  - {line}" for line in why],
         f"config/matching_status: {_g(detail, 'matched_configuration_name') or '—'}",
         f"matched_configuration_reason: {_g(detail, 'matched_configuration_reason') or '—'}",
         f"configuration_coverage_status: {_g(detail, 'configuration_coverage_status') or '—'}",
@@ -53,6 +348,7 @@ def build_prueffall_copy_text(
         "  - originals_unchanged",
         "  - final_write_allowed_for_production=false",
         "  - no productive processing",
+        f"safety_line: {MSG_SAFETY_LINE_NO_FINAL}",
     ]
     guidance = str(_g(detail, "user_guidance") or "")
     missing_type = str(_g(detail, "missing_configuration_type") or "").casefold()
@@ -90,7 +386,7 @@ def build_diagnosis_copy_text(
         detail, draft=draft, profile_id=profile_id
     )
     lines = [
-        "# Diagnose (Track-B Smoke)",
+        "# Technische Diagnose (Track-B Review)",
         case,
         "",
         "safety_flags_detail:",
@@ -99,10 +395,23 @@ def build_diagnosis_copy_text(
         "  - no_run_once",
         "  - no_real_invoice_folders",
         "  - track_b_preview_only",
+        "  - no_auto_oracle_run",
+        f"oracle_command: {ORACLE_COMMAND}",
     ]
     if run_state is not None:
         lines.append(f"run_status: {_g(run_state, 'status') or '—'}")
         lines.append(f"run_id: {_g(run_state, 'run_id') or '—'}")
+    technical = {
+        "matching_reason": _g(detail, "matched_configuration_reason"),
+        "condition_results": _g(detail, "condition_results"),
+        "proposed_configuration": _g(detail, "proposed_configuration_name"),
+        "proposed_condition": _g(detail, "proposed_condition"),
+        "finalization_blockers": _g(detail, "finalization_blockers"),
+        "final_write_allowed": False,
+    }
+    lines.append("technical_fields:")
+    for key, value in technical.items():
+        lines.append(f"  - {key}: {value if value not in (None, '') else '—'}")
     if duplicate_report:
         lines.append("")
         lines.append(duplicate_report)
@@ -145,10 +454,57 @@ def copy_text_to_state_and_clipboard(
 
 
 __all__ = (
+    "ACTION_ACCEPT_SUGGESTION",
     "ACTION_COPY_CASE",
     "ACTION_COPY_DIAGNOSIS",
+    "ACTION_COPY_ORACLE",
+    "ACTION_DEFER",
+    "ACTION_IGNORE_EXPORT",
+    "ACTION_KEEP_UNCLEAR",
+    "ACTION_OPEN_WORKSPACE",
+    "ACTION_PAYPAL_SAVE_RERUN",
+    "BADGE_BLOCKED",
+    "BADGE_MISSING_PAYMENT",
+    "BADGE_NOT_AMEX",
+    "BADGE_PAYPAL",
+    "BADGE_READY",
+    "BADGE_STORNO",
+    "BADGE_UNKLAR",
+    "MSG_ER_ER_NOTE",
+    "MSG_FILENAME_PREVIEW_ONLY",
+    "MSG_ORACLE_AVAILABLE",
+    "MSG_ORACLE_NO_AUTO_RUN",
+    "MSG_SAFETY_LINE_NO_FINAL",
+    "MSG_WHY_GENERIC",
+    "MSG_WHY_MISSING_CATEGORY",
+    "MSG_WHY_MISSING_PAYMENT",
+    "MSG_WHY_NOT_AMEX",
+    "MSG_WHY_PAYPAL_APPLIED",
+    "MSG_WHY_PAYPAL_MISSING",
+    "MSG_WHY_STORNO",
+    "ORACLE_COMMAND",
+    "PRIMARY_ACCEPT",
+    "PRIMARY_PAYPAL",
+    "PRIMARY_PRUEFEN",
+    "PRIMARY_UNKLAR",
+    "REVIEW_DECLUTTER_LAYOUT_MARKER",
+    "REVIEW_SECTION_TITLES",
+    "SECTION_FINALISIERUNG",
+    "SECTION_KURZPRUEFUNG",
+    "SECTION_NAECHSTE",
+    "SECTION_TECHNISCHE",
+    "SECTION_VORSCHLAG",
+    "SECTION_WARUM",
     "SMOKE_DEV_UI_LAYOUT_MARKER",
     "build_diagnosis_copy_text",
+    "build_oracle_command_copy_text",
     "build_prueffall_copy_text",
     "copy_text_to_state_and_clipboard",
+    "derive_primary_list_action",
+    "derive_status_badges",
+    "derive_why_review_plain_german",
+    "er_er_note_for_filename",
+    "filename_has_er_er",
+    "next_action_labels_for_detail",
+    "paypal_action_relevant",
 )

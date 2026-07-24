@@ -11,6 +11,7 @@ run_once, never final writes, never productive export.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import flet as ft
 
@@ -27,7 +28,6 @@ from invoice_tool.ui_v2.components import (
 )
 from invoice_tool.ui_v2.dev_defaults import (
     ACTION_CREATE_CONTROLLED_FOLDERS,
-    ACTION_START_CONTROLLED_PREVIEW,
     MSG_EMPTY_REVIEW_HELP,
     apply_track_b_dev_folder_defaults_to_state,
     ensure_track_b_dev_folders_if_requested,
@@ -164,10 +164,34 @@ from invoice_tool.ui_v2.configuration_rule_editor import (
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_CASE,
     ACTION_COPY_DIAGNOSIS,
+    ACTION_COPY_ORACLE,
+    ACTION_OPEN_WORKSPACE,
+    MSG_ER_ER_NOTE,
+    MSG_FILENAME_PREVIEW_ONLY,
+    MSG_ORACLE_AVAILABLE,
+    MSG_ORACLE_NO_AUTO_RUN,
+    MSG_SAFETY_LINE_NO_FINAL,
+    ORACLE_COMMAND,
+    PRIMARY_PRUEFEN,
+    REVIEW_DECLUTTER_LAYOUT_MARKER,
+    REVIEW_SECTION_TITLES,
+    SECTION_FINALISIERUNG,
+    SECTION_KURZPRUEFUNG,
+    SECTION_NAECHSTE,
+    SECTION_TECHNISCHE,
+    SECTION_VORSCHLAG,
+    SECTION_WARUM,
     SMOKE_DEV_UI_LAYOUT_MARKER,
     build_diagnosis_copy_text,
+    build_oracle_command_copy_text,
     build_prueffall_copy_text,
     copy_text_to_state_and_clipboard,
+    derive_primary_list_action,
+    derive_status_badges,
+    derive_why_review_plain_german,
+    er_er_note_for_filename,
+    next_action_labels_for_detail,
+    paypal_action_relevant,
 )
 from invoice_tool.ui_v2.review_decision import (
     ACTION_ACCEPT_SUGGESTION,
@@ -327,7 +351,7 @@ class ReviewDetailItemVM:
 
 @dataclass(frozen=True)
 class ReviewListItemVM:
-    """Visible Review-bucket list row (Prompt 15/34)."""
+    """Visible Review-bucket list row (Prompt 15/34 + declutter cards)."""
 
     item_key: str
     source_filename: str
@@ -343,6 +367,18 @@ class ReviewListItemVM:
     checked_preview: bool = False
     excluded_from_export_preview: bool = False
     preview_status_label: str = STATUS_IN_REVIEW
+    # Declutter compact card fields
+    supplier: str | None = None
+    invoice_date: str | None = None
+    amount: str | None = None
+    payment_field: str | None = None
+    document_art: str | None = None
+    configuration: str | None = None
+    status_badges: tuple[str, ...] = ()
+    suggested_filename: str | None = None
+    primary_action: str = PRIMARY_PRUEFEN
+    safety_line: str = MSG_SAFETY_LINE_NO_FINAL
+    compact_card: bool = True
 
 
 @dataclass(frozen=True)
@@ -436,6 +472,18 @@ class ReviewSelectedDetailVM:
     final_write_allowed: bool = False
     not_final_yet_text: str = MSG_NOT_FINAL_YET
     decision_feedback: str | None = None
+    # Declutter detail sections
+    status_badges: tuple[str, ...] = ()
+    why_review_plain: tuple[str, ...] = ()
+    next_action_labels_relevant: tuple[str, ...] = ()
+    paypal_action_visible: bool = False
+    er_er_note: str | None = None
+    safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
+    section_titles: tuple[str, ...] = REVIEW_SECTION_TITLES
+    technical_details_collapsed_by_default: bool = True
+    kurzpruefung_fields: tuple[tuple[str, str], ...] = ()
+    vorschlag_fields: tuple[tuple[str, str], ...] = ()
+    finalization_summary_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -521,6 +569,23 @@ class ReviewPageVM:
     touches_real_invoice_folders: bool = False
     claims_saas_ready: bool = False
     claims_production_ready: bool = False
+    # Declutter / oracle surface
+    declutter_layout_marker: str = REVIEW_DECLUTTER_LAYOUT_MARKER
+    safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
+    oracle_available_title: str = MSG_ORACLE_AVAILABLE
+    oracle_command: str = ORACLE_COMMAND
+    oracle_no_auto_run: str = MSG_ORACLE_NO_AUTO_RUN
+    technical_details_collapsed_by_default: bool = True
+    section_titles: tuple[str, ...] = REVIEW_SECTION_TITLES
+    copy_action_labels: tuple[str, ...] = (
+        ACTION_COPY_CASE,
+        ACTION_COPY_DIAGNOSIS,
+        ACTION_COPY_ORACLE,
+    )
+    empty_state_workspace_action: str = ACTION_OPEN_WORKSPACE
+    empty_state_oracle_action: str = ACTION_COPY_ORACLE
+    auto_runs_oracle: bool = False
+    production_final_write_enabled: bool = False
 
 
 def _suggested_rule_draft_fields(
@@ -742,18 +807,46 @@ def _preview_status_label(
     return STATUS_IN_REVIEW
 
 
+def _document_art_label(detail: ReviewDetailItemVM | ReviewSelectedDetailVM) -> str:
+    art = str(
+        getattr(detail, "selected_art", None)
+        or getattr(detail, "document_type", None)
+        or ""
+    ).strip()
+    if art.casefold() == "storno":
+        return "Storno"
+    if art:
+        return "Rechnung" if art.casefold() in {"er", "rechnung", "invoice"} else art
+    return "Rechnung"
+
+
 def _build_list_items(
     detail_items: tuple[ReviewDetailItemVM, ...],
     *,
     selected_key: str | None,
     checked_keys: set[str],
     excluded_keys: set[str],
+    readiness_by_key: dict[str, Any] | None = None,
 ) -> tuple[ReviewListItemVM, ...]:
     rows: list[ReviewListItemVM] = []
+    readiness_by_key = readiness_by_key or {}
     for detail in detail_items:
         key = detail.item_key or detail.document_id or detail.document_label
         checked = key in checked_keys
         excluded = key in excluded_keys
+        readiness = readiness_by_key.get(key)
+        finalization_ready = bool(getattr(readiness, "ready", False))
+        blockers = tuple(getattr(readiness, "blockers", ()) or ())
+        badges = derive_status_badges(
+            detail,
+            finalization_ready=finalization_ready,
+            finalization_blockers=blockers,
+        )
+        suggested = (
+            detail.suggested_filename
+            or detail.rendered_filename
+            or detail.canonical_filename
+        )
         rows.append(
             ReviewListItemVM(
                 item_key=key,
@@ -772,6 +865,19 @@ def _build_list_items(
                 preview_status_label=_preview_status_label(
                     checked=checked, excluded=excluded
                 ),
+                supplier=detail.counterparty_name or detail.supplier,
+                invoice_date=detail.invoice_date,
+                amount=detail.selected_amount or detail.amount,
+                payment_field=detail.selected_payment_field or detail.payment_account,
+                document_art=_document_art_label(detail),
+                configuration=detail.matched_configuration_name or "Unklar",
+                status_badges=badges,
+                suggested_filename=suggested,
+                primary_action=derive_primary_list_action(
+                    detail, finalization_ready=finalization_ready
+                ),
+                safety_line=MSG_SAFETY_LINE_NO_FINAL,
+                compact_card=True,
             )
         )
     return tuple(rows)
@@ -1029,6 +1135,88 @@ def _build_selected_detail(
         final_write_allowed=False,
         not_final_yet_text=MSG_NOT_FINAL_YET,
         decision_feedback=decision_feedback,
+        status_badges=derive_status_badges(
+            detail,
+            finalization_ready=bool(finalization_ready),
+            finalization_blockers=tuple(finalization_blockers or ()),
+        ),
+        why_review_plain=derive_why_review_plain_german(
+            {
+                "source_filename": detail.source_filename or detail.document_label,
+                "selected_payment_field": detail.selected_payment_field
+                or detail.payment_account,
+                "payment_account": detail.payment_account,
+                "selected_art": detail.selected_art or detail.document_type,
+                "document_type": detail.document_type,
+                "missing_configuration_type": detail.missing_configuration_type,
+                "configuration_coverage_status": detail.configuration_coverage_status,
+                "user_guidance": detail.user_guidance,
+                "business_category": detail.business_category,
+                "business_category_display": detail.business_category_display,
+                "matched_configuration_name": detail.matched_configuration_name,
+                "review_reason": detail.reason,
+                "suggested_filename": detail.suggested_filename
+                or detail.rendered_filename,
+            }
+        ),
+        next_action_labels_relevant=next_action_labels_for_detail(detail),
+        paypal_action_visible=paypal_action_relevant(detail),
+        er_er_note=er_er_note_for_filename(
+            naming.suggested_filename
+            or naming.preview_filename
+            or detail.suggested_filename
+            or detail.rendered_filename
+        ),
+        safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
+        section_titles=REVIEW_SECTION_TITLES,
+        technical_details_collapsed_by_default=True,
+        kurzpruefung_fields=(
+            ("Originaldatei", detail.source_filename or detail.document_label),
+            (
+                "erkannter Lieferant",
+                detail.counterparty_name or detail.supplier or "—",
+            ),
+            ("Datum", detail.invoice_date or "—"),
+            ("Betrag", detail.selected_amount or detail.amount or "—"),
+            (
+                "Zahlungsart",
+                detail.selected_payment_field or detail.payment_account or "—",
+            ),
+            ("Dokumentart", _document_art_label(detail)),
+            ("Konfiguration", detail.matched_configuration_name or "Unklar"),
+            (
+                "Status",
+                ", ".join(
+                    derive_status_badges(
+                        detail,
+                        finalization_ready=bool(finalization_ready),
+                        finalization_blockers=tuple(finalization_blockers or ()),
+                    )
+                )
+                or STATUS_IN_REVIEW,
+            ),
+        ),
+        vorschlag_fields=(
+            (
+                "vorgeschlagener Dateiname",
+                naming.suggested_filename
+                or naming.preview_filename
+                or detail.suggested_filename
+                or "—",
+            ),
+            ("geplanter Zielbereich", planned_target or "—"),
+            ("Hinweis", MSG_FILENAME_PREVIEW_ONLY),
+        ),
+        finalization_summary_lines=(
+            (
+                MSG_FINALIZATION_READY_YES
+                if finalization_ready
+                else MSG_FINALIZATION_READY_NO
+            ),
+            "final_write_allowed=false",
+            "production final-write disabled",
+            MSG_SAFETY_LINE_NO_FINAL,
+        ),
     )
 
 
@@ -1077,6 +1265,7 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         selected_key=selected_key,
         checked_keys=bag.checked_preview_keys,
         excluded_keys=bag.excluded_from_export_preview_keys,
+        readiness_by_key=dict(decision_bag.readiness_by_item_key),
     )
     selected_detail = None
     coverage_action_labels: tuple[str, ...] = ()
@@ -1231,6 +1420,22 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         touches_real_invoice_folders=False,
         claims_saas_ready=False,
         claims_production_ready=False,
+        declutter_layout_marker=REVIEW_DECLUTTER_LAYOUT_MARKER,
+        safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
+        oracle_available_title=MSG_ORACLE_AVAILABLE,
+        oracle_command=ORACLE_COMMAND,
+        oracle_no_auto_run=MSG_ORACLE_NO_AUTO_RUN,
+        technical_details_collapsed_by_default=True,
+        section_titles=REVIEW_SECTION_TITLES,
+        copy_action_labels=(
+            ACTION_COPY_CASE,
+            ACTION_COPY_DIAGNOSIS,
+            ACTION_COPY_ORACLE,
+        ),
+        empty_state_workspace_action=ACTION_OPEN_WORKSPACE,
+        empty_state_oracle_action=ACTION_COPY_ORACLE,
+        auto_runs_oracle=False,
+        production_final_write_enabled=False,
     )
 
 
@@ -1583,64 +1788,386 @@ def _sandbox_final_write_panel(state: UiV2State, vm: ReviewPageVM) -> ft.Control
     )
 
 
+
+def _kv_lines(fields: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> ft.Control:
+    rows = [
+        ft.Text(f"{label}: {value or '—'}", size=12) for label, value in fields
+    ]
+    return ft.Column(rows, spacing=4, tight=True)
+
+
+def _oracle_dev_box(state: UiV2State, vm: ReviewPageVM) -> ft.Control:
+    def _copy_oracle(_e: ft.ControlEvent) -> None:
+        copy_text_to_state_and_clipboard(
+            state,
+            build_oracle_command_copy_text(),
+            kind=ACTION_COPY_ORACLE,
+        )
+        if state.refresh is not None:
+            state.refresh()
+
+    body = ft.Column(
+        [
+            ft.Text(vm.oracle_available_title, size=13, weight=ft.FontWeight.W_600),
+            ft.Text(vm.oracle_command, size=11, selectable=True),
+            ft.Text(vm.oracle_no_auto_run, size=11),
+            secondary_button(ACTION_COPY_ORACLE, on_click=_copy_oracle),
+        ],
+        spacing=6,
+        tight=True,
+    )
+    return section_block(
+        "Dev: Automatischer Smoke-Test",
+        body,
+        subtitle="Kein Auto-Run — nur Kopieren",
+    )
+
+
+def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Control:
+    """Show only relevant next actions — never final write / never run_once."""
+
+    decision_bag = get_review_decision_bag(state)
+
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _profile_id() -> str:
+        from invoice_tool.app_paths import resolve_active_profile_id
+
+        return (
+            str(state.selected_profile_id or "").strip()
+            or resolve_active_profile_id()
+        )
+
+    def _on_paypal(_e: ft.ControlEvent) -> None:
+        from invoice_tool.ui_v2.configuration_rule_editor import (
+            save_paypal_rule_and_rerun_matching,
+        )
+
+        current = state.configuration_rule_draft
+        if current is None:
+            state.configuration_rule_draft_feedback = (
+                "Kein PayPal-Entwurf geöffnet — zuerst aus dem Hinweis erstellen."
+            )
+            state.configuration_rule_draft_feedback_error = True
+            _refresh()
+            return
+        result = save_paypal_rule_and_rerun_matching(
+            profile_id=_profile_id(),
+            draft=current,
+            run_state=state.processing_run_state,
+            explicit_user_confirmation=True,
+            require_controlled_target=True,
+        )
+        state.configuration_rule_draft = result.draft
+        state.configuration_rule_draft_feedback = result.message
+        state.configuration_rule_draft_feedback_error = not result.ok
+        if result.updated_run_state is not None:
+            state.processing_run_state = result.updated_run_state
+        _refresh()
+
+    def _on_accept(_e: ft.ControlEvent) -> None:
+        key = get_review_preview_ui(state).selected_item_key
+        if decision_bag.pending_accept_confirm_key != key:
+            arm_accept_confirmation(state, key)
+            _refresh()
+            return
+        create_accept_suggestion_decision(
+            state,
+            item_key=key,
+            decided_by_user=True,
+            explicit_confirmation=True,
+        )
+        _refresh()
+
+    def _on_keep_unclear(_e: ft.ControlEvent) -> None:
+        create_keep_review_required_decision(state, decided_by_user=True)
+        _refresh()
+
+    def _on_ignore(_e: ft.ControlEvent) -> None:
+        create_ignore_for_export_decision(state, decided_by_user=True)
+        _refresh()
+
+    def _on_defer(_e: ft.ControlEvent) -> None:
+        create_defer_decision(state, decided_by_user=True)
+        _refresh()
+
+    accept_label = ACTION_ACCEPT_SUGGESTION
+    selected = get_review_preview_ui(state).selected_item_key
+    if selected and decision_bag.pending_accept_confirm_key == selected:
+        accept_label = f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"
+
+    buttons: list[ft.Control] = []
+    if detail.paypal_action_visible:
+        buttons.append(
+            secondary_button(
+                ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
+                on_click=_on_paypal,
+            )
+        )
+    buttons.extend(
+        [
+            secondary_button(accept_label, on_click=_on_accept),
+            secondary_button(ACTION_KEEP_UNCLEAR, on_click=_on_keep_unclear),
+            secondary_button(ACTION_DEFER, on_click=_on_defer),
+            secondary_button(ACTION_IGNORE_EXPORT, on_click=_on_ignore),
+        ]
+    )
+    return ft.Column(
+        [
+            ft.Text(
+                "Bei Klick: nur Review-State / Vorschau. "
+                "Ausdrücklich nicht: run_once, produktive Final-Writes, "
+                "Originale verschieben.",
+                size=11,
+            ),
+            ft.Text(MSG_NOT_FINAL_YET, size=12),
+            ft.Row(buttons, spacing=8, wrap=True),
+        ],
+        spacing=8,
+        tight=True,
+    )
+
+
+def _copy_actions_row(
+    state: UiV2State,
+    detail: ReviewSelectedDetailVM,
+) -> ft.Control:
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _copy_case(_e: ft.ControlEvent) -> None:
+        text = build_prueffall_copy_text(
+            detail,
+            draft=state.configuration_rule_draft,
+            profile_id=state.selected_profile_id,
+        )
+        copy_text_to_state_and_clipboard(state, text, kind=ACTION_COPY_CASE)
+        _refresh()
+
+    def _copy_diagnosis(_e: ft.ControlEvent) -> None:
+        text = build_diagnosis_copy_text(
+            detail,
+            draft=state.configuration_rule_draft,
+            profile_id=state.selected_profile_id,
+            duplicate_report=state.track_b_duplicate_report_text or None,
+            run_state=state.processing_run_state,
+        )
+        copy_text_to_state_and_clipboard(state, text, kind=ACTION_COPY_DIAGNOSIS)
+        _refresh()
+
+    def _copy_oracle(_e: ft.ControlEvent) -> None:
+        copy_text_to_state_and_clipboard(
+            state,
+            build_oracle_command_copy_text(),
+            kind=ACTION_COPY_ORACLE,
+        )
+        _refresh()
+
+    controls: list[ft.Control] = [
+        ft.Text(REVIEW_DECLUTTER_LAYOUT_MARKER, size=10),
+        ft.Row(
+            [
+                secondary_button(ACTION_COPY_CASE, on_click=_copy_case),
+                secondary_button(ACTION_COPY_DIAGNOSIS, on_click=_copy_diagnosis),
+                secondary_button(ACTION_COPY_ORACLE, on_click=_copy_oracle),
+            ],
+            spacing=8,
+            wrap=True,
+        ),
+    ]
+    if state.track_b_smoke_copy_feedback:
+        controls.append(ft.Text(state.track_b_smoke_copy_feedback, size=12))
+    return ft.Column(controls, spacing=6, tight=True)
+
+
+def _technical_detail_lines(detail: ReviewSelectedDetailVM) -> tuple[str, ...]:
+    lines = [
+        f"matching_reason: {detail.matched_configuration_reason or '—'}",
+        f"configuration_coverage_status: {detail.configuration_coverage_status or '—'}",
+        f"missing_configuration_type: {detail.missing_configuration_type or '—'}",
+        f"proposed_configuration: {detail.proposed_configuration_name or '—'}",
+        f"proposed_condition: {detail.proposed_condition or '—'}",
+        f"proposed_filename_pattern: {detail.proposed_filename_pattern or '—'}",
+        f"finalization_ready: {detail.finalization_ready}",
+        f"finalization_blockers: {', '.join(detail.finalization_blockers) or '—'}",
+        "final_write_allowed: false",
+        "production_final_write: disabled",
+        f"naming_confidence: {detail.naming_confidence or '—'}",
+        f"filename_source: {detail.filename_source or '—'}",
+        f"selected_payment_field_reason: {detail.selected_payment_field_reason or '—'}",
+        f"selected_art_reason: {detail.selected_art_reason or '—'}",
+        f"selected_amount_reason: {detail.selected_amount_reason or '—'}",
+        f"review_decision: {detail.review_decision or '—'}",
+        f"safety: {detail.safety_status}",
+        SMOKE_DEV_UI_LAYOUT_MARKER,
+    ]
+    if detail.condition_results:
+        cond = "; ".join(
+            str(c.get("reason") or c.get("condition_type") or c)
+            for c in detail.condition_results
+        )
+        lines.append(f"checked_conditions: {cond}")
+    if detail.evaluated_configuration_candidates:
+        parts = []
+        for candidate in detail.evaluated_configuration_candidates:
+            status = "ja" if candidate.get("matched") else "nein"
+            parts.append(
+                f"{candidate.get('configuration_name')}: {status}"
+                f" ({candidate.get('reason') or ''})"
+            )
+        lines.append(f"evaluated_candidates: {'; '.join(parts)}")
+    if detail.missing_fields:
+        lines.append(f"missing_fields: {', '.join(detail.missing_fields)}")
+    if detail.placeholder_values:
+        lines.append(
+            "placeholder_values: "
+            + ", ".join(
+                f"{key}={value if value is not None else '—'}"
+                for key, value in detail.placeholder_values
+            )
+        )
+    return tuple(lines)
+
+
+def _finalization_declutter_panel(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM,
+) -> ft.Control:
+    ready_label = (
+        MSG_FINALIZATION_READY_YES
+        if detail.finalization_ready
+        else MSG_FINALIZATION_READY_NO
+    )
+    dry_status = (
+        f"Dry-run: {vm.finalization_dry_run_package_path}"
+        if vm.finalization_dry_run_package_path
+        else "Dry-run: noch nicht erstellt"
+    )
+    sandbox_status = (
+        f"Sandbox-final-write: {vm.sandbox_final_write_result_path}"
+        if vm.sandbox_final_write_result_path
+        else "Sandbox-final-write: noch nicht ausgeführt"
+    )
+
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _on_dry(_e: ft.ControlEvent) -> None:
+        apply_finalization_dry_run_package(state)
+        _refresh()
+
+    def _on_sandbox(_e: ft.ControlEvent) -> None:
+        apply_controlled_final_write_sandbox(state, sandbox_final_write=True)
+        _refresh()
+
+    body = ft.Column(
+        [
+            ft.Text(ready_label, size=12),
+            ft.Text(
+                "Bereit"
+                if detail.finalization_ready
+                else ("Blockiert" if detail.finalization_blockers else "Weiter zur Prüfung"),
+                size=12,
+            ),
+            ft.Text(dry_status, size=12),
+            ft.Text(sandbox_status, size=12),
+            ft.Text("final_write_allowed=false", size=12),
+            ft.Text("production final-write disabled", size=12),
+            ft.Text(MSG_SAFETY_LINE_NO_FINAL, size=12),
+            ft.Row(
+                [
+                    secondary_button(MSG_CTA_CREATE_DRY_RUN, on_click=_on_dry),
+                    secondary_button(MSG_CTA_SANDBOX_WRITE, on_click=_on_sandbox),
+                ],
+                spacing=8,
+                wrap=True,
+            ),
+        ],
+        spacing=6,
+        tight=True,
+    )
+    return section_block(SECTION_FINALISIERUNG, body, subtitle=MSG_NOT_FINAL_YET)
+
+
 def build_review_page(state: UiV2State) -> ft.Control:
     vm = build_review_page_vm(state)
-    queue = build_review_queue_view_model(state.processing_run_state)
     items: list[ft.Control] = [
-        page_header(vm.title, subtitle="Unklare Fälle aus dem Lauf prüfen."),
-        ft.Text(vm.preview_only_banner, size=12),
-        ft.Text(vm.empty_output_explanation, size=12),
+        page_header(
+            vm.title,
+            subtitle="Prüffälle klar prüfen — technische Details standardmäßig versteckt.",
+        ),
+        ft.Text(vm.safety_line_declutter, size=12),
+        ft.Text(vm.declutter_layout_marker, size=10),
+        _oracle_dev_box(state, vm),
     ]
 
     if vm.empty:
         items.append(
             empty_state(
                 vm.empty_title or EMPTY_REVIEW_TITLE,
-                detail=None,
+                detail=MSG_EMPTY_REVIEW_HELP,
                 icon=ft.Icons.FACT_CHECK_OUTLINED,
                 compact=True,
             )
         )
+
+        def _on_go_workspace(_e: ft.ControlEvent) -> None:
+            if state.navigate is not None:
+                state.navigate(NAV_WORKSPACE)
+            elif state.refresh is not None:
+                state.refresh()
+
+        def _copy_oracle(_e: ft.ControlEvent) -> None:
+            copy_text_to_state_and_clipboard(
+                state,
+                build_oracle_command_copy_text(),
+                kind=ACTION_COPY_ORACLE,
+            )
+            if state.refresh is not None:
+                state.refresh()
+
+        def _on_create_folders(_e: ft.ControlEvent) -> None:
+            result = ensure_track_b_dev_folders_if_requested(
+                explicit_user_action=True
+            )
+            state.track_b_dev_defaults_folder_feedback = result.message
+            state.track_b_dev_defaults_folder_feedback_error = not result.ok
+            if state.refresh is not None:
+                state.refresh()
+
         if is_track_b_dev_defaults_enabled():
             apply_track_b_dev_folder_defaults_to_state(state)
 
-            def _on_go_workspace(_e: ft.ControlEvent) -> None:
-                # Explicit click only — never auto-start a run from empty review.
-                if state.navigate is not None:
-                    state.navigate(NAV_WORKSPACE)
-                elif state.refresh is not None:
-                    state.refresh()
-
-            def _on_create_folders(_e: ft.ControlEvent) -> None:
-                result = ensure_track_b_dev_folders_if_requested(
-                    explicit_user_action=True
-                )
-                state.track_b_dev_defaults_folder_feedback = result.message
-                state.track_b_dev_defaults_folder_feedback_error = not result.ok
-                if state.refresh is not None:
-                    state.refresh()
-
-            items.append(ft.Text(MSG_EMPTY_REVIEW_HELP, size=12))
-            items.append(
-                ft.Row(
-                    [
-                        secondary_button(
-                            ACTION_START_CONTROLLED_PREVIEW,
-                            on_click=_on_go_workspace,
-                        ),
-                        secondary_button(
-                            ACTION_CREATE_CONTROLLED_FOLDERS,
-                            on_click=_on_create_folders,
-                        ),
-                    ],
-                    spacing=8,
-                    wrap=True,
-                )
+        items.append(ft.Text(MSG_EMPTY_REVIEW_HELP, size=12))
+        items.append(
+            ft.Row(
+                [
+                    secondary_button(
+                        ACTION_OPEN_WORKSPACE,
+                        on_click=_on_go_workspace,
+                    ),
+                    secondary_button(
+                        ACTION_COPY_ORACLE,
+                        on_click=_copy_oracle,
+                    ),
+                    secondary_button(
+                        ACTION_CREATE_CONTROLLED_FOLDERS,
+                        on_click=_on_create_folders,
+                    ),
+                ],
+                spacing=8,
+                wrap=True,
             )
-            if state.track_b_dev_defaults_folder_feedback:
-                items.append(
-                    ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
-                )
+        )
+        if state.track_b_dev_defaults_folder_feedback:
+            items.append(
+                ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
+            )
         items.append(
             collapsible_details(
                 MSG_REVIEW_FROM_REAL_RUN,
@@ -1648,21 +2175,8 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 MSG_UNCLEAR_CASES_STAY_REVIEW,
                 MSG_BUCKETS_SEPARATED,
                 *vm.separation_notes,
-                title="Details anzeigen",
-            )
-        )
-        items.append(
-            section_block(
-                "Preview-Aktionen",
-                _preview_action_row(state, enabled=False),
-                subtitle="Nur UI-Vorschau — keine finalen Dateien",
-            )
-        )
-        items.append(
-            section_block(
-                "Prüfaktionen",
-                _legacy_action_row(queue),
-                subtitle="Noch nicht verbunden",
+                title=SECTION_TECHNISCHE,
+                initially_expanded=False,
             )
         )
         return page_scaffold(*items)
@@ -1670,17 +2184,17 @@ def build_review_page(state: UiV2State) -> ft.Control:
     review_rows: list[ft.Control] = []
     for row in vm.list_items:
         fields: list[tuple[str, str]] = [
-            ("Status", row.category),
-            (MSG_FIELD_REVIEW_REASON, row.reason),
-            ("Konfidenz/Status", row.confidence_or_status),
-            ("Preview-Status", row.preview_status_label),
-            ("Marker", f"{row.preview_only_badge} · {row.no_final_write_badge}"),
+            ("Lieferant / Name", row.supplier or "—"),
+            ("Datum", row.invoice_date or "—"),
+            ("Betrag", row.amount or "—"),
+            ("Zahlungsart", row.payment_field or "—"),
+            ("Art", row.document_art or "—"),
+            ("Konfiguration", row.configuration or "—"),
+            ("Status", ", ".join(row.status_badges) or row.preview_status_label),
+            ("Vorschlag", row.suggested_filename or "—"),
+            ("Aktion", row.primary_action),
+            ("Sicherheit", row.safety_line),
         ]
-        if row.planned_destination or row.planned_action:
-            planned = row.planned_destination or row.planned_action or ""
-            if row.planned_action and row.planned_destination:
-                planned = f"{row.planned_action}: {row.planned_destination}"
-            fields.append((MSG_FIELD_PLANNED_TARGET, planned))
         key = row.item_key
 
         def _select(_e: ft.ControlEvent, item_key: str = key) -> None:
@@ -1689,7 +2203,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 state.refresh()
 
         trailing = status_badge(
-            "Ausgewählt" if row.selected else "Öffnen",
+            row.primary_action if not row.selected else "Ausgewählt",
             tone="active" if row.selected else "neutral",
         )
         entry = compact_entry_row(
@@ -1710,595 +2224,23 @@ def build_review_page(state: UiV2State) -> ft.Control:
         section_block(
             f"{vm.review_count} Dokument(e) zur Prüfung",
             stacked_list(*review_rows),
+            subtitle="Kompakte Review-Karten",
         )
     )
 
     if vm.selected_detail is not None:
         detail = vm.selected_detail
-        detail_fields = [
-            ("Quelldatei", detail.source_filename),
-            (MSG_FIELD_REVIEW_REASON, detail.review_reason),
-            ("Kategorie", detail.category),
-            ("Status", detail.confidence_or_status),
-            ("Sicherheitsstatus", detail.safety_status),
-            ("Export-Vorschau", detail.export_preview_status),
-            ("Produktiv", detail.no_productive_processing_status),
-            ("Originale", detail.originals_unchanged),
-            ("Hinweis", detail.preview_only_banner),
-            ("Output", detail.empty_output_explanation),
-        ]
-        insert_at = 2
-        if detail.preview_filename:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_PREVIEW_FILENAME, detail.preview_filename)
-            )
-            insert_at += 1
-        if detail.suggested_filename:
-            detail_fields.insert(
-                insert_at, ("Vorgeschlagener Dateiname", detail.suggested_filename)
-            )
-            insert_at += 1
-        if detail.matched_configuration_name:
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_CONFIGURATION, detail.matched_configuration_name),
-            )
-            insert_at += 1
-        if detail.matched_configuration_reason:
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_MATCHING_REASON, detail.matched_configuration_reason),
-            )
-            insert_at += 1
-        if detail.condition_results:
-            cond_txt = "; ".join(
-                str(c.get("reason") or c.get("condition_type") or c)
-                for c in detail.condition_results
-            )
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_CONDITION_RESULTS, cond_txt)
-            )
-            insert_at += 1
-        if detail.missing_configuration_rule:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_MISSING_CONFIGURATION_RULE,
-                    detail.missing_configuration_rule,
-                ),
-            )
-            insert_at += 1
-        if detail.available_configurations:
-            names = ", ".join(
-                str(c.get("configuration_name") or c.get("name") or "?")
-                for c in detail.available_configurations
-            )
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_AVAILABLE_CONFIGURATIONS, names)
-            )
-            insert_at += 1
-        if detail.evaluated_configuration_candidates:
-            parts = []
-            for candidate in detail.evaluated_configuration_candidates:
-                status = "ja" if candidate.get("matched") else "nein"
-                parts.append(
-                    f"{candidate.get('configuration_name')}: {status}"
-                    f" ({candidate.get('reason') or ''})"
-                )
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_EVALUATED_CANDIDATES, "; ".join(parts)),
-            )
-            insert_at += 1
-        if detail.configuration_coverage_status or detail.user_guidance:
-            coverage_txt = detail.configuration_coverage_status or "—"
-            if detail.missing_configuration_type:
-                coverage_txt = (
-                    f"{coverage_txt} ({detail.missing_configuration_type})"
-                )
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_CONFIGURATION_COVERAGE, coverage_txt),
-            )
-            insert_at += 1
-        if detail.user_guidance:
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_USER_GUIDANCE, detail.user_guidance),
-            )
-            insert_at += 1
-        if detail.suggested_configuration_action:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_SUGGESTED_CONFIGURATION_ACTION,
-                    detail.suggested_configuration_action,
-                ),
-            )
-            insert_at += 1
-        if detail.configuration_rule_draft_available:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_CONFIGURATION_RULE_DRAFT_AVAILABLE,
-                    "true",
-                ),
-            )
-            insert_at += 1
-        if detail.proposed_configuration_name:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_PROPOSED_CONFIGURATION_NAME,
-                    detail.proposed_configuration_name,
-                ),
-            )
-            insert_at += 1
-        if detail.proposed_condition:
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_PROPOSED_CONDITION, detail.proposed_condition),
-            )
-            insert_at += 1
-        if detail.proposed_filename_pattern:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_PROPOSED_FILENAME_PATTERN,
-                    detail.proposed_filename_pattern,
-                ),
-            )
-            insert_at += 1
-        if detail.configuration_rule_draft_warning:
-            detail_fields.insert(
-                insert_at,
-                (MSG_FIELD_DRAFT_WARNING, detail.configuration_rule_draft_warning),
-            )
-            insert_at += 1
-        if detail.configuration_coverage_action_labels:
-            detail_fields.insert(
-                insert_at,
-                (
-                    "Konfigurationsaktionen",
-                    " · ".join(detail.configuration_coverage_action_labels),
-                ),
-            )
-            insert_at += 1
-        detail_fields.insert(
-            insert_at,
-            (
-                MSG_FIELD_REQUIRES_USER_CONFIRMATION,
-                "true" if detail.requires_user_confirmation else "false",
-            ),
-        )
-        insert_at += 1
-        pattern_label = (
-            detail.matched_configuration_pattern or detail.filename_pattern
-        )
-        if pattern_label:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_FILENAME_PATTERN, pattern_label)
-            )
-            insert_at += 1
-        if detail.rendered_filename:
-            detail_fields.insert(
-                insert_at, ("Gerenderter Dateiname", detail.rendered_filename)
-            )
-            insert_at += 1
-        if detail.placeholder_values:
-            placeholder_text = ", ".join(
-                f"{key}={value if value is not None else '—'}"
-                for key, value in detail.placeholder_values
-            )
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_PLACEHOLDER_VALUES, placeholder_text)
-            )
-            insert_at += 1
-        if detail.missing_placeholders:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_MISSING_PLACEHOLDERS,
-                    ", ".join(detail.missing_placeholders),
-                ),
-            )
-            insert_at += 1
-        if detail.amount_format:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_AMOUNT_FORMAT, detail.amount_format)
-            )
-            insert_at += 1
-        direction = detail.document_direction or "Unklare_Rechnungsart"
-        detail_fields.insert(insert_at, (MSG_FIELD_DOCUMENT_DIRECTION, direction))
-        insert_at += 1
-        category_label = (
-            detail.business_category_display
-            or detail.business_category
-            or "Unklare_Zuordnung"
-        )
-        detail_fields.insert(insert_at, (MSG_FIELD_BUSINESS_CATEGORY, category_label))
-        insert_at += 1
-        name_label = detail.counterparty_name or detail.supplier
-        if name_label:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_COUNTERPARTY_NAME, name_label)
-            )
-            insert_at += 1
-        amount_value = detail.selected_amount or detail.amount
-        if amount_value:
-            detail_fields.insert(insert_at, (MSG_FIELD_AMOUNT, amount_value))
-            insert_at += 1
-        if detail.selected_amount_reason:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_AMOUNT_REASON, detail.selected_amount_reason)
-            )
-            insert_at += 1
-        payment_value = detail.selected_payment_field or detail.payment_account
-        if payment_value:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_PAYMENT_FIELD, payment_value)
-            )
-            insert_at += 1
-        elif detail.selected_payment_field_reason:
-            detail_fields.insert(insert_at, (MSG_FIELD_PAYMENT_FIELD, "—"))
-            insert_at += 1
-        if detail.selected_payment_field_reason:
-            detail_fields.insert(
-                insert_at,
-                (
-                    MSG_FIELD_PAYMENT_FIELD_REASON,
-                    detail.selected_payment_field_reason,
-                ),
-            )
-            insert_at += 1
-        art_value = detail.selected_art or detail.document_type
-        if art_value:
-            detail_fields.insert(insert_at, (MSG_FIELD_DOCUMENT_ART, art_value))
-            insert_at += 1
-        if detail.selected_art_reason:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_ART_REASON, detail.selected_art_reason)
-            )
-            insert_at += 1
-        if detail.missing_fields:
-            detail_fields.insert(
-                insert_at,
-                ("fehlende Felder", ", ".join(detail.missing_fields)),
-            )
-            insert_at += 1
-        if detail.naming_reason:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_NAMING_REASON, detail.naming_reason)
-            )
-            insert_at += 1
-        if detail.naming_confidence:
-            detail_fields.insert(
-                insert_at, ("naming_confidence", detail.naming_confidence)
-            )
-            insert_at += 1
-        if detail.planned_target:
-            detail_fields.insert(
-                insert_at, (MSG_FIELD_PLANNED_TARGET, detail.planned_target)
-            )
-            insert_at += 1
-        if detail.rerun_preview_after_rule_change:
-            detail_fields.insert(
-                insert_at,
-                (MSG_PREVIEW_RECOMPUTED, "true"),
-            )
-            insert_at += 1
-            detail_fields.insert(
-                insert_at,
-                (
-                    "previous_matched_configuration",
-                    detail.previous_matched_configuration or "—",
-                ),
-            )
-            insert_at += 1
-            detail_fields.insert(
-                insert_at,
-                (
-                    "new_matched_configuration",
-                    detail.new_matched_configuration or "—",
-                ),
-            )
-            insert_at += 1
-            detail_fields.insert(
-                insert_at,
-                ("rule_applied", "true" if detail.rule_applied else "false"),
-            )
-            insert_at += 1
-            if detail.applied_configuration_name:
-                detail_fields.insert(
-                    insert_at,
-                    (
-                        "applied_configuration_name",
-                        detail.applied_configuration_name,
-                    ),
-                )
-                insert_at += 1
-            if detail.applied_configuration_condition:
-                detail_fields.insert(
-                    insert_at,
-                    (
-                        "applied_configuration_condition",
-                        detail.applied_configuration_condition,
-                    ),
-                )
-                insert_at += 1
-            detail_fields.insert(
-                insert_at,
-                (MSG_RULE_SAVED, MSG_APPLY_PREVIEW_ONLY),
-            )
-            insert_at += 1
-            detail_fields.insert(
-                insert_at,
-                (MSG_NO_FINAL_PROCESSING, MSG_ORIGINALS_UNCHANGED),
-            )
-            insert_at += 1
-        detail_fields.insert(
-            insert_at, ("Benennung noch nicht final", detail.naming_not_final)
-        )
-
-        def _refresh() -> None:
-            if state.refresh is not None:
-                state.refresh()
-
-        def _copy_case(_e: ft.ControlEvent) -> None:
-            text = build_prueffall_copy_text(
-                detail,
-                draft=state.configuration_rule_draft,
-                profile_id=state.selected_profile_id,
-            )
-            copy_text_to_state_and_clipboard(
-                state, text, kind=ACTION_COPY_CASE
-            )
-            _refresh()
-
-        def _copy_diagnosis(_e: ft.ControlEvent) -> None:
-            text = build_diagnosis_copy_text(
-                detail,
-                draft=state.configuration_rule_draft,
-                profile_id=state.selected_profile_id,
-                duplicate_report=state.track_b_duplicate_report_text or None,
-                run_state=state.processing_run_state,
-            )
-            copy_text_to_state_and_clipboard(
-                state, text, kind=ACTION_COPY_DIAGNOSIS
-            )
-            _refresh()
-
-        def _profile_id() -> str:
-            from invoice_tool.app_paths import resolve_active_profile_id
-
-            return (
-                str(state.selected_profile_id or "").strip()
-                or resolve_active_profile_id()
-            )
-
-        def _on_top_save(_e: ft.ControlEvent) -> None:
-            from invoice_tool.ui_v2.configuration_rule_apply_preview import (
-                mark_rule_saved_for_preview_apply,
-            )
-            from invoice_tool.ui_v2.configuration_rule_editor import (
-                save_configuration_rule_draft,
-            )
-
-            current = state.configuration_rule_draft
-            if current is None:
-                state.configuration_rule_draft_feedback = (
-                    "Kein Entwurf geöffnet — zuerst Konfiguration aus Hinweis erstellen."
-                )
-                state.configuration_rule_draft_feedback_error = True
-                _refresh()
-                return
-            result = save_configuration_rule_draft(
-                profile_id=_profile_id(),
-                draft=current,
-                explicit_user_confirmation=True,
-            )
-            state.configuration_rule_draft = result.draft
-            state.configuration_rule_draft_feedback = result.message
-            state.configuration_rule_draft_feedback_error = not result.ok
-            if result.ok and result.draft is not None:
-                mark_rule_saved_for_preview_apply(
-                    state,
-                    draft=result.draft,
-                    configuration_id=result.configuration_id,
-                )
-            _refresh()
-
-        def _on_top_save_rerun(_e: ft.ControlEvent) -> None:
-            from invoice_tool.ui_v2.configuration_rule_apply_preview import (
-                mark_rule_saved_for_preview_apply,
-                rerun_preview_matching_after_rule_change,
-            )
-            from invoice_tool.ui_v2.configuration_rule_editor import (
-                save_configuration_rule_draft,
-            )
-
-            current = state.configuration_rule_draft
-            if current is None:
-                state.configuration_rule_draft_feedback = (
-                    "Kein Entwurf geöffnet — zuerst Konfiguration aus Hinweis erstellen."
-                )
-                state.configuration_rule_draft_feedback_error = True
-                _refresh()
-                return
-            result = save_configuration_rule_draft(
-                profile_id=_profile_id(),
-                draft=current,
-                explicit_user_confirmation=True,
-            )
-            state.configuration_rule_draft = result.draft
-            if result.ok and result.draft is not None:
-                mark_rule_saved_for_preview_apply(
-                    state,
-                    draft=result.draft,
-                    configuration_id=result.configuration_id,
-                )
-                apply = rerun_preview_matching_after_rule_change(
-                    run_state=state.processing_run_state,
-                    profile_id=_profile_id(),
-                    applied_configuration_name=result.draft.proposed_configuration_name,
-                    applied_configuration_condition=str(
-                        result.draft.proposed_condition or ""
-                    )
-                    or None,
-                    applied_configuration_id=result.configuration_id,
-                    explicit_user_action=True,
-                )
-                if apply.ok and apply.updated_run_state is not None:
-                    state.processing_run_state = apply.updated_run_state
-                state.configuration_rule_draft_feedback = (
-                    f"{result.message} — {apply.message}"
-                )
-                state.configuration_rule_draft_feedback_error = not apply.ok
-            else:
-                state.configuration_rule_draft_feedback = result.message
-                state.configuration_rule_draft_feedback_error = True
-            _refresh()
-
-        def _on_top_paypal(_e: ft.ControlEvent) -> None:
-            from invoice_tool.ui_v2.configuration_rule_editor import (
-                save_paypal_rule_and_rerun_matching,
-            )
-
-            current = state.configuration_rule_draft
-            if current is None:
-                state.configuration_rule_draft_feedback = (
-                    "Kein PayPal-Entwurf geöffnet."
-                )
-                state.configuration_rule_draft_feedback_error = True
-                _refresh()
-                return
-            result = save_paypal_rule_and_rerun_matching(
-                profile_id=_profile_id(),
-                draft=current,
-                run_state=state.processing_run_state,
-                explicit_user_confirmation=True,
-                require_controlled_target=True,
-            )
-            state.configuration_rule_draft = result.draft
-            state.configuration_rule_draft_feedback = result.message
-            state.configuration_rule_draft_feedback_error = not result.ok
-            if result.updated_run_state is not None:
-                state.processing_run_state = result.updated_run_state
-            _refresh()
-
-        def _on_top_dry_run(_e: ft.ControlEvent) -> None:
-            from invoice_tool.ui_v2.finalization_dry_run_package import (
-                apply_finalization_dry_run_package,
-            )
-
-            apply_finalization_dry_run_package(state)
-            _refresh()
-
-        def _on_top_sandbox(_e: ft.ControlEvent) -> None:
-            from invoice_tool.ui_v2.controlled_final_write_sandbox import (
-                apply_controlled_final_write_sandbox,
-            )
-
-            apply_controlled_final_write_sandbox(state, sandbox_final_write=True)
-            _refresh()
-
-        smoke_actions = ft.Column(
-            [
-                ft.Text(SMOKE_DEV_UI_LAYOUT_MARKER, size=10),
-                ft.Text(
-                    "Track-B Dev-Smoke Aktionen (sichtbar / sticky oben)",
-                    size=12,
-                ),
-                ft.Row(
-                    [
-                        secondary_button(ACTION_COPY_CASE, on_click=_copy_case),
-                        secondary_button(
-                            ACTION_COPY_DIAGNOSIS, on_click=_copy_diagnosis
-                        ),
-                        secondary_button(
-                            ACTION_SAVE_DRAFT, on_click=_on_top_save
-                        ),
-                        secondary_button(
-                            ACTION_SAVE_AND_RERUN, on_click=_on_top_save_rerun
-                        ),
-                        secondary_button(
-                            ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
-                            on_click=_on_top_paypal,
-                        ),
-                        secondary_button(
-                            ACTION_FINALIZATION_DRY_RUN,
-                            on_click=_on_top_dry_run,
-                        ),
-                        secondary_button(
-                            ACTION_SANDBOX_FINAL_WRITE,
-                            on_click=_on_top_sandbox,
-                        ),
-                    ],
-                    spacing=8,
-                    wrap=True,
-                ),
-                ft.Text(
-                    f"Aktionen: {ACTION_SAVE_DRAFT} · {ACTION_SAVE_AND_RERUN} · "
-                    f"{ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN} · "
-                    f"{ACTION_FINALIZATION_DRY_RUN} · {ACTION_SANDBOX_FINAL_WRITE}",
-                    size=11,
-                ),
-            ],
-            spacing=6,
-            tight=True,
-        )
-        if state.track_b_smoke_copy_feedback:
-            smoke_actions.controls.append(
-                ft.Text(state.track_b_smoke_copy_feedback, size=12)
-            )
-
         items.append(
             section_block(
-                "Prüffall-Details",
-                ft.Column(
-                    [
-                        smoke_actions,
-                        stacked_list(
-                            compact_entry_row(
-                                detail.source_filename, *detail_fields
-                            )
-                        ),
-                    ],
-                    spacing=10,
-                    tight=True,
-                ),
-                subtitle="Dev-Smoke Layout — Labels/Werte getrennt, Copy verfügbar",
+                SECTION_KURZPRUEFUNG,
+                _kv_lines(detail.kurzpruefung_fields),
             )
         )
-        action_row = build_configuration_coverage_action_row(state, detail)
-        if action_row is not None:
-            items.append(action_row)
-        items.append(build_duplicate_config_remediation_panel(state))
-        if state.configuration_rule_draft is not None:
-            items.append(
-                build_configuration_rule_draft_panel(
-                    state, state.configuration_rule_draft
-                )
-            )
-        elif state.configuration_rule_manual_keep_unclear:
-            items.append(
-                section_block(
-                    ACTION_MANUAL_KEEP_UNCLEAR,
-                    ft.Text(
-                        state.configuration_rule_draft_feedback
-                        or "Keine Regel gespeichert — Unklar bleibt aktiv.",
-                        size=12,
-                    ),
-                    subtitle="Manuelle Prüfung",
-                )
-            )
-        apply_panel = build_configuration_rule_apply_panel(state)
-        if apply_panel is not None:
-            items.append(apply_panel)
-        items.append(_decision_status_panel(detail))
-        items.append(_finalization_preview_batch_panel(vm))
-        items.append(_finalization_dry_run_panel(state, vm))
-        items.append(_sandbox_final_write_panel(state, vm))
+        vorschlag_body: list[ft.Control] = [_kv_lines(detail.vorschlag_fields)]
+        if detail.er_er_note:
+            vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
+        elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
+            vorschlag_body.append(ft.Text(MSG_ER_ER_NOTE, size=11))
         decision_bag = get_review_decision_bag(state)
         draft_value = decision_bag.edit_filename_draft_by_key.get(
             detail.item_key,
@@ -2313,57 +2255,76 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 state, detail.item_key, str(getattr(e.control, "value", "") or "")
             )
 
-        items.append(
-            section_block(
-                "Vorschlag bearbeiten (Dateiname)",
-                ft.TextField(
-                    value=draft_value,
-                    label="Vorschau-Dateiname (editierbar)",
-                    on_change=_on_filename_change,
-                    dense=True,
-                ),
-                subtitle="Nur State — keine Dateischreibung",
+        vorschlag_body.append(
+            ft.TextField(
+                value=draft_value,
+                label="Vorschau-Dateiname (editierbar)",
+                on_change=_on_filename_change,
+                dense=True,
             )
         )
         items.append(
             section_block(
-                "Review-Entscheidungen",
-                _decision_action_row(state, enabled=True),
-                subtitle=MSG_NOT_FINAL_YET,
+                SECTION_VORSCHLAG,
+                ft.Column(vorschlag_body, spacing=8, tight=True),
+            )
+        )
+        why_lines = [
+            ft.Text(f"· {line}", size=12) for line in detail.why_review_plain
+        ]
+        items.append(
+            section_block(
+                SECTION_WARUM,
+                ft.Column(why_lines or [ft.Text("· Prüfung erforderlich", size=12)], spacing=4, tight=True),
+            )
+        )
+        items.append(
+            section_block(
+                SECTION_NAECHSTE,
+                _next_action_row(state, detail),
+            )
+        )
+        items.append(_finalization_declutter_panel(state, vm, detail))
+        items.append(
+            section_block(
+                "Kopieren",
+                _copy_actions_row(state, detail),
+                subtitle=MSG_SAFETY_LINE_NO_FINAL,
+            )
+        )
+        # Keep rule draft / apply panels available but secondary.
+        action_row = build_configuration_coverage_action_row(state, detail)
+        if action_row is not None:
+            items.append(action_row)
+        items.append(build_duplicate_config_remediation_panel(state))
+        if state.configuration_rule_draft is not None:
+            items.append(
+                build_configuration_rule_draft_panel(
+                    state, state.configuration_rule_draft
+                )
+            )
+        apply_panel = build_configuration_rule_apply_panel(state)
+        if apply_panel is not None:
+            items.append(apply_panel)
+        items.append(
+            collapsible_details(
+                *_technical_detail_lines(detail),
+                *(detail.finalization_summary_lines or ()),
+                title=SECTION_TECHNISCHE,
+                initially_expanded=False,
             )
         )
 
-    detail_bits = [
-        MSG_REVIEW_NO_FILE_MUTATION,
-        MSG_NO_FINAL_APPROVAL,
-        MSG_TARGET_PATHS_VORSCHAU_ONLY,
-        MSG_EMPTY_OUTPUT_EXPLAIN,
-        *vm.separation_notes,
-        *(vm.error_section_lines or ()),
-        *(vm.planned_preview_lines or ()),
-    ]
-    if vm.export_preview_summary:
-        detail_bits.append(vm.export_preview_summary)
-    if vm.safety_line:
-        detail_bits.append(vm.safety_line)
     items.append(
         collapsible_details(
-            *detail_bits,
-            title="Details anzeigen",
-        )
-    )
-    items.append(
-        section_block(
-            "Preview-Aktionen",
-            _preview_action_row(state, enabled=vm.preview_actions_enabled),
-            subtitle="Nur UI-Vorschau — keine finalen Dateien",
-        )
-    )
-    items.append(
-        section_block(
-            "Prüfaktionen",
-            _legacy_action_row(queue),
-            subtitle="Noch nicht verbunden",
+            MSG_REVIEW_NO_FILE_MUTATION,
+            MSG_NO_FINAL_APPROVAL,
+            MSG_TARGET_PATHS_VORSCHAU_ONLY,
+            MSG_EMPTY_OUTPUT_EXPLAIN,
+            MSG_SAFETY_LINE_NO_FINAL,
+            *vm.separation_notes,
+            title="Weitere Hinweise",
+            initially_expanded=False,
         )
     )
     return page_scaffold(*items)
