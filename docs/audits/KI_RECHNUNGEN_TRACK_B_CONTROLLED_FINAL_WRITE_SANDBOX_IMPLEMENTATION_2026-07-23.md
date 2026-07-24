@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CONTROLLED_FINAL_WRITE_SANDBOX_IMPLEMENTATION_01`
 2. **Masterplan position:** Prompt 33/34
 3. **HEAD before:** `e995058a9b6ede1d09ed017168db1ec02dd83492`  
-   **HEAD after:** (set at commit time)
+   **HEAD after:** `cd25f89bc218dce66152fc6e1db603401787da7f`
 4. **Baseline:** Prompt-32 Gate Design ready (`TRACK_B_CONTROLLED_FINAL_WRITE_GATE_DESIGN_READY`); design commit `272b8640a763006c2876f71f2eb6c3e4a7316b21`
 5. **Files changed:**
    - `invoice_tool/ui_v2/final_write_gate.py` (new)
