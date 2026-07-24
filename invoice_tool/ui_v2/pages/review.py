@@ -167,6 +167,15 @@ from invoice_tool.ui_v2.review_decision import (
     get_review_decision_bag,
     set_edit_filename_draft,
 )
+from invoice_tool.ui_v2.controlled_final_write_sandbox import (
+    MSG_CTA_CONTROLLED_ONLY,
+    MSG_CTA_ORIGINALS_UNCHANGED,
+    MSG_CTA_SANDBOX_WRITE,
+    MSG_TITLE as MSG_SANDBOX_FINAL_WRITE_TITLE,
+    apply_controlled_final_write_sandbox,
+    get_controlled_final_write_sandbox_bag,
+    sandbox_final_write_summary_lines,
+)
 from invoice_tool.ui_v2.finalization_dry_run_package import (
     MSG_CTA_CHECK_ONLY,
     MSG_CTA_CREATE_AUDIT,
@@ -470,6 +479,19 @@ class ReviewPageVM:
     finalization_dry_run_feedback: str = ""
     finalization_dry_run_feedback_error: bool = False
     finalization_dry_run_summary_lines: tuple[str, ...] = ()
+    # Prompt 33/34 — Controlled sandbox final write (not production).
+    sandbox_final_write_title: str = MSG_SANDBOX_FINAL_WRITE_TITLE
+    sandbox_final_write_cta: str = MSG_CTA_SANDBOX_WRITE
+    sandbox_final_write_controlled_only: str = MSG_CTA_CONTROLLED_ONLY
+    sandbox_final_write_originals_unchanged: str = MSG_CTA_ORIGINALS_UNCHANGED
+    sandbox_final_write_result_path: str = ""
+    sandbox_final_write_feedback: str = ""
+    sandbox_final_write_feedback_error: bool = False
+    sandbox_final_write_summary_lines: tuple[str, ...] = ()
+    sandbox_final_write_written_count: int = 0
+    sandbox_final_write_skipped_count: int = 0
+    sandbox_final_write_blocked_count: int = 0
+    sandbox_final_write_failure_count: int = 0
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -1082,6 +1104,9 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     batch_lines = batch_summary_lines(finalization_batch)
     dry_run_bag = get_finalization_dry_run_package_bag(state)
     dry_run_lines = dry_run_package_summary_lines(dry_run_bag.last_package)
+    sandbox_bag = get_controlled_final_write_sandbox_bag(state)
+    sandbox_lines = sandbox_final_write_summary_lines(sandbox_bag.last_result)
+    sandbox_result = sandbox_bag.last_result
 
     return ReviewPageVM(
         title=queue.title,
@@ -1150,6 +1175,33 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
             or getattr(state, "workspace_finalization_dry_run_feedback_error", False)
         ),
         finalization_dry_run_summary_lines=dry_run_lines,
+        sandbox_final_write_title=MSG_SANDBOX_FINAL_WRITE_TITLE,
+        sandbox_final_write_cta=MSG_CTA_SANDBOX_WRITE,
+        sandbox_final_write_controlled_only=MSG_CTA_CONTROLLED_ONLY,
+        sandbox_final_write_originals_unchanged=MSG_CTA_ORIGINALS_UNCHANGED,
+        sandbox_final_write_result_path=sandbox_bag.last_result_root
+        or getattr(state, "workspace_last_sandbox_final_write_folder", "")
+        or "",
+        sandbox_final_write_feedback=sandbox_bag.last_feedback
+        or getattr(state, "workspace_sandbox_final_write_feedback", "")
+        or "",
+        sandbox_final_write_feedback_error=bool(
+            sandbox_bag.last_feedback_error
+            or getattr(state, "workspace_sandbox_final_write_feedback_error", False)
+        ),
+        sandbox_final_write_summary_lines=sandbox_lines,
+        sandbox_final_write_written_count=(
+            sandbox_result.final_files_written_count if sandbox_result else 0
+        ),
+        sandbox_final_write_skipped_count=(
+            len(sandbox_result.skipped_items) if sandbox_result else 0
+        ),
+        sandbox_final_write_blocked_count=(
+            len(sandbox_result.blocked_items) if sandbox_result else 0
+        ),
+        sandbox_final_write_failure_count=(
+            len(sandbox_result.failures) if sandbox_result else 0
+        ),
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1450,6 +1502,61 @@ def _finalization_dry_run_panel(state: UiV2State, vm: ReviewPageVM) -> ft.Contro
         MSG_DRY_RUN_TITLE,
         ft.Column(lines, spacing=6, tight=True),
         subtitle=MSG_CTA_CHECK_ONLY,
+    )
+
+
+def _sandbox_final_write_panel(state: UiV2State, vm: ReviewPageVM) -> ft.Control:
+    """Prompt-33 sandbox final-write CTA — controlled copies only, not production."""
+
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _on_sandbox_write(_e: ft.ControlEvent) -> None:
+        apply_controlled_final_write_sandbox(state, sandbox_final_write=True)
+        _refresh()
+
+    lines: list[ft.Control] = [
+        ft.Text(MSG_CTA_SANDBOX_WRITE, size=12),
+        ft.Text(MSG_CTA_CONTROLLED_ONLY, size=12),
+        ft.Text(MSG_CTA_ORIGINALS_UNCHANGED, size=12),
+        ft.Text(
+            "Sandbox-Test — kein Produktions-Final-Write · "
+            "final_write_allowed_for_production=false",
+            size=12,
+        ),
+        ft.Text(
+            f"geschrieben: {vm.sandbox_final_write_written_count} · "
+            f"übersprungen: {vm.sandbox_final_write_skipped_count} · "
+            f"blockiert: {vm.sandbox_final_write_blocked_count} · "
+            f"Fehler: {vm.sandbox_final_write_failure_count}",
+            size=12,
+        ),
+        secondary_button(
+            MSG_CTA_SANDBOX_WRITE,
+            on_click=_on_sandbox_write,
+            disabled=False,
+        ),
+    ]
+    if vm.sandbox_final_write_result_path:
+        lines.append(
+            ft.Text(f"Sandbox-Pfad: {vm.sandbox_final_write_result_path}", size=12)
+        )
+    if vm.sandbox_final_write_feedback:
+        lines.append(ft.Text(vm.sandbox_final_write_feedback, size=12))
+    for line in vm.sandbox_final_write_summary_lines:
+        if line in {
+            MSG_SANDBOX_FINAL_WRITE_TITLE,
+            MSG_CTA_SANDBOX_WRITE,
+            MSG_CTA_CONTROLLED_ONLY,
+            MSG_CTA_ORIGINALS_UNCHANGED,
+        }:
+            continue
+        lines.append(ft.Text(line, size=12))
+    return section_block(
+        MSG_SANDBOX_FINAL_WRITE_TITLE,
+        ft.Column(lines, spacing=6, tight=True),
+        subtitle=MSG_CTA_CONTROLLED_ONLY,
     )
 
 
@@ -1905,6 +2012,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
         items.append(_decision_status_panel(detail))
         items.append(_finalization_preview_batch_panel(vm))
         items.append(_finalization_dry_run_panel(state, vm))
+        items.append(_sandbox_final_write_panel(state, vm))
         decision_bag = get_review_decision_bag(state)
         draft_value = decision_bag.edit_filename_draft_by_key.get(
             detail.item_key,

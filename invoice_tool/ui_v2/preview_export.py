@@ -1722,10 +1722,12 @@ def _manifest_payload(
     state_freshness_result: str = "pass",
     finalization_preview_batch: Mapping[str, Any] | None = None,
     finalization_dry_run_package: Mapping[str, Any] | None = None,
+    sandbox_final_write: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     copied = [item for item in items if not item.excluded]
     batch_payload = dict(finalization_preview_batch or {})
     dry_run_payload = dict(finalization_dry_run_package or {})
+    sandbox_payload = dict(sandbox_final_write or {})
     return {
         "kind": PREVIEW_EXPORT_KIND,
         "schema_version": PREVIEW_EXPORT_SCHEMA_VERSION,
@@ -1783,6 +1785,18 @@ def _manifest_payload(
         "finalization_dry_run_package": dry_run_payload.get(
             "finalization_dry_run_package"
         ),
+        "sandbox_final_write_available": bool(
+            sandbox_payload.get("sandbox_final_write_available")
+        ),
+        "sandbox_final_write_result_id": sandbox_payload.get(
+            "sandbox_final_write_result_id"
+        ),
+        "sandbox_final_write_root": sandbox_payload.get("sandbox_final_write_root"),
+        "final_write_allowed_for_production": False,
+        "originals_moved": False,
+        "originals_renamed": False,
+        "originals_archived": False,
+        "originals_deleted": False,
         "items": [
             {
                 "source_filename": item.source_filename,
@@ -1999,6 +2013,7 @@ def write_preview_export_package(
     decision_fields_by_key: Mapping[str, Mapping[str, Any]] | None = None,
     finalization_preview_batch: Mapping[str, Any] | None = None,
     finalization_dry_run_package: Mapping[str, Any] | None = None,
+    sandbox_final_write: Mapping[str, Any] | None = None,
 ) -> PreviewExportResult:
     """Create a dedicated preview-export-* package under controlled output."""
 
@@ -2412,6 +2427,7 @@ def write_preview_export_package(
             state_freshness_result="pass",
             finalization_preview_batch=finalization_preview_batch,
             finalization_dry_run_package=finalization_dry_run_package,
+            sandbox_final_write=sandbox_final_write,
         )
         readme_path = export_folder / "README_PREVIEW_EXPORT.md"
         manifest_json = export_folder / "manifest.json"
@@ -2488,6 +2504,10 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
     input_root = (getattr(state, "workspace_input_folder_override", None) or "").strip()
     output_root = (getattr(state, "workspace_output_folder_override", None) or "").strip()
     bag = get_review_preview_ui(state)
+    from invoice_tool.ui_v2.controlled_final_write_sandbox import (
+        get_controlled_final_write_sandbox_bag,
+        sandbox_final_write_report_fields,
+    )
     from invoice_tool.ui_v2.finalization_dry_run_package import (
         dry_run_package_report_fields,
         get_finalization_dry_run_package_bag,
@@ -2511,6 +2531,8 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
     batch_manifest_fields = batch_report_fields(finalization_batch)
     dry_run_bag = get_finalization_dry_run_package_bag(state)
     dry_run_manifest_fields = dry_run_package_report_fields(dry_run_bag.last_package)
+    sandbox_bag = get_controlled_final_write_sandbox_bag(state)
+    sandbox_manifest_fields = sandbox_final_write_report_fields(sandbox_bag.last_result)
     decision_fields_by_key = {
         key: {
             **decision_report_fields_for_item(state, key),
@@ -2564,6 +2586,7 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
         decision_fields_by_key=decision_fields_by_key,
         finalization_preview_batch=batch_manifest_fields,
         finalization_dry_run_package=dry_run_manifest_fields,
+        sandbox_final_write=sandbox_manifest_fields,
     )
 
     if result.ok:
