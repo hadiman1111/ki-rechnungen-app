@@ -166,7 +166,6 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_DIAGNOSIS,
     ACTION_COPY_ORACLE,
     ACTION_OPEN_WORKSPACE,
-    MSG_ER_ER_NOTE,
     MSG_FILENAME_PREVIEW_ONLY,
     MSG_ORACLE_AVAILABLE,
     MSG_ORACLE_NO_AUTO_RUN,
@@ -189,10 +188,23 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     derive_primary_list_action,
     derive_status_badges,
     derive_why_review_plain_german,
-    er_er_note_for_filename,
+    filename_has_er_er,
     next_action_labels_for_detail,
     paypal_action_relevant,
 )
+
+# Legacy preview artifacts only — not the current Track-B filename pattern.
+MSG_LEGACY_ER_ER_NOTE = "Altes technisches Muster aus früherem Preview-Export."
+# Compatibility alias for declutter tests / imports that still look for MSG_ER_ER_NOTE.
+MSG_ER_ER_NOTE = MSG_LEGACY_ER_ER_NOTE
+
+
+def er_er_note_for_filename(name: str | None) -> str | None:
+    """Return a legacy-artifact note when ``_er_er_`` appears; else None."""
+
+    if filename_has_er_er(name):
+        return MSG_LEGACY_ER_ER_NOTE
+    return None
 from invoice_tool.ui_v2.review_decision import (
     ACTION_ACCEPT_SUGGESTION,
     ACTION_DEFER,
@@ -2240,7 +2252,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
         if detail.er_er_note:
             vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
         elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
-            vorschlag_body.append(ft.Text(MSG_ER_ER_NOTE, size=11))
+            vorschlag_body.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
         decision_bag = get_review_decision_bag(state)
         draft_value = decision_bag.edit_filename_draft_by_key.get(
             detail.item_key,

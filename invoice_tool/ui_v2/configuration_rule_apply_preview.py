@@ -191,10 +191,12 @@ def _placeholder_map(
         (planned.selected_payment_field or planned.payment_account or "").strip()
         or None
     )
+    from invoice_tool.ui_v2.configuration_rule_draft import DEFAULT_PATTERN
+
     return build_configuration_placeholder_values(
         pattern=planned.filename_pattern
         or planned.matched_configuration_pattern
-        or "{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf",
+        or DEFAULT_PATTERN,
         invoice_date=planned.invoice_date,
         art=planned.selected_art or planned.document_type,
         supplier=planned.supplier or planned.counterparty_name,

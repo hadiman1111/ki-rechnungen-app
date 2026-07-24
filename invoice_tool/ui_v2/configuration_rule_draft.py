@@ -39,7 +39,11 @@ ACTION_MANUAL_KEEP_UNCLEAR = "Manuell prüfen / Unklar lassen"
 ACTION_SAVE_DRAFT = "Konfiguration speichern"
 ACTION_CANCEL_DRAFT = "Abbrechen"
 
-DEFAULT_PATTERN = "{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf"
+# Track-B/UI-v2 canonical filename pattern (no fixed ``er`` literal).
+DEFAULT_PATTERN = "{invoice_date}_{art}_{supplier}_{amount}_{payment_field}.pdf"
+LEGACY_DOUBLE_ER_PATTERN = (
+    "{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf"
+)
 
 KNOWN_FILENAME_PATTERN_SLOTS = frozenset(
     {
@@ -117,6 +121,15 @@ def _first_non_empty(*values: str | None) -> str | None:
     return None
 
 
+def normalize_track_b_filename_pattern(pattern: str | None) -> str:
+    """Map legacy ``_er_{art}_`` Track-B patterns to the simplified canonical form."""
+
+    text = str(pattern or "").strip()
+    if not text or text == LEGACY_DOUBLE_ER_PATTERN:
+        return DEFAULT_PATTERN
+    return text
+
+
 def resolve_default_filename_pattern(
     *,
     unmatched_pattern: str | None = None,
@@ -126,14 +139,14 @@ def resolve_default_filename_pattern(
 
     unmatched = str(unmatched_pattern or "").strip()
     if unmatched:
-        return unmatched
+        return normalize_track_b_filename_pattern(unmatched)
     for item in available_configurations or ():
         if not isinstance(item, Mapping):
             continue
         if bool(item.get("is_unmatched")):
             pattern = str(item.get("filename_pattern") or "").strip()
             if pattern:
-                return pattern
+                return normalize_track_b_filename_pattern(pattern)
     for item in available_configurations or ():
         if not isinstance(item, Mapping):
             continue
@@ -141,7 +154,7 @@ def resolve_default_filename_pattern(
             continue
         pattern = str(item.get("filename_pattern") or "").strip()
         if pattern:
-            return pattern
+            return normalize_track_b_filename_pattern(pattern)
     return DEFAULT_PATTERN
 
 
@@ -747,7 +760,9 @@ def load_unmatched_filename_pattern(*, profile_id: str | None = None) -> str | N
     _active, unmatched = load_active_configuration_candidates(profile_id=profile_id)
     if unmatched is None:
         return None
-    return unmatched.filename_pattern
+    if unmatched.filename_pattern is None:
+        return None
+    return normalize_track_b_filename_pattern(unmatched.filename_pattern)
 
 
 __all__ = (
@@ -759,6 +774,7 @@ __all__ = (
     "ConfigurationRuleDraft",
     "DEFAULT_PATTERN",
     "KNOWN_FILENAME_PATTERN_SLOTS",
+    "LEGACY_DOUBLE_ER_PATTERN",
     "MSG_FIELD_CONFIGURATION_RULE_DRAFT_AVAILABLE",
     "MSG_FIELD_DRAFT_WARNING",
     "MSG_FIELD_PROPOSED_CONDITION",
@@ -774,6 +790,7 @@ __all__ = (
     "draft_from_coverage_guidance",
     "find_duplicate_condition_configs",
     "load_unmatched_filename_pattern",
+    "normalize_track_b_filename_pattern",
     "preview_future_matches",
     "resolve_default_filename_pattern",
     "unknown_pattern_slots_in_pattern",

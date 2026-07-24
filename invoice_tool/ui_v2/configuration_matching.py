@@ -161,12 +161,26 @@ class ConfigurationMatchResult:
         }
 
 
+def _normalize_track_b_pattern(pattern: str | None) -> str | None:
+    """Lazy import avoids circular import with configuration_rule_draft."""
+
+    if not pattern:
+        return pattern
+    from invoice_tool.ui_v2.configuration_rule_draft import (
+        normalize_track_b_filename_pattern,
+    )
+
+    return normalize_track_b_filename_pattern(pattern)
+
+
 def _candidate_from_configuration(config: Configuration) -> ConfigurationCandidate:
     pattern = None
     try:
         pattern = pattern_to_template(config.filename_pattern)
     except Exception:  # noqa: BLE001 — matching must fail closed to unmatched
         pattern = None
+    if pattern:
+        pattern = _normalize_track_b_pattern(pattern)
     matching = config.matching
     values: tuple[str, ...] = ()
     feature_key = None
@@ -224,6 +238,8 @@ def load_active_configuration_candidates(
             unmatched_pattern = pattern_to_template(unmatched_cfg.filename_pattern)
         except Exception:  # noqa: BLE001
             unmatched_pattern = None
+        if unmatched_pattern:
+            unmatched_pattern = _normalize_track_b_pattern(unmatched_pattern)
         unmatched = ConfigurationCandidate(
             configuration_id=UNMATCHED_CONFIGURATION_ID,
             name=str(unmatched_cfg.name or "Unklar").strip() or "Unklar",

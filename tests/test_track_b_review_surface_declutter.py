@@ -10,7 +10,11 @@ import ast
 from pathlib import Path
 
 from invoice_tool.ui_v2.dev_defaults import MSG_EMPTY_REVIEW_HELP
-from invoice_tool.ui_v2.pages.review import build_review_page_vm
+from invoice_tool.ui_v2.pages.review import (
+    MSG_ER_ER_NOTE,
+    MSG_LEGACY_ER_ER_NOTE,
+    build_review_page_vm,
+)
 from invoice_tool.ui_v2.processing_state import (
     ProcessingPlannedDestination,
     ProcessingReviewItem,
@@ -26,7 +30,6 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     BADGE_NOT_AMEX,
     BADGE_PAYPAL,
     BADGE_STORNO,
-    MSG_ER_ER_NOTE,
     MSG_SAFETY_LINE_NO_FINAL,
     MSG_WHY_MISSING_PAYMENT,
     MSG_WHY_NOT_AMEX,
@@ -98,7 +101,7 @@ def _planned(**overrides: object) -> ProcessingPlannedDestination:
         destination_label="PayPal",
         preview_only=True,
         applied=False,
-        suggested_filename="2026-05-11_er_er_LUMITOP_476,00_paypal.pdf",
+        suggested_filename="2026-05-11_er_LUMITOP_476,00_paypal.pdf",
         supplier="LUMITOP",
         counterparty_name="LUMITOP",
         invoice_date="2026-05-11",
@@ -159,7 +162,7 @@ def _boettcher_card_state() -> UiV2State:
         document_id="doc-card",
         planned=_planned(
             document_name="320262919974.pdf",
-            suggested_filename="2026-05-23_er_er_Böttcher_AG_84,39_card.pdf",
+            suggested_filename="2026-05-23_er_Böttcher_AG_84,39_card.pdf",
             supplier="Böttcher AG",
             counterparty_name="Böttcher AG",
             invoice_date="2026-05-23",
@@ -186,7 +189,7 @@ def _missing_payment_state() -> UiV2State:
         planned=_planned(
             document_name="Rechnung-2026156019-102201.pdf",
             suggested_filename=(
-                "2026-05-11_er_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"
+                "2026-05-11_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"
             ),
             supplier="Luxvenum LED GmbH",
             counterparty_name="Luxvenum LED GmbH",
@@ -211,7 +214,7 @@ def _storno_state() -> UiV2State:
         planned=_planned(
             document_name="420260091336.pdf",
             suggested_filename=(
-                "2026-06-18_er_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"
+                "2026-06-18_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"
             ),
             supplier="Böttcher AG",
             counterparty_name="Böttcher AG",
@@ -393,11 +396,35 @@ def test_16_empty_state_explains_preview_or_oracle() -> None:
 
 
 def test_17_er_er_filename_note_when_applicable() -> None:
-    vm = build_review_page_vm(_paypal_state())
-    assert vm.selected_detail is not None
-    assert vm.selected_detail.er_er_note == MSG_ER_ER_NOTE
-    assert "_er_er_" in (vm.selected_detail.suggested_filename or "")
-    assert "MSG_ER_ER_NOTE" in REVIEW.read_text(encoding="utf-8")
+    """``_er_er_`` is legacy-only; current names must not contain it."""
+
+    current = build_review_page_vm(_paypal_state())
+    assert current.selected_detail is not None
+    assert current.selected_detail.er_er_note is None
+    assert "_er_er_" not in (current.selected_detail.suggested_filename or "")
+
+    legacy = build_review_page_vm(
+        _state_for(
+            document_name="legacy-er-er.pdf",
+            document_id="doc-legacy-er-er",
+            planned=_planned(
+                document_name="legacy-er-er.pdf",
+                suggested_filename=(
+                    "2026-05-11_er_er_LUMITOP_476,00_paypal.pdf"
+                ),
+            ),
+        )
+    )
+    assert legacy.selected_detail is not None
+    assert legacy.selected_detail.er_er_note == MSG_LEGACY_ER_ER_NOTE
+    assert legacy.selected_detail.er_er_note == MSG_ER_ER_NOTE
+    assert "_er_er_" in (legacy.selected_detail.suggested_filename or "")
+    assert "Altes technisches Muster aus früherem Preview-Export." in (
+        legacy.selected_detail.er_er_note or ""
+    )
+    src = REVIEW.read_text(encoding="utf-8")
+    assert "MSG_LEGACY_ER_ER_NOTE" in src
+    assert "MSG_ER_ER_NOTE" in src
 
 
 def test_18_no_auto_run() -> None:

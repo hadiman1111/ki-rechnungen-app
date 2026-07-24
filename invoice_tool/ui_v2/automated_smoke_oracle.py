@@ -27,6 +27,7 @@ from invoice_tool.configuration_model import (
     UnmatchedConfiguration,
     new_configuration_id,
     pattern_from_template,
+    pattern_to_template,
 )
 from invoice_tool.profile_store import load_profile_bundle, save_profile_bundle
 from invoice_tool.scan_models import DEFAULT_SCAN_MODEL_ID
@@ -34,8 +35,11 @@ from invoice_tool.ui_v2.configuration_rule_apply_preview import (
     rerun_preview_matching_after_rule_change,
 )
 from invoice_tool.ui_v2.configuration_rule_draft import (
+    DEFAULT_PATTERN,
+    LEGACY_DOUBLE_ER_PATTERN,
     ConfigurationRuleDraft,
     find_duplicate_condition_configs,
+    normalize_track_b_filename_pattern,
 )
 from invoice_tool.ui_v2.configuration_rule_editor import (
     save_paypal_rule_and_rerun_matching,
@@ -81,9 +85,6 @@ STATUS_PARTIAL_FINAL = "TRACK_B_AUTOMATED_SMOKE_ORACLE_PARTIAL_FINALIZATION_BLOC
 STATUS_BLOCKED = "TRACK_B_AUTOMATED_SMOKE_ORACLE_BLOCKED"
 STATUS_FAIL_UNSAFE = "TRACK_B_AUTOMATED_SMOKE_ORACLE_FAIL_UNSAFE"
 
-DEFAULT_PATTERN = (
-    "{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf"
-)
 AUTOMATED_SMOKE_REVIEW_MARKER = "automated_smoke_review_decision=true"
 
 FORBIDDEN_REAL_FOLDER_MARKERS = (
@@ -148,7 +149,7 @@ EXPECTED_DOCUMENTS: tuple[ExpectedDocument, ...] = (
         amount="476,00",
         payment_field="paypal",
         art="er",
-        expected_filename="2026-05-11_er_er_LUMITOP_476,00_paypal.pdf",
+        expected_filename="2026-05-11_er_LUMITOP_476,00_paypal.pdf",
         expected_config="PayPal",
     ),
     ExpectedDocument(
@@ -158,7 +159,7 @@ EXPECTED_DOCUMENTS: tuple[ExpectedDocument, ...] = (
         amount="105,75",
         payment_field="paypal",
         art="er",
-        expected_filename="2026-05-15_er_er_1A-Bootshop.de_105,75_paypal.pdf",
+        expected_filename="2026-05-15_er_1A-Bootshop.de_105,75_paypal.pdf",
         expected_config="PayPal",
     ),
     ExpectedDocument(
@@ -168,7 +169,7 @@ EXPECTED_DOCUMENTS: tuple[ExpectedDocument, ...] = (
         amount="84,39",
         payment_field="card",
         art="er",
-        expected_filename="2026-05-23_er_er_Böttcher_AG_84,39_card.pdf",
+        expected_filename="2026-05-23_er_Böttcher_AG_84,39_card.pdf",
         expected_config="not_amex",
     ),
     ExpectedDocument(
@@ -179,7 +180,7 @@ EXPECTED_DOCUMENTS: tuple[ExpectedDocument, ...] = (
         payment_field=None,
         art="er",
         expected_filename=(
-            "2026-05-11_er_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"
+            "2026-05-11_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"
         ),
         expected_config="Unklar",
         require_missing_payment=True,
@@ -192,7 +193,7 @@ EXPECTED_DOCUMENTS: tuple[ExpectedDocument, ...] = (
         payment_field=None,
         art="storno",
         expected_filename=(
-            "2026-06-18_er_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"
+            "2026-06-18_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"
         ),
         expected_config="Unklar",
         require_missing_payment=True,
@@ -767,6 +768,19 @@ def _cfg(
     )
 
 
+def _migrate_filename_pattern(pattern: Any) -> Any:
+    """Force legacy ``_er_{art}_`` patterns onto the simplified Track-B template."""
+
+    try:
+        text = pattern_to_template(pattern) if pattern is not None else ""
+    except Exception:  # noqa: BLE001
+        text = ""
+    normalized = normalize_track_b_filename_pattern(text or None)
+    if normalized == DEFAULT_PATTERN or text == LEGACY_DOUBLE_ER_PATTERN or not text:
+        return pattern_from_template(DEFAULT_PATTERN)
+    return pattern if pattern is not None else pattern_from_template(DEFAULT_PATTERN)
+
+
 def _oracle_profile_exists(profile_id: str) -> bool:
     """True when canonical profile storage already has this oracle profile."""
 
@@ -808,7 +822,12 @@ def ensure_oracle_profile(
     if _oracle_profile_exists(profile_id):
         existing = load_profile_bundle(profile_id)
         for cfg in existing.configurations or []:
-            configs.append(cfg)
+            configs.append(
+                replace(
+                    cfg,
+                    filename_pattern=_migrate_filename_pattern(cfg.filename_pattern),
+                )
+            )
         if not any(_norm_cf(c.name) == "american express" for c in configs):
             configs.append(
                 _cfg(
@@ -828,9 +847,8 @@ def ensure_oracle_profile(
         if existing_path and path_under(existing_path, output_root):
             unmatched = UnmatchedConfiguration(
                 name=_norm(getattr(existing_unmatched, "name", None)) or "Unklar",
-                filename_pattern=(
+                filename_pattern=_migrate_filename_pattern(
                     getattr(existing_unmatched, "filename_pattern", None)
-                    or pattern_from_template(DEFAULT_PATTERN)
                 ),
                 destination={
                     "type": "local_folder",
@@ -1624,6 +1642,7 @@ def oracle_modifies_processing_core() -> bool:
 
 __all__ = (
     "AUTOMATED_SMOKE_REVIEW_MARKER",
+    "DEFAULT_PATTERN",
     "EXPECTED_DOCUMENTS",
     "EXPECTED_PDFS",
     "ORACLE_PROFILE_ID",

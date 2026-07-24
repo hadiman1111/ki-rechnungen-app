@@ -111,16 +111,16 @@ def _synthetic_payload() -> dict:
     items = []
     specs = [
         ("FA011466.pdf", "LUMITOP", "2026-05-11", "476,00", "paypal", "er",
-         "2026-05-11_er_er_LUMITOP_476,00_paypal.pdf"),
+         "2026-05-11_er_LUMITOP_476,00_paypal.pdf"),
         ("Rechnung RE-202605-14594.pdf", "1A-Bootshop.de", "2026-05-15", "105,75",
-         "paypal", "er", "2026-05-15_er_er_1A-Bootshop.de_105,75_paypal.pdf"),
+         "paypal", "er", "2026-05-15_er_1A-Bootshop.de_105,75_paypal.pdf"),
         ("320262919974.pdf", "Böttcher AG", "2026-05-23", "84,39", "card", "er",
-         "2026-05-23_er_er_Böttcher_AG_84,39_card.pdf"),
+         "2026-05-23_er_Böttcher_AG_84,39_card.pdf"),
         ("Rechnung-2026156019-102201.pdf", "Luxvenum LED GmbH", "2026-05-11",
          "154,95", None, "er",
-         "2026-05-11_er_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"),
+         "2026-05-11_er_Luxvenum_LED_GmbH_154,95_FEHLT_payment_field.pdf"),
         ("420260091336.pdf", "Böttcher AG", "2026-06-18", "68,94", None, "storno",
-         "2026-06-18_er_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"),
+         "2026-06-18_storno_Böttcher_AG_68,94_FEHLT_payment_field.pdf"),
     ]
     for source, supplier, date, amount, payment, art, filename in specs:
         items.append(
@@ -153,7 +153,7 @@ def _synthetic_payload() -> dict:
                     "payment_field" if payment is None else "paypal"
                 ),
                 "filename_pattern": (
-                    "{invoice_date}_er_{art}_{supplier}_{amount}_{payment_field}.pdf"
+                    "{invoice_date}_{art}_{supplier}_{amount}_{payment_field}.pdf"
                 ),
                 "planned_target": str(
                     CONTROLLED_OUTPUT / "geplant" / "unklar" / filename
