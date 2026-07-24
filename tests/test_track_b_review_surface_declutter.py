@@ -251,8 +251,10 @@ def test_01_review_list_exposes_compact_document_cards() -> None:
     assert row.primary_action
     assert MSG_SAFETY_LINE_NO_FINAL in row.safety_line
     src = REVIEW.read_text(encoding="utf-8")
-    assert "Kompakte Review-Karten" in src
-    assert "Lieferant / Name" in src
+    assert "Zur Prüfung" in src
+    assert "render_review_summary_card" in src
+    assert "LABEL_REVIEW_DOC_NAME" in src
+    assert "Lieferant / Name" in COPY_MOD.read_text(encoding="utf-8")
 
 
 def test_02_detail_exposes_kurzpruefung_section() -> None:

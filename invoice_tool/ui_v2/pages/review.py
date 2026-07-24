@@ -30,6 +30,10 @@ from invoice_tool.ui_v2.components import (
 )
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
+    COLOR_BORDER_STRONG,
+    COLOR_PRIMARY,
+    COLOR_PRIMARY_SUBTLE,
+    COLOR_SURFACE,
     COLOR_SURFACE_ALT,
     COLOR_TEXT_MUTED,
     COLOR_TEXT_PRIMARY,
@@ -182,9 +186,16 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_DIAGNOSIS,
     ACTION_COPY_FILENAME,
     ACTION_COPY_ORACLE,
+    ACTION_DETAILS_CLOSE,
+    ACTION_DETAILS_OPEN,
     ACTION_OPEN_WORKSPACE,
+    DETAIL_PANEL_DISTINCT_BACKGROUND,
     FILENAME_FIELD_POLISH_MARKER,
+    INLINE_DETAIL_UNDER_SELECTED_CARD,
     LABEL_DATEINAME_BEARBEITEN,
+    LABEL_REVIEW_AMOUNT,
+    LABEL_REVIEW_DATE,
+    LABEL_REVIEW_DOC_NAME,
     LABEL_VORSCHAU_DATEINAME,
     MSG_FILENAME_PREVIEW_HELPER,
     MSG_FILENAME_PREVIEW_ONLY,
@@ -197,6 +208,9 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     MSG_USER_REVIEW_SUBTITLE,
     ORACLE_COMMAND,
     PRIMARY_PRUEFEN,
+    REVIEW_ACCORDION_LAYOUT_MARKER,
+    REVIEW_CARD_ACTIVE_HIGHLIGHT,
+    REVIEW_CARD_COLLAPSED_SUMMARY_ONLY,
     REVIEW_DECLUTTER_LAYOUT_MARKER,
     REVIEW_SECTION_TITLES,
     REVIEW_UI_POLISH_LAYOUT_MARKER,
@@ -232,10 +246,57 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     split_ready_and_review_cases,
 )
 
+# Accordion open-state lives on the in-memory review_preview_ui bag (UI-only).
+_OPEN_REVIEW_ITEM_ATTR = "open_review_item_id"
+
 # Legacy preview artifacts only — not the current Track-B filename pattern.
 MSG_LEGACY_ER_ER_NOTE = "Altes technisches Muster aus früherem Preview-Export."
 # Compatibility alias for declutter tests / imports that still look for MSG_ER_ER_NOTE.
 MSG_ER_ER_NOTE = MSG_LEGACY_ER_ER_NOTE
+
+
+def get_open_review_item_id(state: UiV2State) -> str | None:
+    """Return the currently expanded accordion item key (UI-only)."""
+
+    bag = get_review_preview_ui(state)
+    raw = getattr(bag, _OPEN_REVIEW_ITEM_ATTR, None)
+    if raw is None:
+        return None
+    cleaned = str(raw).strip()
+    return cleaned or None
+
+
+def set_open_review_item_id(state: UiV2State, item_key: str | None) -> None:
+    """Open one review item (single-open accordion) or close all when None."""
+
+    bag = get_review_preview_ui(state)
+    cleaned = (item_key or "").strip() or None
+    setattr(bag, _OPEN_REVIEW_ITEM_ATTR, cleaned)
+    if cleaned:
+        select_review_item(state, cleaned)
+
+
+def toggle_review_item_details(state: UiV2State, item_key: str) -> None:
+    """Toggle details for one card; opening another closes the previous."""
+
+    key = (item_key or "").strip()
+    if not key:
+        return
+    current = get_open_review_item_id(state)
+    if current == key:
+        set_open_review_item_id(state, None)
+    else:
+        set_open_review_item_id(state, key)
+
+
+def review_summary_display_name(row: ReviewListItemVM | Any) -> str:
+    """Prefer Lieferant/Name, else original filename."""
+
+    supplier = str(getattr(row, "supplier", None) or "").strip()
+    if supplier and supplier != "—":
+        return supplier
+    source = str(getattr(row, "source_filename", None) or "").strip()
+    return source or "Dokument"
 
 
 def review_section(
@@ -481,6 +542,12 @@ class ReviewListItemVM:
     primary_action: str = PRIMARY_PRUEFEN
     safety_line: str = MSG_SAFETY_LINE_NO_FINAL
     compact_card: bool = True
+    # Accordion summary card (collapsed overview)
+    summary_display_name: str | None = None
+    details_open: bool = False
+    collapsed_summary_only: bool = True
+    details_action_label: str = ACTION_DETAILS_OPEN
+    accordion_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -682,6 +749,11 @@ class ReviewPageVM:
     user_mode_layout_marker: str = REVIEW_USER_MODE_LAYOUT_MARKER
     ui_polish_layout_marker: str = REVIEW_UI_POLISH_LAYOUT_MARKER
     filename_field_polish_marker: str = FILENAME_FIELD_POLISH_MARKER
+    accordion_layout_marker: str = REVIEW_ACCORDION_LAYOUT_MARKER
+    collapsed_summary_marker: str = REVIEW_CARD_COLLAPSED_SUMMARY_ONLY
+    active_card_highlight_marker: str = REVIEW_CARD_ACTIVE_HIGHLIGHT
+    inline_detail_marker: str = INLINE_DETAIL_UNDER_SELECTED_CARD
+    detail_panel_background_marker: str = DETAIL_PANEL_DISTINCT_BACKGROUND
     safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
     final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
     oracle_available_title: str = MSG_ORACLE_AVAILABLE
@@ -704,6 +776,11 @@ class ReviewPageVM:
     review_case_summaries: tuple[str, ...] = ()
     cases_ready_count: int = 0
     cases_review_count: int = 0
+    # Accordion: at most one open detail under its card
+    open_review_item_id: str | None = None
+    accordion_single_open: bool = True
+    details_open_action_label: str = ACTION_DETAILS_OPEN
+    details_close_action_label: str = ACTION_DETAILS_CLOSE
 
 
 def _suggested_rule_draft_fields(
@@ -945,6 +1022,7 @@ def _build_list_items(
     checked_keys: set[str],
     excluded_keys: set[str],
     readiness_by_key: dict[str, Any] | None = None,
+    open_key: str | None = None,
 ) -> tuple[ReviewListItemVM, ...]:
     rows: list[ReviewListItemVM] = []
     readiness_by_key = readiness_by_key or {}
@@ -965,10 +1043,14 @@ def _build_list_items(
             or detail.rendered_filename
             or detail.canonical_filename
         )
+        supplier = detail.counterparty_name or detail.supplier
+        source_filename = detail.source_filename or detail.document_label
+        summary_name = str(supplier or source_filename or "Dokument").strip()
+        is_open = bool(open_key and key == open_key)
         rows.append(
             ReviewListItemVM(
                 item_key=key,
-                source_filename=detail.source_filename or detail.document_label,
+                source_filename=source_filename,
                 category=detail.category or MSG_CATEGORY_REVIEW,
                 reason=detail.reason,
                 planned_action=detail.planned_action,
@@ -977,13 +1059,13 @@ def _build_list_items(
                 preview_only_badge=detail.preview_only_badge,
                 no_final_write_badge=detail.no_final_write_badge,
                 productive_blocked_badge=detail.productive_blocked_badge,
-                selected=bool(selected_key and key == selected_key),
+                selected=bool(selected_key and key == selected_key) or is_open,
                 checked_preview=checked,
                 excluded_from_export_preview=excluded,
                 preview_status_label=_preview_status_label(
                     checked=checked, excluded=excluded
                 ),
-                supplier=detail.counterparty_name or detail.supplier,
+                supplier=supplier,
                 invoice_date=detail.invoice_date,
                 amount=detail.selected_amount or detail.amount,
                 payment_field=payment_display_label(detail),
@@ -996,6 +1078,13 @@ def _build_list_items(
                 ),
                 safety_line=MSG_SAFETY_LINE_NO_FINAL,
                 compact_card=True,
+                summary_display_name=summary_name,
+                details_open=is_open,
+                collapsed_summary_only=not is_open,
+                details_action_label=(
+                    ACTION_DETAILS_CLOSE if is_open else ACTION_DETAILS_OPEN
+                ),
+                accordion_active=is_open,
             )
         )
     return tuple(rows)
@@ -1398,12 +1487,22 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         )
         bag.selected_item_key = selected_key
 
+    open_key = get_open_review_item_id(state)
+    if open_key and open_key not in keys:
+        set_open_review_item_id(state, None)
+        open_key = None
+    # Single-open accordion: at most one expanded detail card.
+    if open_key:
+        selected_key = open_key
+        bag.selected_item_key = open_key
+
     list_items = _build_list_items(
         detail_items,
         selected_key=selected_key,
         checked_keys=bag.checked_preview_keys,
         excluded_keys=bag.excluded_from_export_preview_keys,
         readiness_by_key=dict(decision_bag.readiness_by_item_key),
+        open_key=open_key,
     )
     selected_detail = None
     coverage_action_labels: tuple[str, ...] = ()
@@ -1566,6 +1665,11 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         user_mode_layout_marker=REVIEW_USER_MODE_LAYOUT_MARKER,
         ui_polish_layout_marker=REVIEW_UI_POLISH_LAYOUT_MARKER,
         filename_field_polish_marker=FILENAME_FIELD_POLISH_MARKER,
+        accordion_layout_marker=REVIEW_ACCORDION_LAYOUT_MARKER,
+        collapsed_summary_marker=REVIEW_CARD_COLLAPSED_SUMMARY_ONLY,
+        active_card_highlight_marker=REVIEW_CARD_ACTIVE_HIGHLIGHT,
+        inline_detail_marker=INLINE_DETAIL_UNDER_SELECTED_CARD,
+        detail_panel_background_marker=DETAIL_PANEL_DISTINCT_BACKGROUND,
         safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
         final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
         oracle_available_title=MSG_ORACLE_AVAILABLE,
@@ -1588,6 +1692,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         review_case_summaries=review_summaries,
         cases_ready_count=len(ready_summaries),
         cases_review_count=len(review_summaries),
+        open_review_item_id=open_key,
+        accordion_single_open=True,
+        details_open_action_label=ACTION_DETAILS_OPEN,
+        details_close_action_label=ACTION_DETAILS_CLOSE,
     )
 
 
@@ -2260,6 +2368,7 @@ def _developer_tools_collapsed(
         vm.declutter_layout_marker,
         vm.ui_polish_layout_marker,
         vm.filename_field_polish_marker,
+        vm.accordion_layout_marker,
         MSG_ORACLE_AVAILABLE,
         vm.oracle_command,
         MSG_ORACLE_NO_AUTO_RUN,
@@ -2279,6 +2388,237 @@ def _developer_tools_collapsed(
         title=SECTION_TECHNISCHE,
         initially_expanded=False,
     )
+
+
+def render_review_summary_card(
+    row: ReviewListItemVM,
+    *,
+    is_open: bool,
+    on_toggle,
+) -> ft.Control:
+    """Collapsed overview: name, date, amount + Details öffnen/schließen."""
+
+    display_name = row.summary_display_name or review_summary_display_name(row)
+    fields: list[tuple[str, str]] = [
+        (LABEL_REVIEW_DOC_NAME, display_name),
+        (LABEL_REVIEW_DATE, row.invoice_date or "—"),
+        (LABEL_REVIEW_AMOUNT, row.amount or "—"),
+    ]
+    action_label = ACTION_DETAILS_CLOSE if is_open else ACTION_DETAILS_OPEN
+    trailing = status_badge(
+        action_label,
+        tone="active" if is_open else "neutral",
+    )
+    entry = compact_entry_row(
+        display_name,
+        *fields,
+        trailing=trailing,
+    )
+    border = ft.Border.all(
+        2 if is_open else 1,
+        COLOR_PRIMARY if is_open else COLOR_BORDER,
+    )
+    accent = ft.Container(
+        width=4,
+        bgcolor=COLOR_PRIMARY if is_open else COLOR_BORDER,
+        border_radius=RADIUS_CARD,
+    )
+    return ft.Container(
+        content=ft.Row(
+            [accent, ft.Container(content=entry, expand=True)],
+            spacing=SPACE_SM,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        ),
+        on_click=on_toggle,
+        ink=True,
+        padding=SPACE_MD,
+        bgcolor=COLOR_PRIMARY_SUBTLE if is_open else COLOR_SURFACE,
+        border=border,
+        border_radius=RADIUS_CARD,
+        data=(
+            REVIEW_CARD_ACTIVE_HIGHLIGHT
+            if is_open
+            else REVIEW_CARD_COLLAPSED_SUMMARY_ONLY
+        ),
+    )
+
+
+def render_review_inline_detail(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM,
+) -> ft.Control:
+    """Detail panel rendered directly under the open accordion card."""
+
+    sections = _selected_detail_section_controls(state, vm, detail)
+    return ft.Container(
+        content=ft.Column(sections, spacing=SPACE_SM, tight=True),
+        margin=ft.Margin.only(top=SPACE_XS, bottom=SPACE_MD, left=SPACE_SM),
+        padding=SPACE_LG,
+        bgcolor=COLOR_SURFACE_ALT,
+        border=ft.Border.all(1, COLOR_BORDER_STRONG),
+        border_radius=RADIUS_CARD,
+        data=f"{INLINE_DETAIL_UNDER_SELECTED_CARD}|{DETAIL_PANEL_DISTINCT_BACKGROUND}",
+    )
+
+
+def _selected_detail_section_controls(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM,
+) -> list[ft.Control]:
+    """Reuse Simple User Review sections inside the inline accordion detail."""
+
+    out: list[ft.Control] = [
+        review_section(
+            SECTION_ERKANNT,
+            _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
+        )
+    ]
+    unclear_lines = [
+        ft.Text(f"· {line}", size=12)
+        for line in (detail.unclear_items or detail.why_review_plain)
+    ]
+    out.append(
+        review_section(
+            SECTION_UNKLAR,
+            ft.Column(
+                unclear_lines or [ft.Text("· Prüfung erforderlich", size=12)],
+                spacing=4,
+                tight=True,
+            ),
+        )
+    )
+    vorschlag_body: list[ft.Control] = [
+        ft.Text(
+            detail.suggested_filename or detail.preview_filename or "—",
+            size=13,
+            weight=ft.FontWeight.W_600,
+            selectable=True,
+        ),
+        _kv_lines(detail.vorschlag_fields),
+    ]
+    if detail.er_er_note:
+        vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
+    elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
+        vorschlag_body.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
+    decision_bag = get_review_decision_bag(state)
+    draft_value = decision_bag.edit_filename_draft_by_key.get(
+        detail.item_key,
+        detail.approved_preview_filename
+        or detail.preview_filename
+        or detail.suggested_filename
+        or "",
+    )
+
+    def _on_filename_change(e: ft.ControlEvent) -> None:
+        set_edit_filename_draft(
+            state, detail.item_key, str(getattr(e.control, "value", "") or "")
+        )
+
+    def _copy_filename(_e: ft.ControlEvent, value: str = draft_value) -> None:
+        current = decision_bag.edit_filename_draft_by_key.get(detail.item_key, value)
+        copy_text_to_state_and_clipboard(
+            state,
+            str(current or value or ""),
+            kind=ACTION_COPY_FILENAME,
+        )
+        if state.refresh is not None:
+            state.refresh()
+
+    filename_field = ft.TextField(
+        value=draft_value,
+        on_change=_on_filename_change,
+        multiline=True,
+        min_lines=2,
+        max_lines=4,
+        expand=True,
+        text_size=FONT_SIZE_MONO,
+        border_color=COLOR_BORDER,
+        dense=False,
+        data=FILENAME_FIELD_POLISH_MARKER,
+    )
+    filename_editor = form_field_group(
+        LABEL_VORSCHAU_DATEINAME,
+        ft.Column(
+            [
+                ft.Text(
+                    LABEL_DATEINAME_BEARBEITEN,
+                    size=FONT_SIZE_HELPER,
+                    color=COLOR_TEXT_MUTED,
+                ),
+                ft.Container(
+                    content=filename_field,
+                    expand=True,
+                    width=None,
+                    data=FILENAME_FIELD_POLISH_MARKER,
+                ),
+                ft.Row(
+                    [secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename)],
+                    spacing=SPACE_SM,
+                ),
+            ],
+            spacing=SPACE_XS,
+            tight=True,
+            expand=True,
+        ),
+        helper=MSG_FILENAME_PREVIEW_HELPER,
+    )
+    vorschlag_body.append(filename_editor)
+    out.append(
+        review_section(
+            SECTION_DATEINAME,
+            ft.Column(vorschlag_body, spacing=SPACE_SM, tight=True),
+        )
+    )
+    out.append(
+        review_section(
+            SECTION_ENTSCHEIDEN,
+            ft.Column(
+                [
+                    ft.Text(detail.decision_prompt, size=13),
+                    _next_action_row(state, detail),
+                ],
+                spacing=SPACE_SM,
+                tight=True,
+            ),
+        )
+    )
+    out.append(_finalization_declutter_panel(state, vm, detail))
+    out.append(
+        review_section(
+            "Kopieren",
+            _copy_actions_row(state, detail),
+            subtitle=MSG_SAFETY_LINE_NO_FINAL,
+        )
+    )
+    advanced: list[ft.Control] = []
+    action_row = build_configuration_coverage_action_row(state, detail)
+    if action_row is not None:
+        advanced.append(action_row)
+    advanced.append(build_duplicate_config_remediation_panel(state))
+    if state.configuration_rule_draft is not None:
+        advanced.append(
+            build_configuration_rule_draft_panel(
+                state, state.configuration_rule_draft
+            )
+        )
+    apply_panel = build_configuration_rule_apply_panel(state)
+    if apply_panel is not None:
+        advanced.append(apply_panel)
+    advanced.append(_oracle_dev_box(state, vm))
+    advanced.append(_finalization_dry_run_panel(state, vm))
+    advanced.append(_sandbox_final_write_panel(state, vm))
+    if advanced:
+        out.append(
+            section_block(
+                "Erweiterte Werkzeuge (optional)",
+                ft.Column(advanced, spacing=10, tight=True),
+                subtitle="Nicht nötig für die normale Prüfung",
+            )
+        )
+    out.append(_developer_tools_collapsed(state, vm, detail))
+    return out
 
 
 def build_review_page(state: UiV2State) -> ft.Control:
@@ -2382,210 +2722,44 @@ def build_review_page(state: UiV2State) -> ft.Control:
 
     items.append(_ready_cases_panel(vm))
     items.append(_review_cases_panel(vm))
+    items.append(
+        ft.Text(
+            REVIEW_ACCORDION_LAYOUT_MARKER,
+            size=1,
+            color=COLOR_SURFACE,
+            selectable=False,
+        )
+    )
 
-    review_rows: list[ft.Control] = []
+    accordion_blocks: list[ft.Control] = []
+    open_key = vm.open_review_item_id
     for row in vm.list_items:
-        fields: list[tuple[str, str]] = [
-            ("Lieferant / Name", row.supplier or "—"),
-            ("Datum", row.invoice_date or "—"),
-            ("Betrag", row.amount or "—"),
-            ("Zahlungsart", row.payment_field or "—"),
-            ("Art", row.document_art or "—"),
-            ("Status", ", ".join(row.status_badges) or row.preview_status_label),
-            ("Vorschlag", row.suggested_filename or "—"),
-            ("Nächster Schritt", row.primary_action),
-            ("Sicherheit", row.safety_line),
-        ]
         key = row.item_key
+        is_open = bool(open_key and key == open_key)
 
-        def _select(_e: ft.ControlEvent, item_key: str = key) -> None:
-            select_review_item(state, item_key)
+        def _toggle(_e: ft.ControlEvent, item_key: str = key) -> None:
+            toggle_review_item_details(state, item_key)
             if state.refresh is not None:
                 state.refresh()
 
-        trailing = status_badge(
-            row.primary_action if not row.selected else "Ausgewählt",
-            tone="active" if row.selected else "neutral",
-        )
-        entry = compact_entry_row(
-            row.source_filename,
-            *fields,
-            trailing=trailing,
-        )
-        review_rows.append(
-            ft.Container(
-                content=entry,
-                on_click=_select,
-                ink=True,
-                bgcolor=None,
-            )
+        card = render_review_summary_card(row, is_open=is_open, on_toggle=_toggle)
+        block_controls: list[ft.Control] = [card]
+        if is_open and vm.selected_detail is not None:
+            if vm.selected_detail.item_key == key:
+                block_controls.append(
+                    render_review_inline_detail(state, vm, vm.selected_detail)
+                )
+        accordion_blocks.append(
+            ft.Column(block_controls, spacing=SPACE_XS, tight=True)
         )
 
     items.append(
         section_block(
             f"{vm.review_count} Dokument(e) zur Prüfung",
-            stacked_list(*review_rows),
-            subtitle="Kompakte Review-Karten",
+            stacked_list(*accordion_blocks),
+            subtitle="Zur Prüfung — kompakte Übersicht, Details unter dem Dokument",
         )
     )
-
-    if vm.selected_detail is not None:
-        detail = vm.selected_detail
-        items.append(
-            review_section(
-                SECTION_ERKANNT,
-                _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
-            )
-        )
-        unclear_lines = [
-            ft.Text(f"· {line}", size=12)
-            for line in (detail.unclear_items or detail.why_review_plain)
-        ]
-        items.append(
-            review_section(
-                SECTION_UNKLAR,
-                ft.Column(
-                    unclear_lines
-                    or [ft.Text("· Prüfung erforderlich", size=12)],
-                    spacing=4,
-                    tight=True,
-                ),
-            )
-        )
-        vorschlag_body: list[ft.Control] = [
-            ft.Text(
-                detail.suggested_filename
-                or detail.preview_filename
-                or "—",
-                size=13,
-                weight=ft.FontWeight.W_600,
-                selectable=True,
-            ),
-            _kv_lines(detail.vorschlag_fields),
-        ]
-        if detail.er_er_note:
-            vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
-        elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
-            vorschlag_body.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
-        decision_bag = get_review_decision_bag(state)
-        draft_value = decision_bag.edit_filename_draft_by_key.get(
-            detail.item_key,
-            detail.approved_preview_filename
-            or detail.preview_filename
-            or detail.suggested_filename
-            or "",
-        )
-
-        def _on_filename_change(e: ft.ControlEvent) -> None:
-            set_edit_filename_draft(
-                state, detail.item_key, str(getattr(e.control, "value", "") or "")
-            )
-
-        def _copy_filename(_e: ft.ControlEvent, value: str = draft_value) -> None:
-            current = decision_bag.edit_filename_draft_by_key.get(
-                detail.item_key, value
-            )
-            copy_text_to_state_and_clipboard(
-                state,
-                str(current or value or ""),
-                kind=ACTION_COPY_FILENAME,
-            )
-            if state.refresh is not None:
-                state.refresh()
-
-        filename_field = ft.TextField(
-            value=draft_value,
-            on_change=_on_filename_change,
-            multiline=True,
-            min_lines=2,
-            max_lines=4,
-            expand=True,
-            text_size=FONT_SIZE_MONO,
-            border_color=COLOR_BORDER,
-            dense=False,
-            data=FILENAME_FIELD_POLISH_MARKER,
-        )
-        filename_editor = form_field_group(
-            LABEL_VORSCHAU_DATEINAME,
-            ft.Column(
-                [
-                    ft.Text(
-                        LABEL_DATEINAME_BEARBEITEN,
-                        size=FONT_SIZE_HELPER,
-                        color=COLOR_TEXT_MUTED,
-                    ),
-                    ft.Container(
-                        content=filename_field,
-                        expand=True,
-                        width=None,
-                        data=FILENAME_FIELD_POLISH_MARKER,
-                    ),
-                    ft.Row(
-                        [secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename)],
-                        spacing=SPACE_SM,
-                    ),
-                ],
-                spacing=SPACE_XS,
-                tight=True,
-                expand=True,
-            ),
-            helper=MSG_FILENAME_PREVIEW_HELPER,
-        )
-        vorschlag_body.append(filename_editor)
-        items.append(
-            review_section(
-                SECTION_DATEINAME,
-                ft.Column(vorschlag_body, spacing=SPACE_SM, tight=True),
-            )
-        )
-        items.append(
-            review_section(
-                SECTION_ENTSCHEIDEN,
-                ft.Column(
-                    [
-                        ft.Text(detail.decision_prompt, size=13),
-                        _next_action_row(state, detail),
-                    ],
-                    spacing=SPACE_SM,
-                    tight=True,
-                ),
-            )
-        )
-        items.append(_finalization_declutter_panel(state, vm, detail))
-        items.append(
-            review_section(
-                "Kopieren",
-                _copy_actions_row(state, detail),
-                subtitle=MSG_SAFETY_LINE_NO_FINAL,
-            )
-        )
-        # Rule draft / apply / remediation stay available under technical tools.
-        advanced: list[ft.Control] = []
-        action_row = build_configuration_coverage_action_row(state, detail)
-        if action_row is not None:
-            advanced.append(action_row)
-        advanced.append(build_duplicate_config_remediation_panel(state))
-        if state.configuration_rule_draft is not None:
-            advanced.append(
-                build_configuration_rule_draft_panel(
-                    state, state.configuration_rule_draft
-                )
-            )
-        apply_panel = build_configuration_rule_apply_panel(state)
-        if apply_panel is not None:
-            advanced.append(apply_panel)
-        advanced.append(_oracle_dev_box(state, vm))
-        advanced.append(_finalization_dry_run_panel(state, vm))
-        advanced.append(_sandbox_final_write_panel(state, vm))
-        if advanced:
-            items.append(
-                section_block(
-                    "Erweiterte Werkzeuge (optional)",
-                    ft.Column(advanced, spacing=10, tight=True),
-                    subtitle="Nicht nötig für die normale Prüfung",
-                )
-            )
-        items.append(_developer_tools_collapsed(state, vm, detail))
 
     items.append(
         collapsible_details(
