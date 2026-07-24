@@ -41,6 +41,7 @@ from invoice_tool.ui_v2.processing_contract import (
     default_processing_service,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingRunState, idle_processing_state
+from invoice_tool.ui_v2.finalization_preview_batch import FinalizationPreviewBatchBag
 from invoice_tool.ui_v2.review_decision import ReviewDecisionBag
 from invoice_tool.ui_v2.review_preview_state import ReviewPreviewUiState
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
@@ -119,6 +120,10 @@ class UiV2State:
     review_preview_ui: ReviewPreviewUiState = field(default_factory=ReviewPreviewUiState)
     # Prompt 29/34 — Review decision / finalization-readiness (in-memory only).
     review_decision_ui: ReviewDecisionBag = field(default_factory=ReviewDecisionBag)
+    # Prompt 30/34 — Finalization preview batch & conflicts (in-memory only).
+    finalization_preview_batch_ui: FinalizationPreviewBatchBag = field(
+        default_factory=FinalizationPreviewBatchBag
+    )
     # Prompt 26/34 — configuration rule draft from coverage guidance (unsaved until confirm).
     configuration_rule_draft: ConfigurationRuleDraft | None = None
     configuration_rule_draft_feedback: str = ""

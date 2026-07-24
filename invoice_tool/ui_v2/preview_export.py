@@ -357,6 +357,10 @@ class PreviewExportItem:
     source_hash_at_decision: str | None = None
     preview_state_id: str | None = None
     final_write_allowed: bool = False
+    # Prompt 30/34 — finalization preview batch item fields (no final write).
+    finalization_status: str | None = None
+    finalization_warnings: tuple[str, ...] = field(default_factory=tuple)
+    target_conflict_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1608,6 +1612,9 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "source_hash_at_decision",
             "preview_state_id",
             "final_write_allowed",
+            "finalization_status",
+            "finalization_warnings",
+            "target_conflict_status",
         ]
     )
     for item in items:
@@ -1689,6 +1696,9 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.source_hash_at_decision or "",
                 item.preview_state_id or "",
                 "false",
+                item.finalization_status or "",
+                "|".join(item.finalization_warnings or ()),
+                item.target_conflict_status or "",
             ]
         )
     return buffer.getvalue()
@@ -1710,8 +1720,10 @@ def _manifest_payload(
     source_state_updated_at: str | None = None,
     state_freshness_checked: bool = True,
     state_freshness_result: str = "pass",
+    finalization_preview_batch: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     copied = [item for item in items if not item.excluded]
+    batch_payload = dict(finalization_preview_batch or {})
     return {
         "kind": PREVIEW_EXPORT_KIND,
         "schema_version": PREVIEW_EXPORT_SCHEMA_VERSION,
@@ -1744,6 +1756,19 @@ def _manifest_payload(
         "disclaimer": MSG_PREVIEW_EXPORT_SANDBOX_ONLY,
         "naming_disclaimer": MSG_SUGGESTED_PREVIEW_ONLY,
         "final_write_allowed": False,
+        "finalization_preview_batch": batch_payload.get("finalization_preview_batch")
+        if "finalization_preview_batch" in batch_payload
+        else batch_payload or None,
+        "ready_count": int(batch_payload.get("ready_count") or 0),
+        "blocked_count": int(batch_payload.get("blocked_count") or 0),
+        "ignored_count": int(batch_payload.get("ignored_count") or 0),
+        "deferred_count": int(batch_payload.get("deferred_count") or 0),
+        "still_review_required_count": int(
+            batch_payload.get("still_review_required_count") or 0
+        ),
+        "conflicts": list(batch_payload.get("conflicts") or []),
+        "safety_summary": batch_payload.get("safety_summary")
+        or "Finalisierungs-Vorschau only — final_write_allowed=false",
         "items": [
             {
                 "source_filename": item.source_filename,
@@ -1839,6 +1864,9 @@ def _manifest_payload(
                 "source_hash_at_decision": item.source_hash_at_decision,
                 "preview_state_id": item.preview_state_id,
                 "final_write_allowed": False,
+                "finalization_status": item.finalization_status,
+                "finalization_warnings": list(item.finalization_warnings or ()),
+                "target_conflict_status": item.target_conflict_status,
             }
             for item in items
         ],
@@ -1889,6 +1917,9 @@ def _decision_fields_for_source(
             "source_hash_at_decision": None,
             "preview_state_id": None,
             "final_write_allowed": False,
+            "finalization_status": None,
+            "finalization_warnings": (),
+            "target_conflict_status": None,
         }
     edited = payload.get("user_edited_fields") or payload.get("edited_fields") or {}
     if isinstance(edited, Mapping):
@@ -1897,6 +1928,7 @@ def _decision_fields_for_source(
         edited_fields = tuple((str(k), str(v)) for k, v in (edited or ()))
     blockers = payload.get("finalization_blockers") or ()
     warnings = payload.get("warnings_acknowledged") or ()
+    fin_warnings = payload.get("finalization_warnings") or ()
     return {
         "review_decision": payload.get("review_decision")
         or payload.get("decision_type"),
@@ -1916,6 +1948,9 @@ def _decision_fields_for_source(
         "source_hash_at_decision": payload.get("source_hash_at_decision"),
         "preview_state_id": payload.get("preview_state_id"),
         "final_write_allowed": False,
+        "finalization_status": payload.get("finalization_status"),
+        "finalization_warnings": tuple(str(w) for w in fin_warnings),
+        "target_conflict_status": payload.get("target_conflict_status"),
     }
 
 
@@ -1948,6 +1983,7 @@ def write_preview_export_package(
     | None = None,
     refresh_from_input: bool = False,
     decision_fields_by_key: Mapping[str, Mapping[str, Any]] | None = None,
+    finalization_preview_batch: Mapping[str, Any] | None = None,
 ) -> PreviewExportResult:
     """Create a dedicated preview-export-* package under controlled output."""
 
@@ -2359,6 +2395,7 @@ def write_preview_export_package(
             source_state_updated_at=source_state_updated_at,
             state_freshness_checked=True,
             state_freshness_result="pass",
+            finalization_preview_batch=finalization_preview_batch,
         )
         readme_path = export_folder / "README_PREVIEW_EXPORT.md"
         manifest_json = export_folder / "manifest.json"
@@ -2435,6 +2472,11 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
     input_root = (getattr(state, "workspace_input_folder_override", None) or "").strip()
     output_root = (getattr(state, "workspace_output_folder_override", None) or "").strip()
     bag = get_review_preview_ui(state)
+    from invoice_tool.ui_v2.finalization_preview_batch import (
+        batch_report_fields,
+        build_finalization_preview_batch,
+        item_batch_export_fields,
+    )
     from invoice_tool.ui_v2.review_decision import (
         decision_report_fields_for_item,
         get_review_decision_bag,
@@ -2445,10 +2487,22 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
         items_excluded_from_finalization_batch(state)
     )
     decision_bag = get_review_decision_bag(state)
+    finalization_batch = build_finalization_preview_batch(state)
+    batch_manifest_fields = batch_report_fields(finalization_batch)
     decision_fields_by_key = {
-        key: decision_report_fields_for_item(state, key)
+        key: {
+            **decision_report_fields_for_item(state, key),
+            **item_batch_export_fields(finalization_batch, key),
+        }
         for key in decision_bag.decisions_by_item_key
     }
+    # Also attach batch fields for review items without a stored decision.
+    for batch_item in finalization_batch.items:
+        if batch_item.item_id not in decision_fields_by_key:
+            decision_fields_by_key[batch_item.item_id] = {
+                **decision_report_fields_for_item(state, batch_item.item_id),
+                **item_batch_export_fields(finalization_batch, batch_item.item_id),
+            }
 
     # Reject stale previous export folders as input before any write.
     if _path_is_previous_preview_export(_norm_path(input_root)):
@@ -2486,6 +2540,7 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
         review_expectations=expectations,
         refresh_from_input=False,
         decision_fields_by_key=decision_fields_by_key,
+        finalization_preview_batch=batch_manifest_fields,
     )
 
     if result.ok:

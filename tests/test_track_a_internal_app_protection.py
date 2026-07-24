@@ -76,6 +76,7 @@ PRIVATE_DEFAULT_MARKERS = (
 TRACK_B_COMMIT_SUBJECT_MARKERS = (
     "UI-v2",
     "ui-v2",
+    "Track-B",
     "Sandbox",
     "Pruefworkflow",
     "Profil-Policy",

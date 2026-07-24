@@ -167,6 +167,17 @@ from invoice_tool.ui_v2.review_decision import (
     get_review_decision_bag,
     set_edit_filename_draft,
 )
+from invoice_tool.ui_v2.finalization_preview_batch import (
+    MSG_BATCH_BLOCKED,
+    MSG_BATCH_DEFERRED,
+    MSG_BATCH_IGNORED,
+    MSG_BATCH_NO_FINAL_WRITE,
+    MSG_BATCH_READY,
+    MSG_BATCH_STILL_REVIEW,
+    MSG_BATCH_TITLE,
+    batch_summary_lines,
+    build_finalization_preview_batch,
+)
 from invoice_tool.ui_v2.state import UiV2State
 
 # Re-exports used by existing tests / callers.
@@ -431,6 +442,15 @@ class ReviewPageVM:
     not_final_yet_text: str = MSG_NOT_FINAL_YET
     decision_feedback: str = ""
     decision_feedback_error: bool = False
+    # Prompt 30/34 — Finalization preview batch summary (no final write).
+    finalization_preview_batch_title: str = MSG_BATCH_TITLE
+    finalization_preview_batch_ready_count: int = 0
+    finalization_preview_batch_blocked_count: int = 0
+    finalization_preview_batch_ignored_count: int = 0
+    finalization_preview_batch_deferred_count: int = 0
+    finalization_preview_batch_still_review_required_count: int = 0
+    finalization_preview_batch_summary_lines: tuple[str, ...] = ()
+    finalization_preview_batch_no_final_write_text: str = MSG_BATCH_NO_FINAL_WRITE
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -1039,6 +1059,9 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     if state.configuration_rule_draft is not None:
         draft_available = True
 
+    finalization_batch = build_finalization_preview_batch(state)
+    batch_lines = batch_summary_lines(finalization_batch)
+
     return ReviewPageVM(
         title=queue.title,
         subtitle=queue.subtitle,
@@ -1081,6 +1104,16 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         not_final_yet_text=MSG_NOT_FINAL_YET,
         decision_feedback=decision_bag.last_feedback,
         decision_feedback_error=bool(decision_bag.last_feedback_error),
+        finalization_preview_batch_title=MSG_BATCH_TITLE,
+        finalization_preview_batch_ready_count=finalization_batch.ready_count,
+        finalization_preview_batch_blocked_count=finalization_batch.blocked_count,
+        finalization_preview_batch_ignored_count=finalization_batch.ignored_count,
+        finalization_preview_batch_deferred_count=finalization_batch.deferred_count,
+        finalization_preview_batch_still_review_required_count=(
+            finalization_batch.still_review_required_count
+        ),
+        finalization_preview_batch_summary_lines=batch_lines,
+        finalization_preview_batch_no_final_write_text=MSG_BATCH_NO_FINAL_WRITE,
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1284,6 +1317,53 @@ def _decision_status_panel(detail: ReviewSelectedDetailVM) -> ft.Control:
         "Review-Entscheidung / Finalisierungsbereitschaft",
         ft.Column(lines, spacing=4, tight=True),
         subtitle="Preview only — keine finale Verarbeitung",
+    )
+
+
+def _finalization_preview_batch_panel(vm: ReviewPageVM) -> ft.Control:
+    """Prompt-30 batch summary — counts/conflicts only, never final write."""
+
+    lines = [
+        ft.Text(f"{MSG_BATCH_READY}: {vm.finalization_preview_batch_ready_count}", size=12),
+        ft.Text(
+            f"{MSG_BATCH_BLOCKED}: {vm.finalization_preview_batch_blocked_count}",
+            size=12,
+        ),
+        ft.Text(
+            f"{MSG_BATCH_IGNORED}: {vm.finalization_preview_batch_ignored_count}",
+            size=12,
+        ),
+        ft.Text(
+            f"{MSG_BATCH_DEFERRED}: {vm.finalization_preview_batch_deferred_count}",
+            size=12,
+        ),
+        ft.Text(
+            f"{MSG_BATCH_STILL_REVIEW}: "
+            f"{vm.finalization_preview_batch_still_review_required_count}",
+            size=12,
+        ),
+        ft.Text(MSG_BATCH_NO_FINAL_WRITE, size=12),
+        ft.Text("final_write_allowed: false", size=12),
+    ]
+    for line in vm.finalization_preview_batch_summary_lines:
+        if line in {
+            MSG_BATCH_TITLE,
+            MSG_BATCH_NO_FINAL_WRITE,
+            f"{MSG_BATCH_READY}: {vm.finalization_preview_batch_ready_count}",
+            f"{MSG_BATCH_BLOCKED}: {vm.finalization_preview_batch_blocked_count}",
+            f"{MSG_BATCH_IGNORED}: {vm.finalization_preview_batch_ignored_count}",
+            f"{MSG_BATCH_DEFERRED}: {vm.finalization_preview_batch_deferred_count}",
+            (
+                f"{MSG_BATCH_STILL_REVIEW}: "
+                f"{vm.finalization_preview_batch_still_review_required_count}"
+            ),
+        }:
+            continue
+        lines.append(ft.Text(line, size=12))
+    return section_block(
+        MSG_BATCH_TITLE,
+        ft.Column(lines, spacing=4, tight=True),
+        subtitle="Nicht-produktiv — kein finales Schreiben",
     )
 
 
@@ -1737,6 +1817,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
         if apply_panel is not None:
             items.append(apply_panel)
         items.append(_decision_status_panel(detail))
+        items.append(_finalization_preview_batch_panel(vm))
         decision_bag = get_review_decision_bag(state)
         draft_value = decision_bag.edit_filename_draft_by_key.get(
             detail.item_key,
