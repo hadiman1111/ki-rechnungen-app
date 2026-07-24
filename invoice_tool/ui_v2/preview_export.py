@@ -20,7 +20,7 @@ import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from invoice_tool.ui_v2.configuration_guidance import (
     MSG_FIELD_CONFIGURATION_COVERAGE,
@@ -343,6 +343,20 @@ class PreviewExportItem:
     matched_after_rule_change: bool = False
     previous_matched_configuration: str | None = None
     new_matched_configuration: str | None = None
+    # Prompt 29/34 — review decision / finalization readiness (no final write).
+    review_decision: str | None = None
+    decision_timestamp: str | None = None
+    approved_by_user: bool = False
+    finalization_ready: bool = False
+    decision_ready_for_future_finalization: bool = False
+    finalization_blockers: tuple[str, ...] = field(default_factory=tuple)
+    approved_preview_filename: str | None = None
+    target_preview_path: str | None = None
+    user_edited_fields: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    warnings_acknowledged: tuple[str, ...] = field(default_factory=tuple)
+    source_hash_at_decision: str | None = None
+    preview_state_id: str | None = None
+    final_write_allowed: bool = False
 
 
 @dataclass(frozen=True)
@@ -1383,6 +1397,43 @@ def _review_items_md(items: tuple[PreviewExportItem, ...]) -> str:
                 "  - matched_after_rule_change: "
                 f"{'true' if item.matched_after_rule_change else 'false'}"
             )
+        if item.review_decision:
+            lines.append(f"  - review_decision: `{item.review_decision}`")
+            lines.append(
+                f"  - decision_timestamp: `{item.decision_timestamp or '—'}`"
+            )
+            lines.append(
+                "  - approved_by_user: "
+                f"{'true' if item.approved_by_user else 'false'}"
+            )
+            lines.append(
+                "  - finalization_ready: "
+                f"{'true' if item.finalization_ready else 'false'}"
+            )
+            lines.append(
+                "  - decision_ready_for_future_finalization: "
+                f"{'true' if item.decision_ready_for_future_finalization else 'false'}"
+            )
+            if item.finalization_blockers:
+                lines.append(
+                    "  - finalization_blockers: "
+                    + ", ".join(item.finalization_blockers)
+                )
+            if item.approved_preview_filename:
+                lines.append(
+                    "  - approved_preview_filename: "
+                    f"`{item.approved_preview_filename}`"
+                )
+            if item.target_preview_path:
+                lines.append(
+                    f"  - target_preview_path: `{item.target_preview_path}`"
+                )
+            if item.user_edited_fields:
+                edited = ", ".join(
+                    f"{key}={value}" for key, value in item.user_edited_fields
+                )
+                lines.append(f"  - user_edited_fields: {edited}")
+            lines.append("  - final_write_allowed: false")
         if item.matched_configuration_pattern or item.filename_pattern:
             lines.append(
                 f"  - {MSG_FIELD_FILENAME_PATTERN}: `"
@@ -1544,12 +1595,28 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
             "source_sha256",
             "preview_sha256",
             "excluded",
+            "review_decision",
+            "decision_timestamp",
+            "approved_by_user",
+            "finalization_ready",
+            "decision_ready_for_future_finalization",
+            "finalization_blockers",
+            "approved_preview_filename",
+            "target_preview_path",
+            "user_edited_fields",
+            "warnings_acknowledged",
+            "source_hash_at_decision",
+            "preview_state_id",
+            "final_write_allowed",
         ]
     )
     for item in items:
         placeholder_text = "|".join(
             f"{key}={value if value is not None else ''}"
             for key, value in (item.placeholder_values or ())
+        )
+        edited_text = "|".join(
+            f"{key}={value}" for key, value in (item.user_edited_fields or ())
         )
         writer.writerow(
             [
@@ -1609,6 +1676,19 @@ def _manifest_csv(items: tuple[PreviewExportItem, ...]) -> str:
                 item.source_sha256,
                 item.preview_sha256,
                 "yes" if item.excluded else "no",
+                item.review_decision or "",
+                item.decision_timestamp or "",
+                "true" if item.approved_by_user else "false",
+                "true" if item.finalization_ready else "false",
+                "true" if item.decision_ready_for_future_finalization else "false",
+                "|".join(item.finalization_blockers or ()),
+                item.approved_preview_filename or "",
+                item.target_preview_path or "",
+                edited_text,
+                "|".join(item.warnings_acknowledged or ()),
+                item.source_hash_at_decision or "",
+                item.preview_state_id or "",
+                "false",
             ]
         )
     return buffer.getvalue()
@@ -1663,6 +1743,7 @@ def _manifest_payload(
         "claims_production_ready": False,
         "disclaimer": MSG_PREVIEW_EXPORT_SANDBOX_ONLY,
         "naming_disclaimer": MSG_SUGGESTED_PREVIEW_ONLY,
+        "final_write_allowed": False,
         "items": [
             {
                 "source_filename": item.source_filename,
@@ -1741,6 +1822,23 @@ def _manifest_payload(
                 "source_sha256": item.source_sha256,
                 "preview_sha256": item.preview_sha256,
                 "excluded": item.excluded,
+                "review_decision": item.review_decision,
+                "decision_timestamp": item.decision_timestamp,
+                "approved_by_user": bool(item.approved_by_user),
+                "finalization_ready": bool(item.finalization_ready),
+                "decision_ready_for_future_finalization": bool(
+                    item.decision_ready_for_future_finalization
+                ),
+                "finalization_blockers": list(item.finalization_blockers or ()),
+                "approved_preview_filename": item.approved_preview_filename,
+                "target_preview_path": item.target_preview_path,
+                "user_edited_fields": {
+                    key: value for key, value in (item.user_edited_fields or ())
+                },
+                "warnings_acknowledged": list(item.warnings_acknowledged or ()),
+                "source_hash_at_decision": item.source_hash_at_decision,
+                "preview_state_id": item.preview_state_id,
+                "final_write_allowed": False,
             }
             for item in items
         ],
@@ -1757,6 +1855,84 @@ def _cleanup_export_folder(export_folder: Path | None) -> None:
         pass
 
 
+def _decision_fields_for_source(
+    decision_fields_by_key: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    source_filename: str,
+    item_key: str | None = None,
+) -> dict[str, Any]:
+    """Lookup Prompt-29 decision/readiness fields for a source row."""
+
+    mapping = decision_fields_by_key or {}
+    payload: Mapping[str, Any] | None = None
+    if item_key and item_key in mapping:
+        payload = mapping[item_key]
+    elif source_filename in mapping:
+        payload = mapping[source_filename]
+    else:
+        for key, value in mapping.items():
+            if str(value.get("source_filename") or "") == source_filename:
+                payload = value
+                break
+    if not payload:
+        return {
+            "review_decision": None,
+            "decision_timestamp": None,
+            "approved_by_user": False,
+            "finalization_ready": False,
+            "decision_ready_for_future_finalization": False,
+            "finalization_blockers": (),
+            "approved_preview_filename": None,
+            "target_preview_path": None,
+            "user_edited_fields": (),
+            "warnings_acknowledged": (),
+            "source_hash_at_decision": None,
+            "preview_state_id": None,
+            "final_write_allowed": False,
+        }
+    edited = payload.get("user_edited_fields") or payload.get("edited_fields") or {}
+    if isinstance(edited, Mapping):
+        edited_fields = tuple((str(k), str(v)) for k, v in edited.items())
+    else:
+        edited_fields = tuple((str(k), str(v)) for k, v in (edited or ()))
+    blockers = payload.get("finalization_blockers") or ()
+    warnings = payload.get("warnings_acknowledged") or ()
+    return {
+        "review_decision": payload.get("review_decision")
+        or payload.get("decision_type"),
+        "decision_timestamp": payload.get("decision_timestamp"),
+        "approved_by_user": bool(payload.get("approved_by_user")),
+        "finalization_ready": bool(payload.get("finalization_ready")),
+        "decision_ready_for_future_finalization": bool(
+            payload.get("decision_ready_for_future_finalization")
+            or payload.get("finalization_ready")
+        ),
+        "finalization_blockers": tuple(str(b) for b in blockers),
+        "approved_preview_filename": payload.get("approved_preview_filename"),
+        "target_preview_path": payload.get("target_preview_path")
+        or payload.get("approved_target_preview_path"),
+        "user_edited_fields": edited_fields,
+        "warnings_acknowledged": tuple(str(w) for w in warnings),
+        "source_hash_at_decision": payload.get("source_hash_at_decision"),
+        "preview_state_id": payload.get("preview_state_id"),
+        "final_write_allowed": False,
+    }
+
+
+def _with_decision_fields(
+    item: PreviewExportItem,
+    decision_fields_by_key: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    item_key: str | None = None,
+) -> PreviewExportItem:
+    fields = _decision_fields_for_source(
+        decision_fields_by_key,
+        source_filename=item.source_filename,
+        item_key=item_key,
+    )
+    return replace(item, **fields)
+
+
 def write_preview_export_package(
     run_state: ProcessingRunState | None,
     *,
@@ -1771,6 +1947,7 @@ def write_preview_export_package(
     | list[ReviewExportExpectation]
     | None = None,
     refresh_from_input: bool = False,
+    decision_fields_by_key: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> PreviewExportResult:
     """Create a dedicated preview-export-* package under controlled output."""
 
@@ -2150,6 +2327,21 @@ def write_preview_export_package(
                 )
             )
 
+        enriched_items: list[PreviewExportItem] = []
+        key_by_source = {
+            (item.document_name or "").strip(): review_item_key(item)
+            for item in (run_state.review_items or ())
+        }
+        for item in items:
+            enriched_items.append(
+                _with_decision_fields(
+                    item,
+                    decision_fields_by_key,
+                    item_key=key_by_source.get(item.source_filename),
+                )
+            )
+        items = enriched_items
+
         item_tuple = tuple(items)
         copied_count = sum(1 for item in item_tuple if not item.excluded)
         payload = _manifest_payload(
@@ -2243,7 +2435,20 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
     input_root = (getattr(state, "workspace_input_folder_override", None) or "").strip()
     output_root = (getattr(state, "workspace_output_folder_override", None) or "").strip()
     bag = get_review_preview_ui(state)
-    excluded = frozenset(bag.excluded_from_export_preview_keys)
+    from invoice_tool.ui_v2.review_decision import (
+        decision_report_fields_for_item,
+        get_review_decision_bag,
+        items_excluded_from_finalization_batch,
+    )
+
+    excluded = frozenset(bag.excluded_from_export_preview_keys) | set(
+        items_excluded_from_finalization_batch(state)
+    )
+    decision_bag = get_review_decision_bag(state)
+    decision_fields_by_key = {
+        key: decision_report_fields_for_item(state, key)
+        for key in decision_bag.decisions_by_item_key
+    }
 
     # Reject stale previous export folders as input before any write.
     if _path_is_previous_preview_export(_norm_path(input_root)):
@@ -2280,6 +2485,7 @@ def apply_workspace_preview_export(state: Any) -> PreviewExportResult:
         final_write=False,
         review_expectations=expectations,
         refresh_from_input=False,
+        decision_fields_by_key=decision_fields_by_key,
     )
 
     if result.ok:

@@ -146,6 +146,27 @@ from invoice_tool.ui_v2.configuration_rule_editor import (
     build_configuration_rule_action_labels,
     build_configuration_rule_draft_panel,
 )
+from invoice_tool.ui_v2.review_decision import (
+    ACTION_ACCEPT_SUGGESTION,
+    ACTION_DEFER,
+    ACTION_EDIT_SUGGESTION,
+    ACTION_IGNORE_EXPORT,
+    ACTION_KEEP_UNCLEAR,
+    ACTION_NEEDS_CONFIGURATION,
+    DECISION_ACTION_LABELS,
+    MSG_FINALIZATION_READY_NO,
+    MSG_FINALIZATION_READY_YES,
+    MSG_NOT_FINAL_YET,
+    arm_accept_confirmation,
+    create_accept_suggestion_decision,
+    create_defer_decision,
+    create_edit_suggestion_decision,
+    create_ignore_for_export_decision,
+    create_keep_review_required_decision,
+    create_needs_configuration_change_decision,
+    get_review_decision_bag,
+    set_edit_filename_draft,
+)
 from invoice_tool.ui_v2.state import UiV2State
 
 # Re-exports used by existing tests / callers.
@@ -352,6 +373,16 @@ class ReviewSelectedDetailVM:
     matched_after_rule_change: bool = False
     previous_matched_configuration: str | None = None
     new_matched_configuration: str | None = None
+    # Prompt 29/34 — review decision / readiness display.
+    review_decision: str | None = None
+    decision_timestamp: str | None = None
+    approved_preview_filename: str | None = None
+    finalization_ready: bool = False
+    finalization_blockers: tuple[str, ...] = ()
+    readiness_warnings: tuple[str, ...] = ()
+    final_write_allowed: bool = False
+    not_final_yet_text: str = MSG_NOT_FINAL_YET
+    decision_feedback: str | None = None
 
 
 @dataclass(frozen=True)
@@ -396,6 +427,10 @@ class ReviewPageVM:
     configuration_rule_draft_available: bool = False
     preview_rerun_action_labels: tuple[str, ...] = PREVIEW_RERUN_ACTION_LABELS
     configuration_rule_apply_available: bool = False
+    decision_action_labels: tuple[str, ...] = DECISION_ACTION_LABELS
+    not_final_yet_text: str = MSG_NOT_FINAL_YET
+    decision_feedback: str = ""
+    decision_feedback_error: bool = False
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -665,6 +700,13 @@ def _build_selected_detail(
     export_preview_summary: str | None,
     excluded: bool,
     checked: bool,
+    review_decision: str | None = None,
+    decision_timestamp: str | None = None,
+    approved_preview_filename: str | None = None,
+    finalization_ready: bool = False,
+    finalization_blockers: tuple[str, ...] = (),
+    readiness_warnings: tuple[str, ...] = (),
+    decision_feedback: str | None = None,
 ) -> ReviewSelectedDetailVM:
     export_status = MSG_EXPORT_PREVIEW_TITLE
     if excluded:
@@ -894,6 +936,15 @@ def _build_selected_detail(
         matched_after_rule_change=bool(detail.matched_after_rule_change),
         previous_matched_configuration=detail.previous_matched_configuration,
         new_matched_configuration=detail.new_matched_configuration,
+        review_decision=review_decision,
+        decision_timestamp=decision_timestamp,
+        approved_preview_filename=approved_preview_filename,
+        finalization_ready=bool(finalization_ready),
+        finalization_blockers=tuple(finalization_blockers or ()),
+        readiness_warnings=tuple(readiness_warnings or ()),
+        final_write_allowed=False,
+        not_final_yet_text=MSG_NOT_FINAL_YET,
+        decision_feedback=decision_feedback,
     )
 
 
@@ -921,6 +972,7 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         )
 
     bag = get_review_preview_ui(state)
+    decision_bag = get_review_decision_bag(state)
     selected_key = bag.selected_item_key
     # Auto-select first item when items exist and nothing selected yet.
     if detail_items and not selected_key:
@@ -949,12 +1001,37 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         for detail in detail_items:
             key = detail.item_key or detail.document_id
             if key == selected_key:
+                decision = decision_bag.decisions_by_item_key.get(key)
+                readiness = decision_bag.readiness_by_item_key.get(key)
                 selected_detail = _build_selected_detail(
                     detail,
                     safety_line=review_safety_line(flow),
                     export_preview_summary=export_summary,
                     excluded=key in bag.excluded_from_export_preview_keys,
                     checked=key in bag.checked_preview_keys,
+                    review_decision=(
+                        decision.decision_type if decision is not None else None
+                    ),
+                    decision_timestamp=(
+                        decision.decision_timestamp if decision is not None else None
+                    ),
+                    approved_preview_filename=(
+                        decision.approved_preview_filename
+                        if decision is not None
+                        else None
+                    ),
+                    finalization_ready=bool(
+                        readiness.ready if readiness is not None else False
+                    ),
+                    finalization_blockers=tuple(
+                        readiness.blockers
+                        if readiness is not None
+                        else (decision.finalization_blockers if decision else ())
+                    ),
+                    readiness_warnings=tuple(
+                        readiness.warnings if readiness is not None else ()
+                    ),
+                    decision_feedback=decision_bag.last_feedback or None,
                 )
                 coverage_action_labels = detail.configuration_coverage_action_labels
                 draft_available = bool(detail.configuration_rule_draft_available)
@@ -1000,6 +1077,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         configuration_rule_apply_available=bool(
             getattr(state, "configuration_rule_apply_available", False)
         ),
+        decision_action_labels=DECISION_ACTION_LABELS,
+        not_final_yet_text=MSG_NOT_FINAL_YET,
+        decision_feedback=decision_bag.last_feedback,
+        decision_feedback_error=bool(decision_bag.last_feedback_error),
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1069,6 +1150,141 @@ def _preview_action_row(state: UiV2State, *, enabled: bool) -> ft.Control:
         ),
     ]
     return ft.Row(buttons, spacing=8, wrap=True)
+
+
+def _decision_action_row(state: UiV2State, *, enabled: bool) -> ft.Control:
+    """Prompt-29 decision actions — state only, never final write."""
+
+    decision_bag = get_review_decision_bag(state)
+    selected = get_review_preview_ui(state).selected_item_key
+
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _on_accept(_e: ft.ControlEvent) -> None:
+        key = get_review_preview_ui(state).selected_item_key
+        if decision_bag.pending_accept_confirm_key != key:
+            arm_accept_confirmation(state, key)
+            _refresh()
+            return
+        create_accept_suggestion_decision(
+            state,
+            item_key=key,
+            decided_by_user=True,
+            explicit_confirmation=True,
+        )
+        _refresh()
+
+    def _on_edit(_e: ft.ControlEvent) -> None:
+        key = get_review_preview_ui(state).selected_item_key
+        draft = decision_bag.edit_filename_draft_by_key.get(key or "", "")
+        if not draft and selected:
+            # Seed draft from current preview filename when empty.
+            vm = build_review_page_vm(state)
+            if vm.selected_detail and vm.selected_detail.preview_filename:
+                draft = vm.selected_detail.preview_filename
+                set_edit_filename_draft(state, selected, draft)
+        create_edit_suggestion_decision(
+            state,
+            item_key=key,
+            decided_by_user=True,
+            edited_filename=draft or None,
+        )
+        _refresh()
+
+    def _on_config(_e: ft.ControlEvent) -> None:
+        create_needs_configuration_change_decision(state, decided_by_user=True)
+        _refresh()
+
+    def _on_keep_unclear(_e: ft.ControlEvent) -> None:
+        create_keep_review_required_decision(state, decided_by_user=True)
+        _refresh()
+
+    def _on_ignore(_e: ft.ControlEvent) -> None:
+        create_ignore_for_export_decision(state, decided_by_user=True)
+        _refresh()
+
+    def _on_defer(_e: ft.ControlEvent) -> None:
+        create_defer_decision(state, decided_by_user=True)
+        _refresh()
+
+    accept_label = ACTION_ACCEPT_SUGGESTION
+    if (
+        selected
+        and decision_bag.pending_accept_confirm_key == selected
+    ):
+        accept_label = f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"
+
+    buttons = [
+        secondary_button(accept_label, on_click=_on_accept, disabled=not enabled),
+        secondary_button(
+            ACTION_EDIT_SUGGESTION, on_click=_on_edit, disabled=not enabled
+        ),
+        secondary_button(
+            ACTION_NEEDS_CONFIGURATION, on_click=_on_config, disabled=not enabled
+        ),
+        secondary_button(
+            ACTION_KEEP_UNCLEAR, on_click=_on_keep_unclear, disabled=not enabled
+        ),
+        secondary_button(
+            ACTION_IGNORE_EXPORT, on_click=_on_ignore, disabled=not enabled
+        ),
+        secondary_button(ACTION_DEFER, on_click=_on_defer, disabled=not enabled),
+    ]
+    return ft.Column(
+        [
+            ft.Text(MSG_NOT_FINAL_YET, size=12),
+            ft.Row(buttons, spacing=8, wrap=True),
+        ],
+        spacing=8,
+        tight=True,
+    )
+
+
+def _decision_status_panel(detail: ReviewSelectedDetailVM) -> ft.Control:
+    ready_label = (
+        MSG_FINALIZATION_READY_YES
+        if detail.finalization_ready
+        else MSG_FINALIZATION_READY_NO
+    )
+    lines = [
+        ft.Text(detail.not_final_yet_text, size=12),
+        ft.Text(ready_label, size=12),
+        ft.Text("final_write_allowed: false", size=12),
+    ]
+    if detail.review_decision:
+        lines.append(ft.Text(f"Entscheidung: {detail.review_decision}", size=12))
+    if detail.decision_timestamp:
+        lines.append(ft.Text(f"Zeitpunkt: {detail.decision_timestamp}", size=12))
+    if detail.approved_preview_filename:
+        lines.append(
+            ft.Text(
+                f"Freigegebener Dateiname: {detail.approved_preview_filename}",
+                size=12,
+            )
+        )
+    if detail.finalization_blockers:
+        lines.append(
+            ft.Text(
+                "Blocker: " + ", ".join(detail.finalization_blockers),
+                size=12,
+            )
+        )
+    if detail.readiness_warnings:
+        lines.append(
+            ft.Text(
+                "Warnungen: " + ", ".join(detail.readiness_warnings),
+                size=12,
+            )
+        )
+    if detail.decision_feedback:
+        lines.append(ft.Text(detail.decision_feedback, size=12))
+    return section_block(
+        "Review-Entscheidung / Finalisierungsbereitschaft",
+        ft.Column(lines, spacing=4, tight=True),
+        subtitle="Preview only — keine finale Verarbeitung",
+    )
 
 
 def build_review_page(state: UiV2State) -> ft.Control:
@@ -1520,6 +1736,40 @@ def build_review_page(state: UiV2State) -> ft.Control:
         apply_panel = build_configuration_rule_apply_panel(state)
         if apply_panel is not None:
             items.append(apply_panel)
+        items.append(_decision_status_panel(detail))
+        decision_bag = get_review_decision_bag(state)
+        draft_value = decision_bag.edit_filename_draft_by_key.get(
+            detail.item_key,
+            detail.approved_preview_filename
+            or detail.preview_filename
+            or detail.suggested_filename
+            or "",
+        )
+
+        def _on_filename_change(e: ft.ControlEvent) -> None:
+            set_edit_filename_draft(
+                state, detail.item_key, str(getattr(e.control, "value", "") or "")
+            )
+
+        items.append(
+            section_block(
+                "Vorschlag bearbeiten (Dateiname)",
+                ft.TextField(
+                    value=draft_value,
+                    label="Vorschau-Dateiname (editierbar)",
+                    on_change=_on_filename_change,
+                    dense=True,
+                ),
+                subtitle="Nur State — keine Dateischreibung",
+            )
+        )
+        items.append(
+            section_block(
+                "Review-Entscheidungen",
+                _decision_action_row(state, enabled=True),
+                subtitle=MSG_NOT_FINAL_YET,
+            )
+        )
 
     detail_bits = [
         MSG_REVIEW_NO_FILE_MUTATION,
