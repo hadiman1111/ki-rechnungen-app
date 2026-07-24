@@ -20,12 +20,27 @@ from invoice_tool.ui_v2.components import (
     collapsible_details,
     compact_entry_row,
     empty_state,
+    form_field_group,
     page_header,
     page_scaffold,
     secondary_button,
     section_block,
     stacked_list,
     status_badge,
+)
+from invoice_tool.ui_v2.theme import (
+    COLOR_BORDER,
+    COLOR_SURFACE_ALT,
+    COLOR_TEXT_MUTED,
+    COLOR_TEXT_PRIMARY,
+    FONT_SIZE_HELPER,
+    FONT_SIZE_MONO,
+    FONT_SIZE_SECTION_TITLE,
+    RADIUS_CARD,
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XS,
 )
 from invoice_tool.ui_v2.dev_defaults import (
     ACTION_CREATE_CONTROLLED_FOLDERS,
@@ -165,8 +180,13 @@ from invoice_tool.ui_v2.configuration_rule_editor import (
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_CASE,
     ACTION_COPY_DIAGNOSIS,
+    ACTION_COPY_FILENAME,
     ACTION_COPY_ORACLE,
     ACTION_OPEN_WORKSPACE,
+    FILENAME_FIELD_POLISH_MARKER,
+    LABEL_DATEINAME_BEARBEITEN,
+    LABEL_VORSCHAU_DATEINAME,
+    MSG_FILENAME_PREVIEW_HELPER,
     MSG_FILENAME_PREVIEW_ONLY,
     MSG_FINAL_WRITE_USER_ANSWER,
     MSG_NO_READY_CASES,
@@ -179,6 +199,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     PRIMARY_PRUEFEN,
     REVIEW_DECLUTTER_LAYOUT_MARKER,
     REVIEW_SECTION_TITLES,
+    REVIEW_UI_POLISH_LAYOUT_MARKER,
     REVIEW_USER_MODE_LAYOUT_MARKER,
     SECTION_BEREIT,
     SECTION_DATEINAME,
@@ -215,6 +236,57 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
 MSG_LEGACY_ER_ER_NOTE = "Altes technisches Muster aus früherem Preview-Export."
 # Compatibility alias for declutter tests / imports that still look for MSG_ER_ER_NOTE.
 MSG_ER_ER_NOTE = MSG_LEGACY_ER_ER_NOTE
+
+
+def review_section(
+    title: str,
+    content: ft.Control,
+    *,
+    subtitle: str | None = None,
+) -> ft.Container:
+    """Visually separated review detail section (card + spacing)."""
+
+    header: list[ft.Control] = [
+        ft.Text(
+            title,
+            size=FONT_SIZE_SECTION_TITLE,
+            weight=ft.FontWeight.W_700,
+            color=COLOR_TEXT_PRIMARY,
+        )
+    ]
+    if subtitle:
+        header.append(
+            ft.Text(subtitle, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED)
+        )
+    return ft.Container(
+        margin=ft.Margin.only(top=SPACE_MD, bottom=SPACE_SM),
+        padding=SPACE_LG,
+        bgcolor=COLOR_SURFACE_ALT,
+        border=ft.Border.all(1, COLOR_BORDER),
+        border_radius=RADIUS_CARD,
+        content=ft.Column(
+            [*header, content],
+            spacing=SPACE_SM,
+            tight=True,
+        ),
+        data=REVIEW_UI_POLISH_LAYOUT_MARKER,
+    )
+
+
+def review_card(title: str, content: ft.Control, *, subtitle: str | None = None) -> ft.Control:
+    """Alias for :func:`review_section` — clearer product-preview cards."""
+
+    return review_section(title, content, subtitle=subtitle)
+
+
+def section_divider() -> ft.Control:
+    """Subtle horizontal separator between review sections."""
+
+    return ft.Container(
+        height=1,
+        bgcolor=COLOR_BORDER,
+        margin=ft.Margin.symmetric(vertical=SPACE_XS),
+    )
 
 
 def er_er_note_for_filename(name: str | None) -> str | None:
@@ -608,6 +680,8 @@ class ReviewPageVM:
     # Declutter / oracle / simple user-review surface
     declutter_layout_marker: str = REVIEW_DECLUTTER_LAYOUT_MARKER
     user_mode_layout_marker: str = REVIEW_USER_MODE_LAYOUT_MARKER
+    ui_polish_layout_marker: str = REVIEW_UI_POLISH_LAYOUT_MARKER
+    filename_field_polish_marker: str = FILENAME_FIELD_POLISH_MARKER
     safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
     final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
     oracle_available_title: str = MSG_ORACLE_AVAILABLE
@@ -619,6 +693,7 @@ class ReviewPageVM:
         ACTION_COPY_CASE,
         ACTION_COPY_DIAGNOSIS,
         ACTION_COPY_ORACLE,
+        ACTION_COPY_FILENAME,
     )
     empty_state_workspace_action: str = ACTION_OPEN_WORKSPACE
     empty_state_oracle_action: str = ACTION_COPY_ORACLE
@@ -1489,6 +1564,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         claims_production_ready=False,
         declutter_layout_marker=REVIEW_DECLUTTER_LAYOUT_MARKER,
         user_mode_layout_marker=REVIEW_USER_MODE_LAYOUT_MARKER,
+        ui_polish_layout_marker=REVIEW_UI_POLISH_LAYOUT_MARKER,
+        filename_field_polish_marker=FILENAME_FIELD_POLISH_MARKER,
         safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
         final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
         oracle_available_title=MSG_ORACLE_AVAILABLE,
@@ -1500,6 +1577,7 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
             ACTION_COPY_CASE,
             ACTION_COPY_DIAGNOSIS,
             ACTION_COPY_ORACLE,
+            ACTION_COPY_FILENAME,
         ),
         empty_state_workspace_action=ACTION_OPEN_WORKSPACE,
         empty_state_oracle_action=ACTION_COPY_ORACLE,
@@ -2135,7 +2213,11 @@ def _finalization_declutter_panel(
         spacing=6,
         tight=True,
     )
-    return section_block(SECTION_FINAL_WRITE_Q, body, subtitle=MSG_NOT_FINAL_YET)
+    return review_section(
+        SECTION_FINAL_WRITE_Q,
+        body,
+        subtitle=MSG_NOT_FINAL_YET,
+    )
 
 
 def _ready_cases_panel(vm: ReviewPageVM) -> ft.Control:
@@ -2176,6 +2258,8 @@ def _developer_tools_collapsed(
     tech_lines: list[str] = [
         vm.user_mode_layout_marker,
         vm.declutter_layout_marker,
+        vm.ui_polish_layout_marker,
+        vm.filename_field_polish_marker,
         MSG_ORACLE_AVAILABLE,
         vm.oracle_command,
         MSG_ORACLE_NO_AUTO_RUN,
@@ -2348,7 +2432,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
     if vm.selected_detail is not None:
         detail = vm.selected_detail
         items.append(
-            section_block(
+            review_section(
                 SECTION_ERKANNT,
                 _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
             )
@@ -2358,7 +2442,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
             for line in (detail.unclear_items or detail.why_review_plain)
         ]
         items.append(
-            section_block(
+            review_section(
                 SECTION_UNKLAR,
                 ft.Column(
                     unclear_lines
@@ -2397,36 +2481,79 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 state, detail.item_key, str(getattr(e.control, "value", "") or "")
             )
 
-        vorschlag_body.append(
-            ft.TextField(
-                value=draft_value,
-                label="Vorschau-Dateiname (editierbar)",
-                on_change=_on_filename_change,
-                dense=True,
+        def _copy_filename(_e: ft.ControlEvent, value: str = draft_value) -> None:
+            current = decision_bag.edit_filename_draft_by_key.get(
+                detail.item_key, value
             )
+            copy_text_to_state_and_clipboard(
+                state,
+                str(current or value or ""),
+                kind=ACTION_COPY_FILENAME,
+            )
+            if state.refresh is not None:
+                state.refresh()
+
+        filename_field = ft.TextField(
+            value=draft_value,
+            on_change=_on_filename_change,
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+            expand=True,
+            text_size=FONT_SIZE_MONO,
+            border_color=COLOR_BORDER,
+            dense=False,
+            data=FILENAME_FIELD_POLISH_MARKER,
         )
+        filename_editor = form_field_group(
+            LABEL_VORSCHAU_DATEINAME,
+            ft.Column(
+                [
+                    ft.Text(
+                        LABEL_DATEINAME_BEARBEITEN,
+                        size=FONT_SIZE_HELPER,
+                        color=COLOR_TEXT_MUTED,
+                    ),
+                    ft.Container(
+                        content=filename_field,
+                        expand=True,
+                        width=None,
+                        data=FILENAME_FIELD_POLISH_MARKER,
+                    ),
+                    ft.Row(
+                        [secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename)],
+                        spacing=SPACE_SM,
+                    ),
+                ],
+                spacing=SPACE_XS,
+                tight=True,
+                expand=True,
+            ),
+            helper=MSG_FILENAME_PREVIEW_HELPER,
+        )
+        vorschlag_body.append(filename_editor)
         items.append(
-            section_block(
+            review_section(
                 SECTION_DATEINAME,
-                ft.Column(vorschlag_body, spacing=8, tight=True),
+                ft.Column(vorschlag_body, spacing=SPACE_SM, tight=True),
             )
         )
         items.append(
-            section_block(
+            review_section(
                 SECTION_ENTSCHEIDEN,
                 ft.Column(
                     [
                         ft.Text(detail.decision_prompt, size=13),
                         _next_action_row(state, detail),
                     ],
-                    spacing=8,
+                    spacing=SPACE_SM,
                     tight=True,
                 ),
             )
         )
         items.append(_finalization_declutter_panel(state, vm, detail))
         items.append(
-            section_block(
+            review_section(
                 "Kopieren",
                 _copy_actions_row(state, detail),
                 subtitle=MSG_SAFETY_LINE_NO_FINAL,

@@ -21,6 +21,7 @@ ACTION_OPEN_WORKSPACE = "Arbeitsbereich öffnen"
 SMOKE_DEV_UI_LAYOUT_MARKER = "track_b_smoke_dev_ui_layout_v1_no_overlap"
 REVIEW_DECLUTTER_LAYOUT_MARKER = "track_b_review_surface_declutter_v1"
 REVIEW_USER_MODE_LAYOUT_MARKER = "track_b_simple_user_review_mode_v1"
+REVIEW_UI_POLISH_LAYOUT_MARKER = "track_b_simple_user_review_ui_polish_v1"
 
 MSG_SAFETY_LINE_NO_FINAL = "Vorschau — keine finalen Dateien geschrieben"
 MSG_FINAL_WRITE_USER_ANSWER = (
@@ -42,6 +43,14 @@ MSG_ER_ER_NOTE = (
 MSG_FILENAME_PREVIEW_ONLY = (
     "Dateiname ist nur Vorschau — noch keine finalen Dateien geschrieben."
 )
+MSG_FILENAME_PREVIEW_HELPER = (
+    "Nur Vorschau — noch keine finale Datei geschrieben."
+)
+LABEL_VORSCHAU_DATEINAME = "Vorschau-Dateiname"
+LABEL_DATEINAME_BEARBEITEN = "Dateiname bearbeiten"
+ACTION_COPY_FILENAME = "Dateiname kopieren"
+# Marker proving the editable preview filename control is full-width / no-clip.
+FILENAME_FIELD_POLISH_MARKER = "track_b_preview_filename_full_width_no_clip_v1"
 MSG_NO_READY_CASES = "Noch keine Fälle bereit."
 MSG_NO_REVIEW_CASES = "Keine offenen Prüffälle."
 MSG_USER_REVIEW_SUBTITLE = (
@@ -51,9 +60,9 @@ MSG_USER_REVIEW_SUBTITLE = (
 # Simple user review questions (primary surface).
 SECTION_ERKANNT = "Was wurde erkannt?"
 SECTION_UNKLAR = "Was ist unklar?"
-SECTION_DATEINAME = "Welcher Dateiname wird vorgeschlagen?"
+SECTION_DATEINAME = "Was schlägt die App vor?"
 SECTION_ENTSCHEIDEN = "Was muss ich entscheiden?"
-SECTION_FINAL_WRITE_Q = "Wird etwas final geschrieben?"
+SECTION_FINAL_WRITE_Q = "Finalisierung / Vorschau-Sicherheit"
 SECTION_BEREIT = "Welche Fälle sind bereit?"
 SECTION_PRUEFUNG = "Welche Fälle bleiben zur Prüfung?"
 SECTION_TECHNISCHE = "Technische Details"
@@ -616,6 +625,7 @@ __all__ = (
     "ACTION_ACCEPT_SUGGESTION",
     "ACTION_COPY_CASE",
     "ACTION_COPY_DIAGNOSIS",
+    "ACTION_COPY_FILENAME",
     "ACTION_COPY_ORACLE",
     "ACTION_DEFER",
     "ACTION_IGNORE_EXPORT",
@@ -629,7 +639,11 @@ __all__ = (
     "BADGE_READY",
     "BADGE_STORNO",
     "BADGE_UNKLAR",
+    "FILENAME_FIELD_POLISH_MARKER",
+    "LABEL_DATEINAME_BEARBEITEN",
+    "LABEL_VORSCHAU_DATEINAME",
     "MSG_ER_ER_NOTE",
+    "MSG_FILENAME_PREVIEW_HELPER",
     "MSG_FILENAME_PREVIEW_ONLY",
     "MSG_FINAL_WRITE_USER_ANSWER",
     "MSG_NO_READY_CASES",
@@ -652,6 +666,7 @@ __all__ = (
     "PRIMARY_UNKLAR",
     "REVIEW_DECLUTTER_LAYOUT_MARKER",
     "REVIEW_SECTION_TITLES",
+    "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
     "SECTION_BEREIT",
     "SECTION_DATEINAME",
