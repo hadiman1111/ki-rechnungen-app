@@ -340,7 +340,7 @@ def test_10_missing_payment_plain_german() -> None:
     assert BADGE_MISSING_PAYMENT in vm.selected_detail.status_badges
     why = derive_why_review_plain_german(vm.selected_detail)
     assert MSG_WHY_MISSING_PAYMENT in why or any(
-        "Zahlungsfeld" in line for line in why
+        "Zahlungsart" in line or "Zahlungsfeld" in line for line in why
     )
 
 

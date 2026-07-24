@@ -23,16 +23,39 @@ REVIEW_DECLUTTER_LAYOUT_MARKER = "track_b_review_surface_declutter_v1"
 REVIEW_USER_MODE_LAYOUT_MARKER = "track_b_simple_user_review_mode_v1"
 REVIEW_UI_POLISH_LAYOUT_MARKER = "track_b_simple_user_review_ui_polish_v1"
 REVIEW_ACCORDION_LAYOUT_MARKER = "track_b_review_accordion_layout_v1"
+REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
 REVIEW_CARD_COLLAPSED_SUMMARY_ONLY = "review_card_collapsed_summary_only"
 REVIEW_CARD_ACTIVE_HIGHLIGHT = "review_card_active_highlight"
 INLINE_DETAIL_UNDER_SELECTED_CARD = "inline_detail_under_selected_card"
 DETAIL_PANEL_DISTINCT_BACKGROUND = "detail_panel_distinct_background"
+FILENAME_PREVIEW_ONLY_MARKER = "review_filename_preview_only_default"
+GUIDED_STATUS_PANEL_MARKER = "guided_status_panel_top"
+DECISION_FIRST_PANEL_MARKER = "decision_first_panel"
 
 ACTION_DETAILS_OPEN = "Details öffnen"
 ACTION_DETAILS_CLOSE = "Details schließen"
 LABEL_REVIEW_DOC_NAME = "Dokumentname"
 LABEL_REVIEW_DATE = "Datum"
 LABEL_REVIEW_AMOUNT = "Betrag"
+LABEL_SUGGESTED_FILENAME = "Vorgeschlagener Dateiname"
+ACTION_EDIT_FILENAME = "Dateiname bearbeiten"
+ACTION_KEEP_UNCLEAR_GUIDED = "Als unklar lassen"
+ACTION_KEEP_IN_REVIEW_GUIDED = "Zur Prüfung lassen"
+ACTION_ADD_PAYMENT = "Zahlungsart ergänzen"
+ACTION_CREATE_CARD_RULE = "Kartenregel anlegen"
+SECTION_GUIDED_STATUS = "Status & Empfehlung"
+SECTION_TEST_TOOLS = "Test & Nachweis"
+MSG_GUIDED_SAFETY_LINE = (
+    "Nur Vorschau — es wird nichts final geschrieben. Originale bleiben unverändert."
+)
+MSG_GUIDED_STATUS_REVIEW = "Dieses Dokument bleibt zur Prüfung."
+MSG_GUIDED_REC_NOT_AMEX = "Nicht als American Express zuordnen."
+MSG_GUIDED_REC_STORNO = "Bitte Betrag, Datum und Zahlungsart prüfen."
+MSG_GUIDED_REC_MISSING_PAYMENT = (
+    "Bitte Zahlungsart ergänzen oder zur Prüfung lassen."
+)
+MSG_GUIDED_PAYPAL_OK = "Vorschlag kann geprüft werden."
+MSG_WHY_CARD_AMEX_SHORT = "Kartenzahlung erkannt, aber AMEX ist nicht belegt."
 
 MSG_SAFETY_LINE_NO_FINAL = "Vorschau — keine finalen Dateien geschrieben"
 MSG_FINAL_WRITE_USER_ANSWER = (
@@ -108,27 +131,30 @@ BADGE_BLOCKED = "Blockiert"
 PRIMARY_PRUEFEN = "Prüfen"
 PRIMARY_ACCEPT = "Vorschlag akzeptieren"
 PRIMARY_PAYPAL = "PayPal-Regel anwenden"
-PRIMARY_UNKLAR = "Unklar lassen"
+PRIMARY_UNKLAR = "Als unklar lassen"
 
-MSG_WHY_MISSING_PAYMENT = (
-    "Zahlungsfeld fehlt oder konnte nicht sicher erkannt werden."
-)
+MSG_WHY_MISSING_PAYMENT = "Zahlungsart fehlt."
 MSG_WHY_MISSING_CATEGORY = "Geschäftskategorie fehlt oder ist unklar."
 MSG_WHY_PAYPAL_MISSING = (
     "PayPal erkannt, aber keine passende PayPal-Regel vorhanden."
 )
-MSG_WHY_PAYPAL_APPLIED = "PayPal-Regel ist vorhanden bzw. wurde angewendet."
-MSG_WHY_NOT_AMEX = (
-    "Kartenzahlung erkannt, aber AMEX ist nicht belegt — daher keine AMEX-Zuordnung."
-)
-MSG_WHY_STORNO = "Storno erkannt — der Beleg bleibt zur Prüfung."
+MSG_WHY_PAYPAL_APPLIED = "PayPal-Regel ist vorhanden."
+MSG_WHY_NOT_AMEX = MSG_WHY_CARD_AMEX_SHORT
+MSG_WHY_STORNO = "Storno erkannt."
 MSG_WHY_GENERIC = "Der Beleg ist unklar und muss geprüft werden."
+MSG_WHY_PAYPAL_DETECTED = "PayPal erkannt."
 
 ACTION_PAYPAL_SAVE_RERUN = "PayPal-Regel speichern und Matching neu berechnen"
 ACTION_ACCEPT_SUGGESTION = "Vorschlag akzeptieren"
 ACTION_KEEP_UNCLEAR = "als Unklar belassen"
 ACTION_DEFER = "zurückstellen"
 ACTION_IGNORE_EXPORT = "ignorieren / nicht exportieren"
+
+CASE_STORNO = "storno"
+CASE_PAYPAL = "paypal"
+CASE_CARD_NOT_AMEX = "card_not_amex"
+CASE_MISSING_PAYMENT = "missing_payment"
+CASE_GENERIC = "generic"
 
 
 def _g(obj: Any, key: str, default: Any = None) -> Any:
@@ -161,27 +187,93 @@ def _blob(*parts: Any) -> str:
     return " ".join(_norm(part) for part in parts if part is not None)
 
 
-def paypal_action_relevant(detail: Any) -> bool:
-    """True when PayPal CTA is useful for this document."""
-
-    missing_type = _norm(_g(detail, "missing_configuration_type"))
-    coverage = _norm(_g(detail, "configuration_coverage_status"))
-    guidance = _norm(_g(detail, "user_guidance"))
-    payment = _norm(
+def _document_payment(detail: Any) -> str:
+    return _norm(
         _g(detail, "selected_payment_field") or _g(detail, "payment_account")
     )
+
+
+def _document_art(detail: Any) -> str:
+    return _norm(_g(detail, "selected_art") or _g(detail, "document_type"))
+
+
+def _is_card_payment(payment: str) -> bool:
+    return payment in {"card", "credit card", "karte", "kreditkarte"}
+
+
+def _is_missing_payment(detail: Any, payment: str) -> bool:
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    filename = _norm(_g(detail, "suggested_filename"))
+    return (
+        not payment
+        or missing_type in {"payment field", "payment_field", "missing payment field"}
+        or "missing_payment_field" in coverage
+        or "fehlt_payment_field" in filename
+        or str(_g(detail, "suggested_filename") or "").endswith(
+            "FEHLT_payment_field.pdf"
+        )
+    )
+
+
+def _is_card_not_amex(detail: Any, payment: str) -> bool:
+    if not _is_card_payment(payment):
+        return False
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    guidance = _norm(_g(detail, "user_guidance"))
+    return (
+        missing_type in {"generic card", "generic_card"}
+        or "amex not proven" in _blob(guidance, coverage)
+        or "amex nicht belegt" in guidance
+        or "no_safe_card" in coverage
+        or "amex" not in matched
+    )
+
+
+def review_case_kind(detail: Any) -> str:
+    """Document-specific review case — never mix PayPal into card cases."""
+
+    art = _document_art(detail)
+    payment = _document_payment(detail)
+    if art == "storno":
+        return CASE_STORNO
+    if payment == "paypal":
+        return CASE_PAYPAL
+    if _is_card_payment(payment) and _is_card_not_amex(detail, payment):
+        return CASE_CARD_NOT_AMEX
+    if _is_missing_payment(detail, payment):
+        return CASE_MISSING_PAYMENT
+    if _is_card_payment(payment):
+        return CASE_CARD_NOT_AMEX
+    return CASE_GENERIC
+
+
+def paypal_action_relevant(detail: Any) -> bool:
+    """True when PayPal CTA is useful for this document only."""
+
+    if _document_payment(detail) != "paypal":
+        return False
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
     matched = _norm(_g(detail, "matched_configuration_name"))
     if missing_type == "paypal":
         return True
-    if "paypal" in guidance and (
-        "keine" in guidance or "fehl" in guidance or "missing" in coverage
-    ):
+    if matched in {"", "unklar", "unmatched", "fallback"}:
         return True
-    if payment == "paypal" and matched in {"", "unklar", "unmatched", "fallback"}:
-        return True
-    if payment == "paypal" and "missing" in coverage:
+    if "missing" in coverage:
         return True
     return False
+
+
+def paypal_rule_present(detail: Any) -> bool:
+    """True when this PayPal document already has a usable PayPal rule."""
+
+    if _document_payment(detail) != "paypal":
+        return False
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    return "paypal" in matched and matched not in {"", "unklar", "unmatched", "fallback"}
 
 
 def derive_status_badges(
@@ -190,46 +282,22 @@ def derive_status_badges(
     finalization_ready: bool = False,
     finalization_blockers: Sequence[str] = (),
 ) -> tuple[str, ...]:
-    """Compact status badges for review list / Kurzprüfung."""
+    """Compact status badges — document-specific only."""
 
     badges: list[str] = []
-    payment = _norm(
-        _g(detail, "selected_payment_field") or _g(detail, "payment_account")
-    )
-    art = _norm(_g(detail, "selected_art") or _g(detail, "document_type"))
+    kind = review_case_kind(detail)
     matched = _norm(_g(detail, "matched_configuration_name"))
-    missing_type = _norm(_g(detail, "missing_configuration_type"))
-    coverage = _norm(_g(detail, "configuration_coverage_status"))
-    guidance = _norm(_g(detail, "user_guidance"))
     reason = _norm(_g(detail, "review_reason") or _g(detail, "reason"))
-    blob = _blob(guidance, coverage, reason, missing_type, matched)
 
-    if art == "storno" or "storno" in blob:
+    if kind == CASE_STORNO:
         badges.append(BADGE_STORNO)
-    if payment == "paypal" or "paypal" in blob:
+    elif kind == CASE_PAYPAL:
         badges.append(BADGE_PAYPAL)
-    if (
-        missing_type in {"payment field", "payment_field", "missing payment field"}
-        or "missing_payment_field" in coverage
-        or "zahlungsfeld" in guidance
-        or "payment_field fehlt" in reason
-        or "fehlt payment" in blob
-        or str(_g(detail, "suggested_filename") or "").endswith(
-            "FEHLT_payment_field.pdf"
-        )
-        or "fehlt_payment_field" in _norm(_g(detail, "suggested_filename"))
-    ):
-        if BADGE_MISSING_PAYMENT not in badges:
-            badges.append(BADGE_MISSING_PAYMENT)
-    if (
-        missing_type in {"generic card", "generic_card"}
-        or "amex not proven" in blob
-        or "nicht-amex" in blob
-        or "amex nicht belegt" in blob
-        or ("card" in payment and "amex" not in matched)
-    ):
-        if BADGE_NOT_AMEX not in badges:
-            badges.append(BADGE_NOT_AMEX)
+    elif kind == CASE_CARD_NOT_AMEX:
+        badges.append(BADGE_NOT_AMEX)
+    elif kind == CASE_MISSING_PAYMENT:
+        badges.append(BADGE_MISSING_PAYMENT)
+
     if matched in {"unklar", "unmatched", "fallback"} or "unklar" in reason:
         if BADGE_UNKLAR not in badges:
             badges.append(BADGE_UNKLAR)
@@ -239,7 +307,6 @@ def derive_status_badges(
         badges.append(BADGE_BLOCKED)
     elif not badges:
         badges.append(BADGE_UNKLAR)
-    # Stable unique order
     seen: set[str] = set()
     ordered: list[str] = []
     for badge in badges:
@@ -250,76 +317,82 @@ def derive_status_badges(
 
 
 def derive_why_review_plain_german(detail: Any) -> tuple[str, ...]:
-    """Plain-German reasons — no raw internal enums as primary text."""
+    """Plain-German, document-specific reasons — no cross-document PayPal bleed."""
 
-    reasons: list[str] = []
-    payment = _norm(
-        _g(detail, "selected_payment_field") or _g(detail, "payment_account")
-    )
-    art = _norm(_g(detail, "selected_art") or _g(detail, "document_type"))
-    missing_type = _norm(_g(detail, "missing_configuration_type"))
-    coverage = _norm(_g(detail, "configuration_coverage_status"))
-    guidance = str(_g(detail, "user_guidance") or "").strip()
-    category = _norm(
-        _g(detail, "business_category_display") or _g(detail, "business_category")
-    )
-    matched = _norm(_g(detail, "matched_configuration_name"))
-    blob = _blob(guidance, coverage, missing_type, _g(detail, "review_reason"))
+    kind = review_case_kind(detail)
+    if kind == CASE_STORNO:
+        return (MSG_WHY_STORNO,)
+    if kind == CASE_PAYPAL:
+        if paypal_rule_present(detail) and not paypal_action_relevant(detail):
+            return (MSG_WHY_PAYPAL_DETECTED, MSG_WHY_PAYPAL_APPLIED)
+        if paypal_action_relevant(detail):
+            return (MSG_WHY_PAYPAL_DETECTED, MSG_WHY_PAYPAL_MISSING)
+        if paypal_rule_present(detail):
+            return (MSG_WHY_PAYPAL_DETECTED, MSG_WHY_PAYPAL_APPLIED)
+        return (MSG_WHY_PAYPAL_DETECTED,)
+    if kind == CASE_CARD_NOT_AMEX:
+        return (MSG_WHY_NOT_AMEX,)
+    if kind == CASE_MISSING_PAYMENT:
+        return (MSG_WHY_MISSING_PAYMENT,)
+    return (MSG_WHY_GENERIC,)
 
-    if art == "storno" or "storno" in blob:
-        reasons.append(MSG_WHY_STORNO)
-    if (
-        missing_type in {"payment field", "payment_field"}
-        or "missing_payment_field" in coverage
-        or "zahlungsfeld" in _norm(guidance)
-        or not payment
-        and (
-            "payment" in blob
-            or "zahlungs" in blob
-            or "fehlt_payment_field" in _norm(_g(detail, "suggested_filename"))
+
+def derive_guided_status_lines(detail: Any) -> tuple[str, ...]:
+    """Top guided panel: status, reason, recommendation — document-specific."""
+
+    kind = review_case_kind(detail)
+    if kind == CASE_STORNO:
+        return (MSG_WHY_STORNO, MSG_GUIDED_REC_STORNO)
+    if kind == CASE_PAYPAL:
+        if paypal_rule_present(detail) and not paypal_action_relevant(detail):
+            return (
+                MSG_WHY_PAYPAL_DETECTED,
+                MSG_WHY_PAYPAL_APPLIED,
+                MSG_GUIDED_PAYPAL_OK,
+            )
+        if paypal_action_relevant(detail):
+            return (
+                MSG_WHY_PAYPAL_DETECTED,
+                MSG_WHY_PAYPAL_MISSING,
+                "PayPal-Regel prüfen oder Vorschlag entscheiden.",
+            )
+        return (MSG_WHY_PAYPAL_DETECTED, MSG_GUIDED_PAYPAL_OK)
+    if kind == CASE_CARD_NOT_AMEX:
+        return (
+            MSG_GUIDED_STATUS_REVIEW,
+            f"Grund: {MSG_WHY_NOT_AMEX}",
+            f"Empfehlung: {MSG_GUIDED_REC_NOT_AMEX}",
         )
-    ):
-        reasons.append(MSG_WHY_MISSING_PAYMENT)
-    if paypal_action_relevant(detail) or (
-        payment == "paypal" and matched in {"", "unklar"}
-    ):
-        if matched == "paypal" or "paypal" in matched:
-            reasons.append(MSG_WHY_PAYPAL_APPLIED)
-        else:
-            reasons.append(MSG_WHY_PAYPAL_MISSING)
-    elif payment == "paypal" and "paypal" in matched:
-        reasons.append(MSG_WHY_PAYPAL_APPLIED)
-    if (
-        missing_type in {"generic card", "generic_card"}
-        or "amex not proven" in blob
-        or "amex nicht belegt" in blob
-        or ("card" in payment and "amex" not in matched)
-    ):
-        reasons.append(MSG_WHY_NOT_AMEX)
-    if not category or category in {
-        "unklare zuordnung",
-        "unklar",
-        "missing",
-        "fehlt",
-    }:
-        if "kategorie" in blob or not category:
-            reasons.append(MSG_WHY_MISSING_CATEGORY)
-    if guidance and guidance not in reasons:
-        # Prefer plain German guidance already produced by coverage helper.
-        if not any(ch.isupper() and "_" in guidance for ch in [guidance]):
-            reasons.append(guidance)
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for item in reasons:
-        text = str(item).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        ordered.append(text)
-    if not ordered:
-        ordered.append(MSG_WHY_GENERIC)
-    return tuple(ordered)
+    if kind == CASE_MISSING_PAYMENT:
+        return (MSG_WHY_MISSING_PAYMENT, MSG_GUIDED_REC_MISSING_PAYMENT)
+    why = derive_why_review_plain_german(detail)
+    return (MSG_GUIDED_STATUS_REVIEW, *why)
+
+
+def derive_primary_decision_action(detail: Any) -> str:
+    kind = review_case_kind(detail)
+    if kind == CASE_PAYPAL:
+        return ACTION_ACCEPT_SUGGESTION
+    if kind == CASE_CARD_NOT_AMEX:
+        return ACTION_KEEP_UNCLEAR_GUIDED
+    if kind == CASE_MISSING_PAYMENT:
+        return ACTION_KEEP_IN_REVIEW_GUIDED
+    if kind == CASE_STORNO:
+        return ACTION_KEEP_IN_REVIEW_GUIDED
+    return ACTION_KEEP_UNCLEAR_GUIDED
+
+
+def derive_secondary_decision_actions(detail: Any) -> tuple[str, ...]:
+    kind = review_case_kind(detail)
+    if kind == CASE_CARD_NOT_AMEX:
+        return (ACTION_CREATE_CARD_RULE, ACTION_IGNORE_EXPORT)
+    if kind == CASE_PAYPAL:
+        return (ACTION_KEEP_IN_REVIEW_GUIDED,)
+    if kind == CASE_MISSING_PAYMENT:
+        return (ACTION_ADD_PAYMENT, ACTION_IGNORE_EXPORT)
+    if kind == CASE_STORNO:
+        return (ACTION_ACCEPT_SUGGESTION, ACTION_IGNORE_EXPORT)
+    return (ACTION_IGNORE_EXPORT,)
 
 
 def derive_primary_list_action(
@@ -327,29 +400,34 @@ def derive_primary_list_action(
     *,
     finalization_ready: bool = False,
 ) -> str:
-    if paypal_action_relevant(detail):
+    kind = review_case_kind(detail)
+    if kind == CASE_PAYPAL and paypal_action_relevant(detail):
         return PRIMARY_PAYPAL
+    if kind == CASE_PAYPAL and finalization_ready:
+        return PRIMARY_ACCEPT
+    if kind == CASE_PAYPAL:
+        return PRIMARY_ACCEPT
     if finalization_ready:
         return PRIMARY_ACCEPT
-    badges = derive_status_badges(detail, finalization_ready=finalization_ready)
-    if BADGE_MISSING_PAYMENT in badges or BADGE_UNKLAR in badges:
+    if kind in {CASE_CARD_NOT_AMEX, CASE_MISSING_PAYMENT, CASE_STORNO}:
         return PRIMARY_UNKLAR
     return PRIMARY_PRUEFEN
 
 
 def next_action_labels_for_detail(detail: Any) -> tuple[str, ...]:
-    labels: list[str] = []
+    primary = derive_primary_decision_action(detail)
+    secondary = derive_secondary_decision_actions(detail)
+    labels = [primary, *secondary]
     if paypal_action_relevant(detail):
         labels.append(ACTION_PAYPAL_SAVE_RERUN)
-    labels.extend(
-        [
-            ACTION_ACCEPT_SUGGESTION,
-            ACTION_KEEP_UNCLEAR,
-            ACTION_DEFER,
-            ACTION_IGNORE_EXPORT,
-        ]
-    )
-    return tuple(labels)
+    # Stable unique
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for label in labels:
+        if label not in seen:
+            seen.add(label)
+            ordered.append(label)
+    return tuple(ordered)
 
 
 def payment_display_label(detail: Any) -> str:
@@ -419,27 +497,19 @@ def derive_recognized_fields(detail: Any) -> tuple[tuple[str, str], ...]:
 def derive_decision_prompt(detail: Any) -> str:
     """Single plain-German decision question for the selected case."""
 
-    if paypal_action_relevant(detail):
+    kind = review_case_kind(detail)
+    if kind == CASE_PAYPAL:
+        return "Was möchten Sie mit diesem PayPal-Vorschlag tun?"
+    if kind == CASE_MISSING_PAYMENT:
+        return "Zahlungsart fehlt — wie möchten Sie fortfahren?"
+    if kind == CASE_CARD_NOT_AMEX:
         return (
-            "PayPal-Regel speichern und Matching neu berechnen, "
-            "oder den Vorschlag akzeptieren / als unklar belassen?"
+            "Kartenzahlung ohne belegte AMEX — als unklar lassen "
+            "oder eine Kartenregel anlegen?"
         )
-    badges = derive_status_badges(detail)
-    if BADGE_MISSING_PAYMENT in badges:
-        return (
-            "Zahlungsart prüfen und entscheiden: Vorschlag akzeptieren, "
-            "als unklar belassen oder zurückstellen?"
-        )
-    if BADGE_NOT_AMEX in badges:
-        return (
-            "Kartenzahlung ohne AMEX: passende Zuordnung wählen, "
-            "Vorschlag akzeptieren oder als unklar belassen?"
-        )
-    if BADGE_STORNO in badges:
-        return "Storno prüfen: Vorschlag akzeptieren oder zur Prüfung belassen?"
-    if BADGE_READY in badges:
-        return "Vorschlag akzeptieren oder noch zurückstellen?"
-    return "Vorschlag akzeptieren, als unklar belassen oder zurückstellen?"
+    if kind == CASE_STORNO:
+        return "Storno prüfen: zur Prüfung lassen oder Vorschlag akzeptieren?"
+    return "Was möchten Sie als Nächstes entscheiden?"
 
 
 def case_summary_line(detail: Any) -> str:
@@ -634,15 +704,20 @@ def copy_text_to_state_and_clipboard(
 
 __all__ = (
     "ACTION_ACCEPT_SUGGESTION",
+    "ACTION_ADD_PAYMENT",
     "ACTION_COPY_CASE",
     "ACTION_COPY_DIAGNOSIS",
     "ACTION_COPY_FILENAME",
     "ACTION_COPY_ORACLE",
+    "ACTION_CREATE_CARD_RULE",
     "ACTION_DEFER",
     "ACTION_DETAILS_CLOSE",
     "ACTION_DETAILS_OPEN",
+    "ACTION_EDIT_FILENAME",
     "ACTION_IGNORE_EXPORT",
+    "ACTION_KEEP_IN_REVIEW_GUIDED",
     "ACTION_KEEP_UNCLEAR",
+    "ACTION_KEEP_UNCLEAR_GUIDED",
     "ACTION_OPEN_WORKSPACE",
     "ACTION_PAYPAL_SAVE_RERUN",
     "BADGE_BLOCKED",
@@ -652,18 +727,29 @@ __all__ = (
     "BADGE_READY",
     "BADGE_STORNO",
     "BADGE_UNKLAR",
+    "CASE_CARD_NOT_AMEX",
+    "CASE_GENERIC",
+    "CASE_MISSING_PAYMENT",
+    "CASE_PAYPAL",
+    "CASE_STORNO",
+    "DECISION_FIRST_PANEL_MARKER",
     "DETAIL_PANEL_DISTINCT_BACKGROUND",
     "FILENAME_FIELD_POLISH_MARKER",
+    "FILENAME_PREVIEW_ONLY_MARKER",
+    "GUIDED_STATUS_PANEL_MARKER",
     "INLINE_DETAIL_UNDER_SELECTED_CARD",
     "LABEL_DATEINAME_BEARBEITEN",
     "LABEL_REVIEW_AMOUNT",
     "LABEL_REVIEW_DATE",
     "LABEL_REVIEW_DOC_NAME",
+    "LABEL_SUGGESTED_FILENAME",
     "LABEL_VORSCHAU_DATEINAME",
     "MSG_ER_ER_NOTE",
     "MSG_FILENAME_PREVIEW_HELPER",
     "MSG_FILENAME_PREVIEW_ONLY",
     "MSG_FINAL_WRITE_USER_ANSWER",
+    "MSG_GUIDED_SAFETY_LINE",
+    "MSG_GUIDED_STATUS_REVIEW",
     "MSG_NO_READY_CASES",
     "MSG_NO_REVIEW_CASES",
     "MSG_ORACLE_AVAILABLE",
@@ -675,6 +761,7 @@ __all__ = (
     "MSG_WHY_MISSING_PAYMENT",
     "MSG_WHY_NOT_AMEX",
     "MSG_WHY_PAYPAL_APPLIED",
+    "MSG_WHY_PAYPAL_DETECTED",
     "MSG_WHY_PAYPAL_MISSING",
     "MSG_WHY_STORNO",
     "ORACLE_COMMAND",
@@ -686,6 +773,7 @@ __all__ = (
     "REVIEW_CARD_ACTIVE_HIGHLIGHT",
     "REVIEW_CARD_COLLAPSED_SUMMARY_ONLY",
     "REVIEW_DECLUTTER_LAYOUT_MARKER",
+    "REVIEW_GUIDED_LAYOUT_MARKER",
     "REVIEW_SECTION_TITLES",
     "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
@@ -695,10 +783,12 @@ __all__ = (
     "SECTION_ERKANNT",
     "SECTION_FINALISIERUNG",
     "SECTION_FINAL_WRITE_Q",
+    "SECTION_GUIDED_STATUS",
     "SECTION_KURZPRUEFUNG",
     "SECTION_NAECHSTE",
     "SECTION_PRUEFUNG",
     "SECTION_TECHNISCHE",
+    "SECTION_TEST_TOOLS",
     "SECTION_UNKLAR",
     "SECTION_VORSCHLAG",
     "SECTION_WARUM",
@@ -710,8 +800,11 @@ __all__ = (
     "case_summary_line",
     "copy_text_to_state_and_clipboard",
     "derive_decision_prompt",
+    "derive_guided_status_lines",
+    "derive_primary_decision_action",
     "derive_primary_list_action",
     "derive_recognized_fields",
+    "derive_secondary_decision_actions",
     "derive_status_badges",
     "derive_why_review_plain_german",
     "document_art_display_label",
@@ -720,5 +813,7 @@ __all__ = (
     "next_action_labels_for_detail",
     "payment_display_label",
     "paypal_action_relevant",
+    "paypal_rule_present",
+    "review_case_kind",
     "split_ready_and_review_cases",
 )

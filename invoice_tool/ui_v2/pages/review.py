@@ -23,6 +23,7 @@ from invoice_tool.ui_v2.components import (
     form_field_group,
     page_header,
     page_scaffold,
+    primary_button,
     secondary_button,
     section_block,
     stacked_list,
@@ -182,24 +183,38 @@ from invoice_tool.ui_v2.configuration_rule_editor import (
     build_duplicate_config_remediation_panel,
 )
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_ACCEPT_SUGGESTION,
+    ACTION_ADD_PAYMENT,
     ACTION_COPY_CASE,
     ACTION_COPY_DIAGNOSIS,
     ACTION_COPY_FILENAME,
     ACTION_COPY_ORACLE,
+    ACTION_CREATE_CARD_RULE,
     ACTION_DETAILS_CLOSE,
     ACTION_DETAILS_OPEN,
+    ACTION_EDIT_FILENAME,
+    ACTION_IGNORE_EXPORT,
+    ACTION_KEEP_IN_REVIEW_GUIDED,
+    ACTION_KEEP_UNCLEAR,
+    ACTION_KEEP_UNCLEAR_GUIDED,
     ACTION_OPEN_WORKSPACE,
+    DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
     FILENAME_FIELD_POLISH_MARKER,
+    FILENAME_PREVIEW_ONLY_MARKER,
+    GUIDED_STATUS_PANEL_MARKER,
     INLINE_DETAIL_UNDER_SELECTED_CARD,
     LABEL_DATEINAME_BEARBEITEN,
     LABEL_REVIEW_AMOUNT,
     LABEL_REVIEW_DATE,
     LABEL_REVIEW_DOC_NAME,
+    LABEL_SUGGESTED_FILENAME,
     LABEL_VORSCHAU_DATEINAME,
     MSG_FILENAME_PREVIEW_HELPER,
     MSG_FILENAME_PREVIEW_ONLY,
     MSG_FINAL_WRITE_USER_ANSWER,
+    MSG_GUIDED_SAFETY_LINE,
+    MSG_GUIDED_STATUS_REVIEW,
     MSG_NO_READY_CASES,
     MSG_NO_REVIEW_CASES,
     MSG_ORACLE_AVAILABLE,
@@ -212,6 +227,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     REVIEW_CARD_ACTIVE_HIGHLIGHT,
     REVIEW_CARD_COLLAPSED_SUMMARY_ONLY,
     REVIEW_DECLUTTER_LAYOUT_MARKER,
+    REVIEW_GUIDED_LAYOUT_MARKER,
     REVIEW_SECTION_TITLES,
     REVIEW_UI_POLISH_LAYOUT_MARKER,
     REVIEW_USER_MODE_LAYOUT_MARKER,
@@ -221,10 +237,12 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     SECTION_ERKANNT,
     SECTION_FINALISIERUNG,
     SECTION_FINAL_WRITE_Q,
+    SECTION_GUIDED_STATUS,
     SECTION_KURZPRUEFUNG,
     SECTION_NAECHSTE,
     SECTION_PRUEFUNG,
     SECTION_TECHNISCHE,
+    SECTION_TEST_TOOLS,
     SECTION_UNKLAR,
     SECTION_VORSCHLAG,
     SECTION_WARUM,
@@ -235,16 +253,22 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     build_prueffall_copy_text,
     copy_text_to_state_and_clipboard,
     derive_decision_prompt,
+    derive_guided_status_lines,
+    derive_primary_decision_action,
     derive_primary_list_action,
     derive_recognized_fields,
+    derive_secondary_decision_actions,
     derive_status_badges,
     derive_why_review_plain_german,
     filename_has_er_er,
     next_action_labels_for_detail,
     payment_display_label,
     paypal_action_relevant,
+    review_case_kind,
     split_ready_and_review_cases,
 )
+
+_FILENAME_EDITOR_ACTIVE_ATTR = "filename_editor_active_keys"
 
 # Accordion open-state lives on the in-memory review_preview_ui bag (UI-only).
 _OPEN_REVIEW_ITEM_ATTR = "open_review_item_id"
@@ -287,6 +311,31 @@ def toggle_review_item_details(state: UiV2State, item_key: str) -> None:
         set_open_review_item_id(state, None)
     else:
         set_open_review_item_id(state, key)
+
+
+def is_filename_editor_active(state: UiV2State, item_key: str) -> bool:
+    bag = get_review_decision_bag(state)
+    keys = getattr(bag, _FILENAME_EDITOR_ACTIVE_ATTR, None)
+    if not isinstance(keys, set):
+        return False
+    return (item_key or "").strip() in keys
+
+
+def set_filename_editor_active(
+    state: UiV2State, item_key: str, *, active: bool
+) -> None:
+    bag = get_review_decision_bag(state)
+    keys = getattr(bag, _FILENAME_EDITOR_ACTIVE_ATTR, None)
+    if not isinstance(keys, set):
+        keys = set()
+        setattr(bag, _FILENAME_EDITOR_ACTIVE_ATTR, keys)
+    key = (item_key or "").strip()
+    if not key:
+        return
+    if active:
+        keys.add(key)
+    else:
+        keys.discard(key)
 
 
 def review_summary_display_name(row: ReviewListItemVM | Any) -> str:
@@ -659,6 +708,13 @@ class ReviewSelectedDetailVM:
     decision_prompt: str = ""
     final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
     user_mode_enabled: bool = True
+    # Guided review UX cleanup
+    guided_status_lines: tuple[str, ...] = ()
+    primary_decision_action: str = ACTION_KEEP_UNCLEAR_GUIDED
+    secondary_decision_actions: tuple[str, ...] = ()
+    review_case_kind: str = ""
+    filename_preview_only_by_default: bool = True
+    guided_layout_marker: str = REVIEW_GUIDED_LAYOUT_MARKER
 
 
 @dataclass(frozen=True)
@@ -754,7 +810,12 @@ class ReviewPageVM:
     active_card_highlight_marker: str = REVIEW_CARD_ACTIVE_HIGHLIGHT
     inline_detail_marker: str = INLINE_DETAIL_UNDER_SELECTED_CARD
     detail_panel_background_marker: str = DETAIL_PANEL_DISTINCT_BACKGROUND
+    guided_layout_marker: str = REVIEW_GUIDED_LAYOUT_MARKER
+    guided_status_marker: str = GUIDED_STATUS_PANEL_MARKER
+    decision_first_marker: str = DECISION_FIRST_PANEL_MARKER
+    filename_preview_only_marker: str = FILENAME_PREVIEW_ONLY_MARKER
     safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
+    guided_safety_line: str = MSG_GUIDED_SAFETY_LINE
     final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
     oracle_available_title: str = MSG_ORACLE_AVAILABLE
     oracle_command: str = ORACLE_COMMAND
@@ -1444,6 +1505,12 @@ def _build_selected_detail(
         decision_prompt=derive_decision_prompt(detail),
         final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
         user_mode_enabled=True,
+        guided_status_lines=derive_guided_status_lines(detail),
+        primary_decision_action=derive_primary_decision_action(detail),
+        secondary_decision_actions=derive_secondary_decision_actions(detail),
+        review_case_kind=review_case_kind(detail),
+        filename_preview_only_by_default=True,
+        guided_layout_marker=REVIEW_GUIDED_LAYOUT_MARKER,
     )
 
 
@@ -1670,7 +1737,12 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         active_card_highlight_marker=REVIEW_CARD_ACTIVE_HIGHLIGHT,
         inline_detail_marker=INLINE_DETAIL_UNDER_SELECTED_CARD,
         detail_panel_background_marker=DETAIL_PANEL_DISTINCT_BACKGROUND,
+        guided_layout_marker=REVIEW_GUIDED_LAYOUT_MARKER,
+        guided_status_marker=GUIDED_STATUS_PANEL_MARKER,
+        decision_first_marker=DECISION_FIRST_PANEL_MARKER,
+        filename_preview_only_marker=FILENAME_PREVIEW_ONLY_MARKER,
         safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
+        guided_safety_line=MSG_GUIDED_SAFETY_LINE,
         final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
         oracle_available_title=MSG_ORACLE_AVAILABLE,
         oracle_command=ORACLE_COMMAND,
@@ -2084,48 +2156,19 @@ def _oracle_dev_box(state: UiV2State, vm: ReviewPageVM) -> ft.Control:
 
 
 def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Control:
-    """Show only relevant next actions — never final write / never run_once."""
+    """Decision-first actions — primary + relevant secondary only."""
 
     decision_bag = get_review_decision_bag(state)
+    primary_label = detail.primary_decision_action or derive_primary_decision_action(
+        detail
+    )
+    secondary_labels = detail.secondary_decision_actions or derive_secondary_decision_actions(
+        detail
+    )
 
     def _refresh() -> None:
         if state.refresh is not None:
             state.refresh()
-
-    def _profile_id() -> str:
-        from invoice_tool.app_paths import resolve_active_profile_id
-
-        return (
-            str(state.selected_profile_id or "").strip()
-            or resolve_active_profile_id()
-        )
-
-    def _on_paypal(_e: ft.ControlEvent) -> None:
-        from invoice_tool.ui_v2.configuration_rule_editor import (
-            save_paypal_rule_and_rerun_matching,
-        )
-
-        current = state.configuration_rule_draft
-        if current is None:
-            state.configuration_rule_draft_feedback = (
-                "Kein PayPal-Entwurf geöffnet — zuerst aus dem Hinweis erstellen."
-            )
-            state.configuration_rule_draft_feedback_error = True
-            _refresh()
-            return
-        result = save_paypal_rule_and_rerun_matching(
-            profile_id=_profile_id(),
-            draft=current,
-            run_state=state.processing_run_state,
-            explicit_user_confirmation=True,
-            require_controlled_target=True,
-        )
-        state.configuration_rule_draft = result.draft
-        state.configuration_rule_draft_feedback = result.message
-        state.configuration_rule_draft_feedback_error = not result.ok
-        if result.updated_run_state is not None:
-            state.processing_run_state = result.updated_run_state
-        _refresh()
 
     def _on_accept(_e: ft.ControlEvent) -> None:
         key = get_review_preview_ui(state).selected_item_key
@@ -2149,43 +2192,57 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
         create_ignore_for_export_decision(state, decided_by_user=True)
         _refresh()
 
-    def _on_defer(_e: ft.ControlEvent) -> None:
-        create_defer_decision(state, decided_by_user=True)
+    def _on_needs_config(_e: ft.ControlEvent) -> None:
+        create_needs_configuration_change_decision(state, decided_by_user=True)
         _refresh()
+
+    def _handler_for(label: str):
+        if label in {ACTION_ACCEPT_SUGGESTION, f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"}:
+            return _on_accept
+        if label in {
+            ACTION_KEEP_UNCLEAR_GUIDED,
+            ACTION_KEEP_IN_REVIEW_GUIDED,
+            ACTION_KEEP_UNCLEAR,
+        }:
+            return _on_keep_unclear
+        if label == ACTION_IGNORE_EXPORT:
+            return _on_ignore
+        if label in {ACTION_CREATE_CARD_RULE, ACTION_ADD_PAYMENT}:
+            return _on_needs_config
+        return _on_keep_unclear
 
     accept_label = ACTION_ACCEPT_SUGGESTION
     selected = get_review_preview_ui(state).selected_item_key
     if selected and decision_bag.pending_accept_confirm_key == selected:
         accept_label = f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"
+    if primary_label == ACTION_ACCEPT_SUGGESTION:
+        primary_label = accept_label
 
-    buttons: list[ft.Control] = []
-    if detail.paypal_action_visible:
-        buttons.append(
-            secondary_button(
-                ACTION_PAYPAL_SMOKE_SAVE_AND_RERUN,
-                on_click=_on_paypal,
-            )
-        )
-    buttons.extend(
-        [
-            secondary_button(accept_label, on_click=_on_accept),
-            secondary_button(ACTION_KEEP_UNCLEAR, on_click=_on_keep_unclear),
-            secondary_button(ACTION_DEFER, on_click=_on_defer),
-            secondary_button(ACTION_IGNORE_EXPORT, on_click=_on_ignore),
-        ]
+    primary = primary_button(
+        primary_label,
+        on_click=lambda e, lbl=primary_label: _handler_for(lbl)(e),
     )
+    secondary_buttons = [
+        secondary_button(
+            label,
+            on_click=lambda e, lbl=label: _handler_for(lbl)(e),
+        )
+        for label in secondary_labels
+        if label and label != primary_label
+    ]
     return ft.Column(
         [
+            ft.Text(detail.decision_prompt, size=13, weight=ft.FontWeight.W_600),
             ft.Text(
-                "Deine Entscheidung gilt nur für diese Vorschau. "
-                "Originale bleiben unverändert — es wird nichts final geschrieben.",
+                "Wenn Sie hier klicken, ändert sich nur die Vorschau-Entscheidung. "
+                + MSG_GUIDED_SAFETY_LINE,
                 size=11,
             ),
-            ft.Text(MSG_NOT_FINAL_YET, size=12),
-            ft.Row(buttons, spacing=8, wrap=True),
+            ft.Row([primary, *secondary_buttons], spacing=8, wrap=True),
         ],
         spacing=8,
         tight=True,
+        data=DECISION_FIRST_PANEL_MARKER,
     )
 
 
@@ -2369,6 +2426,7 @@ def _developer_tools_collapsed(
         vm.ui_polish_layout_marker,
         vm.filename_field_polish_marker,
         vm.accordion_layout_marker,
+        vm.guided_layout_marker,
         MSG_ORACLE_AVAILABLE,
         vm.oracle_command,
         MSG_ORACLE_NO_AUTO_RUN,
@@ -2462,46 +2520,28 @@ def render_review_inline_detail(
     )
 
 
-def _selected_detail_section_controls(
-    state: UiV2State,
-    vm: ReviewPageVM,
-    detail: ReviewSelectedDetailVM,
-) -> list[ft.Control]:
-    """Reuse Simple User Review sections inside the inline accordion detail."""
-
-    out: list[ft.Control] = [
-        review_section(
-            SECTION_ERKANNT,
-            _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
-        )
-    ]
-    unclear_lines = [
-        ft.Text(f"· {line}", size=12)
-        for line in (detail.unclear_items or detail.why_review_plain)
-    ]
-    out.append(
-        review_section(
-            SECTION_UNKLAR,
-            ft.Column(
-                unclear_lines or [ft.Text("· Prüfung erforderlich", size=12)],
-                spacing=4,
-                tight=True,
-            ),
-        )
+def _guided_status_panel(detail: ReviewSelectedDetailVM) -> ft.Control:
+    lines = detail.guided_status_lines or derive_guided_status_lines(detail)
+    body = ft.Column(
+        [
+            ft.Text(line, size=13 if idx == 0 else 12, weight=ft.FontWeight.W_700 if idx == 0 else None)
+            for idx, line in enumerate(lines)
+        ]
+        or [ft.Text(MSG_GUIDED_STATUS_REVIEW, size=13, weight=ft.FontWeight.W_700)],
+        spacing=6,
+        tight=True,
     )
-    vorschlag_body: list[ft.Control] = [
-        ft.Text(
-            detail.suggested_filename or detail.preview_filename or "—",
-            size=13,
-            weight=ft.FontWeight.W_600,
-            selectable=True,
-        ),
-        _kv_lines(detail.vorschlag_fields),
-    ]
-    if detail.er_er_note:
-        vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
-    elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
-        vorschlag_body.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
+    panel = review_section(SECTION_GUIDED_STATUS, body)
+    panel.data = f"{GUIDED_STATUS_PANEL_MARKER}|{REVIEW_GUIDED_LAYOUT_MARKER}"
+    return panel
+
+
+def _filename_preview_panel(
+    state: UiV2State,
+    detail: ReviewSelectedDetailVM,
+) -> ft.Control:
+    """Filename as preview text by default; editor only in explicit edit mode."""
+
     decision_bag = get_review_decision_bag(state)
     draft_value = decision_bag.edit_filename_draft_by_key.get(
         detail.item_key,
@@ -2510,13 +2550,15 @@ def _selected_detail_section_controls(
         or detail.suggested_filename
         or "",
     )
+    filename = (
+        draft_value
+        or detail.suggested_filename
+        or detail.preview_filename
+        or "—"
+    )
+    edit_active = is_filename_editor_active(state, detail.item_key)
 
-    def _on_filename_change(e: ft.ControlEvent) -> None:
-        set_edit_filename_draft(
-            state, detail.item_key, str(getattr(e.control, "value", "") or "")
-        )
-
-    def _copy_filename(_e: ft.ControlEvent, value: str = draft_value) -> None:
+    def _copy_filename(_e: ft.ControlEvent, value: str = filename) -> None:
         current = decision_bag.edit_filename_draft_by_key.get(detail.item_key, value)
         copy_text_to_state_and_clipboard(
             state,
@@ -2526,73 +2568,99 @@ def _selected_detail_section_controls(
         if state.refresh is not None:
             state.refresh()
 
-    filename_field = ft.TextField(
-        value=draft_value,
-        on_change=_on_filename_change,
-        multiline=True,
-        min_lines=2,
-        max_lines=4,
-        expand=True,
-        text_size=FONT_SIZE_MONO,
-        border_color=COLOR_BORDER,
-        dense=False,
-        data=FILENAME_FIELD_POLISH_MARKER,
-    )
-    filename_editor = form_field_group(
-        LABEL_VORSCHAU_DATEINAME,
-        ft.Column(
-            [
-                ft.Text(
-                    LABEL_DATEINAME_BEARBEITEN,
-                    size=FONT_SIZE_HELPER,
-                    color=COLOR_TEXT_MUTED,
-                ),
-                ft.Container(
-                    content=filename_field,
-                    expand=True,
-                    width=None,
-                    data=FILENAME_FIELD_POLISH_MARKER,
-                ),
-                ft.Row(
-                    [secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename)],
-                    spacing=SPACE_SM,
-                ),
-            ],
-            spacing=SPACE_XS,
-            tight=True,
-            expand=True,
+    def _start_filename_edit(_e: ft.ControlEvent) -> None:
+        if not decision_bag.edit_filename_draft_by_key.get(detail.item_key):
+            set_edit_filename_draft(state, detail.item_key, str(filename or ""))
+        set_filename_editor_active(state, detail.item_key, active=True)
+        if state.refresh is not None:
+            state.refresh()
+
+    def _on_filename_change(e: ft.ControlEvent) -> None:
+        set_edit_filename_draft(
+            state, detail.item_key, str(getattr(e.control, "value", "") or "")
+        )
+
+    controls: list[ft.Control] = [
+        ft.Text(LABEL_SUGGESTED_FILENAME, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED),
+        ft.Text(
+            filename,
+            size=13,
+            weight=ft.FontWeight.W_600,
+            selectable=True,
+            data=FILENAME_PREVIEW_ONLY_MARKER,
         ),
-        helper=MSG_FILENAME_PREVIEW_HELPER,
-    )
-    vorschlag_body.append(filename_editor)
-    out.append(
-        review_section(
-            SECTION_DATEINAME,
-            ft.Column(vorschlag_body, spacing=SPACE_SM, tight=True),
+        ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED),
+    ]
+    if detail.er_er_note:
+        controls.append(ft.Text(detail.er_er_note, size=11))
+    elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
+        controls.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
+
+    action_row = [
+        secondary_button(ACTION_EDIT_FILENAME, on_click=_start_filename_edit),
+        secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename),
+    ]
+    controls.append(ft.Row(action_row, spacing=SPACE_SM, wrap=True))
+
+    if edit_active:
+        filename_field = ft.TextField(
+            value=str(draft_value or filename or ""),
+            on_change=_on_filename_change,
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+            expand=True,
+            text_size=FONT_SIZE_MONO,
+            border_color=COLOR_BORDER,
+            dense=False,
+            data=FILENAME_FIELD_POLISH_MARKER,
         )
-    )
-    out.append(
-        review_section(
-            SECTION_ENTSCHEIDEN,
-            ft.Column(
-                [
-                    ft.Text(detail.decision_prompt, size=13),
-                    _next_action_row(state, detail),
-                ],
-                spacing=SPACE_SM,
-                tight=True,
-            ),
+        controls.append(
+            form_field_group(
+                LABEL_VORSCHAU_DATEINAME,
+                ft.Column(
+                    [
+                        ft.Text(
+                            LABEL_DATEINAME_BEARBEITEN,
+                            size=FONT_SIZE_HELPER,
+                            color=COLOR_TEXT_MUTED,
+                        ),
+                        ft.Container(
+                            content=filename_field,
+                            expand=True,
+                            width=None,
+                            data=FILENAME_FIELD_POLISH_MARKER,
+                        ),
+                    ],
+                    spacing=SPACE_XS,
+                    tight=True,
+                    expand=True,
+                ),
+                helper=MSG_FILENAME_PREVIEW_HELPER,
+            )
         )
+
+    return review_section(
+        SECTION_DATEINAME,
+        ft.Column(controls, spacing=SPACE_SM, tight=True),
     )
-    out.append(_finalization_declutter_panel(state, vm, detail))
-    out.append(
+
+
+def _test_tools_collapsed(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM,
+) -> ft.Control:
+    """Finalization / dry-run / sandbox / advanced tools — collapsed by default."""
+
+    advanced: list[ft.Control] = [
+        _finalization_declutter_panel(state, vm, detail),
         review_section(
             "Kopieren",
             _copy_actions_row(state, detail),
             subtitle=MSG_SAFETY_LINE_NO_FINAL,
-        )
-    )
-    advanced: list[ft.Control] = []
+        ),
+    ]
     action_row = build_configuration_coverage_action_row(state, detail)
     if action_row is not None:
         advanced.append(action_row)
@@ -2609,15 +2677,55 @@ def _selected_detail_section_controls(
     advanced.append(_oracle_dev_box(state, vm))
     advanced.append(_finalization_dry_run_panel(state, vm))
     advanced.append(_sandbox_final_write_panel(state, vm))
-    if advanced:
-        out.append(
-            section_block(
-                "Erweiterte Werkzeuge (optional)",
-                ft.Column(advanced, spacing=10, tight=True),
-                subtitle="Nicht nötig für die normale Prüfung",
-            )
-        )
-    out.append(_developer_tools_collapsed(state, vm, detail))
+    advanced.append(_developer_tools_collapsed(state, vm, detail))
+
+    body = ft.Column(advanced, spacing=10, tight=True)
+    tile_kwargs: dict = {
+        "title": ft.Text(
+            SECTION_TEST_TOOLS,
+            size=FONT_SIZE_HELPER,
+            color=COLOR_TEXT_MUTED,
+            weight=ft.FontWeight.W_600,
+        ),
+        "subtitle": ft.Text(
+            "Dry-Run, Sandbox und Entwickler-Nachweise — nicht für die normale Prüfung",
+            size=11,
+            color=COLOR_TEXT_MUTED,
+        ),
+        "controls": [ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
+        "dense": True,
+        "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
+        "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
+    }
+    try:
+        return ft.ExpansionTile(**tile_kwargs, initially_expanded=False)
+    except TypeError:
+        return ft.ExpansionTile(**tile_kwargs, expanded=False)
+
+
+def _selected_detail_section_controls(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM,
+) -> list[ft.Control]:
+    """Guided review flow: status → decision → facts → filename → safety → tools."""
+
+    out: list[ft.Control] = [
+        _guided_status_panel(detail),
+        review_section(
+            SECTION_ENTSCHEIDEN,
+            _next_action_row(state, detail),
+            subtitle="Was passiert beim Klick — und was nicht",
+        ),
+        review_section(
+            SECTION_ERKANNT,
+            _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
+        ),
+        _filename_preview_panel(state, detail),
+        ft.Text(MSG_GUIDED_SAFETY_LINE, size=12, weight=ft.FontWeight.W_600),
+        ft.Text(MSG_SAFETY_LINE_NO_FINAL, size=11, color=COLOR_TEXT_MUTED),
+        _test_tools_collapsed(state, vm, detail),
+    ]
     return out
 
 
