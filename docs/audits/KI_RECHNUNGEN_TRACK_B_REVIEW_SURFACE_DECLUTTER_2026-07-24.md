@@ -2,7 +2,7 @@
 
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_REVIEW_SURFACE_DECLUTTER_2026-07-24`
 2. **HEAD before:** `61e41daaa108bc453d26dbd8f7a2293d687f960e`  
-   **HEAD after:** *(set after commit/push)*
+   **HEAD after:** `7ed30a48d01c1989fb5d7edc8537b7da958d1ec6`
 3. **Files changed:**
    - `invoice_tool/ui_v2/pages/review.py`
    - `invoice_tool/ui_v2/track_b_smoke_debug_copy.py`
