@@ -261,8 +261,8 @@ def test_02_detail_exposes_kurzpruefung_section() -> None:
     assert SECTION_KURZPRUEFUNG in vm.selected_detail.section_titles
     labels = {label for label, _ in vm.selected_detail.kurzpruefung_fields}
     assert "Originaldatei" in labels
-    assert "erkannter Lieferant" in labels
-    assert "SECTION_KURZPRUEFUNG" in REVIEW.read_text(encoding="utf-8")
+    assert "Lieferant / Name" in labels
+    assert "SECTION_ERKANNT" in REVIEW.read_text(encoding="utf-8")
 
 
 def test_03_detail_exposes_vorschlag_section() -> None:
@@ -270,7 +270,7 @@ def test_03_detail_exposes_vorschlag_section() -> None:
     assert vm.selected_detail is not None
     assert SECTION_VORSCHLAG in vm.selected_detail.section_titles
     assert any("Dateiname" in k for k, _ in vm.selected_detail.vorschlag_fields)
-    assert "SECTION_VORSCHLAG" in REVIEW.read_text(encoding="utf-8")
+    assert "SECTION_DATEINAME" in REVIEW.read_text(encoding="utf-8")
 
 
 def test_04_detail_exposes_warum_section() -> None:
@@ -278,7 +278,7 @@ def test_04_detail_exposes_warum_section() -> None:
     assert vm.selected_detail is not None
     assert SECTION_WARUM in vm.selected_detail.section_titles
     assert vm.selected_detail.why_review_plain
-    assert "SECTION_WARUM" in REVIEW.read_text(encoding="utf-8")
+    assert "SECTION_UNKLAR" in REVIEW.read_text(encoding="utf-8")
 
 
 def test_05_detail_exposes_naechste_aktion_section() -> None:
@@ -294,7 +294,7 @@ def test_06_detail_exposes_finalisierung_section() -> None:
     assert vm.selected_detail is not None
     assert SECTION_FINALISIERUNG in vm.selected_detail.section_titles
     assert any(
-        "final_write_allowed=false" in line
+        "Nein" in line and "Vorschau" in line
         for line in vm.selected_detail.finalization_summary_lines
     )
     assert "_finalization_declutter_panel" in REVIEW.read_text(encoding="utf-8")
@@ -495,3 +495,4 @@ def test_docs_and_marker_present() -> None:
     assert REVIEW_DECLUTTER_LAYOUT_MARKER in COPY_MOD.read_text(encoding="utf-8")
     assert "REVIEW_DECLUTTER_LAYOUT_MARKER" in REVIEW.read_text(encoding="utf-8")
     assert BADGE_PAYPAL == "PayPal"
+    assert BADGE_MISSING_PAYMENT == "Zahlung unklar"

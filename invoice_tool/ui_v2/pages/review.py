@@ -1,11 +1,12 @@
-"""Zur Prüfung page — Track-B UI-v2 review bucket usability (Prompt 15/34).
+"""Zur Prüfung page — Track-B UI-v2 simple user review mode.
 
 Honest empty state by default. Items appear only from ProcessingRunState
 after a real run injects them. No fake documents, no PDF processing,
 no folder scan, no file mutation, no processing-core imports.
 
-Preview-only actions mutate in-memory UiV2 review state only — never
-run_once, never final writes, never productive export.
+Primary surface answers plain-German user questions only. Technical
+flags stay collapsed. Preview-only actions mutate in-memory UiV2 review
+state only — never run_once, never final writes, never productive export.
 """
 
 from __future__ import annotations
@@ -167,30 +168,47 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_ORACLE,
     ACTION_OPEN_WORKSPACE,
     MSG_FILENAME_PREVIEW_ONLY,
+    MSG_FINAL_WRITE_USER_ANSWER,
+    MSG_NO_READY_CASES,
+    MSG_NO_REVIEW_CASES,
     MSG_ORACLE_AVAILABLE,
     MSG_ORACLE_NO_AUTO_RUN,
     MSG_SAFETY_LINE_NO_FINAL,
+    MSG_USER_REVIEW_SUBTITLE,
     ORACLE_COMMAND,
     PRIMARY_PRUEFEN,
     REVIEW_DECLUTTER_LAYOUT_MARKER,
     REVIEW_SECTION_TITLES,
+    REVIEW_USER_MODE_LAYOUT_MARKER,
+    SECTION_BEREIT,
+    SECTION_DATEINAME,
+    SECTION_ENTSCHEIDEN,
+    SECTION_ERKANNT,
     SECTION_FINALISIERUNG,
+    SECTION_FINAL_WRITE_Q,
     SECTION_KURZPRUEFUNG,
     SECTION_NAECHSTE,
+    SECTION_PRUEFUNG,
     SECTION_TECHNISCHE,
+    SECTION_UNKLAR,
     SECTION_VORSCHLAG,
     SECTION_WARUM,
     SMOKE_DEV_UI_LAYOUT_MARKER,
+    USER_REVIEW_SECTION_TITLES,
     build_diagnosis_copy_text,
     build_oracle_command_copy_text,
     build_prueffall_copy_text,
     copy_text_to_state_and_clipboard,
+    derive_decision_prompt,
     derive_primary_list_action,
+    derive_recognized_fields,
     derive_status_badges,
     derive_why_review_plain_german,
     filename_has_er_er,
     next_action_labels_for_detail,
+    payment_display_label,
     paypal_action_relevant,
+    split_ready_and_review_cases,
 )
 
 # Legacy preview artifacts only — not the current Track-B filename pattern.
@@ -484,18 +502,24 @@ class ReviewSelectedDetailVM:
     final_write_allowed: bool = False
     not_final_yet_text: str = MSG_NOT_FINAL_YET
     decision_feedback: str | None = None
-    # Declutter detail sections
+    # Declutter / simple user-review detail sections
     status_badges: tuple[str, ...] = ()
     why_review_plain: tuple[str, ...] = ()
     next_action_labels_relevant: tuple[str, ...] = ()
     paypal_action_visible: bool = False
     er_er_note: str | None = None
     safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
-    section_titles: tuple[str, ...] = REVIEW_SECTION_TITLES
+    section_titles: tuple[str, ...] = USER_REVIEW_SECTION_TITLES
     technical_details_collapsed_by_default: bool = True
     kurzpruefung_fields: tuple[tuple[str, str], ...] = ()
     vorschlag_fields: tuple[tuple[str, str], ...] = ()
     finalization_summary_lines: tuple[str, ...] = ()
+    # Simple user review mode (primary surface)
+    recognized_fields: tuple[tuple[str, str], ...] = ()
+    unclear_items: tuple[str, ...] = ()
+    decision_prompt: str = ""
+    final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
+    user_mode_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -581,14 +605,16 @@ class ReviewPageVM:
     touches_real_invoice_folders: bool = False
     claims_saas_ready: bool = False
     claims_production_ready: bool = False
-    # Declutter / oracle surface
+    # Declutter / oracle / simple user-review surface
     declutter_layout_marker: str = REVIEW_DECLUTTER_LAYOUT_MARKER
+    user_mode_layout_marker: str = REVIEW_USER_MODE_LAYOUT_MARKER
     safety_line_declutter: str = MSG_SAFETY_LINE_NO_FINAL
+    final_write_user_answer: str = MSG_FINAL_WRITE_USER_ANSWER
     oracle_available_title: str = MSG_ORACLE_AVAILABLE
     oracle_command: str = ORACLE_COMMAND
     oracle_no_auto_run: str = MSG_ORACLE_NO_AUTO_RUN
     technical_details_collapsed_by_default: bool = True
-    section_titles: tuple[str, ...] = REVIEW_SECTION_TITLES
+    section_titles: tuple[str, ...] = USER_REVIEW_SECTION_TITLES
     copy_action_labels: tuple[str, ...] = (
         ACTION_COPY_CASE,
         ACTION_COPY_DIAGNOSIS,
@@ -598,6 +624,11 @@ class ReviewPageVM:
     empty_state_oracle_action: str = ACTION_COPY_ORACLE
     auto_runs_oracle: bool = False
     production_final_write_enabled: bool = False
+    user_mode_enabled: bool = True
+    ready_case_summaries: tuple[str, ...] = ()
+    review_case_summaries: tuple[str, ...] = ()
+    cases_ready_count: int = 0
+    cases_review_count: int = 0
 
 
 def _suggested_rule_draft_fields(
@@ -880,7 +911,7 @@ def _build_list_items(
                 supplier=detail.counterparty_name or detail.supplier,
                 invoice_date=detail.invoice_date,
                 amount=detail.selected_amount or detail.amount,
-                payment_field=detail.selected_payment_field or detail.payment_account,
+                payment_field=payment_display_label(detail),
                 document_art=_document_art_label(detail),
                 configuration=detail.matched_configuration_name or "Unklar",
                 status_badges=badges,
@@ -1180,33 +1211,22 @@ def _build_selected_detail(
             or detail.rendered_filename
         ),
         safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
-        section_titles=REVIEW_SECTION_TITLES,
+        section_titles=USER_REVIEW_SECTION_TITLES,
         technical_details_collapsed_by_default=True,
-        kurzpruefung_fields=(
-            ("Originaldatei", detail.source_filename or detail.document_label),
-            (
-                "erkannter Lieferant",
-                detail.counterparty_name or detail.supplier or "—",
-            ),
-            ("Datum", detail.invoice_date or "—"),
-            ("Betrag", detail.selected_amount or detail.amount or "—"),
-            (
-                "Zahlungsart",
-                detail.selected_payment_field or detail.payment_account or "—",
-            ),
-            ("Dokumentart", _document_art_label(detail)),
-            ("Konfiguration", detail.matched_configuration_name or "Unklar"),
-            (
-                "Status",
-                ", ".join(
-                    derive_status_badges(
-                        detail,
-                        finalization_ready=bool(finalization_ready),
-                        finalization_blockers=tuple(finalization_blockers or ()),
-                    )
-                )
-                or STATUS_IN_REVIEW,
-            ),
+        kurzpruefung_fields=derive_recognized_fields(
+            {
+                "source_filename": detail.source_filename or detail.document_label,
+                "document_label": detail.document_label,
+                "counterparty_name": detail.counterparty_name,
+                "supplier": detail.supplier,
+                "invoice_date": detail.invoice_date,
+                "selected_amount": detail.selected_amount,
+                "amount": detail.amount,
+                "selected_payment_field": detail.selected_payment_field,
+                "payment_account": detail.payment_account,
+                "selected_art": detail.selected_art,
+                "document_type": detail.document_type,
+            }
         ),
         vorschlag_fields=(
             (
@@ -1216,19 +1236,50 @@ def _build_selected_detail(
                 or detail.suggested_filename
                 or "—",
             ),
-            ("geplanter Zielbereich", planned_target or "—"),
             ("Hinweis", MSG_FILENAME_PREVIEW_ONLY),
         ),
         finalization_summary_lines=(
-            (
-                MSG_FINALIZATION_READY_YES
-                if finalization_ready
-                else MSG_FINALIZATION_READY_NO
-            ),
-            "final_write_allowed=false",
-            "production final-write disabled",
+            MSG_FINAL_WRITE_USER_ANSWER,
             MSG_SAFETY_LINE_NO_FINAL,
+            MSG_NOT_FINAL_YET,
         ),
+        recognized_fields=derive_recognized_fields(
+            {
+                "source_filename": detail.source_filename or detail.document_label,
+                "document_label": detail.document_label,
+                "counterparty_name": detail.counterparty_name,
+                "supplier": detail.supplier,
+                "invoice_date": detail.invoice_date,
+                "selected_amount": detail.selected_amount,
+                "amount": detail.amount,
+                "selected_payment_field": detail.selected_payment_field,
+                "payment_account": detail.payment_account,
+                "selected_art": detail.selected_art,
+                "document_type": detail.document_type,
+            }
+        ),
+        unclear_items=derive_why_review_plain_german(
+            {
+                "source_filename": detail.source_filename or detail.document_label,
+                "selected_payment_field": detail.selected_payment_field
+                or detail.payment_account,
+                "payment_account": detail.payment_account,
+                "selected_art": detail.selected_art or detail.document_type,
+                "document_type": detail.document_type,
+                "missing_configuration_type": detail.missing_configuration_type,
+                "configuration_coverage_status": detail.configuration_coverage_status,
+                "user_guidance": detail.user_guidance,
+                "business_category": detail.business_category,
+                "business_category_display": detail.business_category_display,
+                "matched_configuration_name": detail.matched_configuration_name,
+                "review_reason": detail.reason,
+                "suggested_filename": detail.suggested_filename
+                or detail.rendered_filename,
+            }
+        ),
+        decision_prompt=derive_decision_prompt(detail),
+        final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
+        user_mode_enabled=True,
     )
 
 
@@ -1331,6 +1382,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     sandbox_bag = get_controlled_final_write_sandbox_bag(state)
     sandbox_lines = sandbox_final_write_summary_lines(sandbox_bag.last_result)
     sandbox_result = sandbox_bag.last_result
+    ready_summaries, review_summaries = split_ready_and_review_cases(
+        detail_items,
+        readiness_by_key=dict(decision_bag.readiness_by_item_key),
+    )
 
     return ReviewPageVM(
         title=queue.title,
@@ -1433,12 +1488,14 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         claims_saas_ready=False,
         claims_production_ready=False,
         declutter_layout_marker=REVIEW_DECLUTTER_LAYOUT_MARKER,
+        user_mode_layout_marker=REVIEW_USER_MODE_LAYOUT_MARKER,
         safety_line_declutter=MSG_SAFETY_LINE_NO_FINAL,
+        final_write_user_answer=MSG_FINAL_WRITE_USER_ANSWER,
         oracle_available_title=MSG_ORACLE_AVAILABLE,
         oracle_command=ORACLE_COMMAND,
         oracle_no_auto_run=MSG_ORACLE_NO_AUTO_RUN,
         technical_details_collapsed_by_default=True,
-        section_titles=REVIEW_SECTION_TITLES,
+        section_titles=USER_REVIEW_SECTION_TITLES,
         copy_action_labels=(
             ACTION_COPY_CASE,
             ACTION_COPY_DIAGNOSIS,
@@ -1448,6 +1505,11 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         empty_state_oracle_action=ACTION_COPY_ORACLE,
         auto_runs_oracle=False,
         production_final_write_enabled=False,
+        user_mode_enabled=True,
+        ready_case_summaries=ready_summaries,
+        review_case_summaries=review_summaries,
+        cases_ready_count=len(ready_summaries),
+        cases_review_count=len(review_summaries),
     )
 
 
@@ -1612,7 +1674,7 @@ def _decision_status_panel(detail: ReviewSelectedDetailVM) -> ft.Control:
     lines = [
         ft.Text(detail.not_final_yet_text, size=12),
         ft.Text(ready_label, size=12),
-        ft.Text("final_write_allowed: false", size=12),
+        ft.Text(MSG_FINAL_WRITE_USER_ANSWER, size=12),
     ]
     if detail.review_decision:
         lines.append(ft.Text(f"Entscheidung: {detail.review_decision}", size=12))
@@ -1671,7 +1733,7 @@ def _finalization_preview_batch_panel(vm: ReviewPageVM) -> ft.Control:
             size=12,
         ),
         ft.Text(MSG_BATCH_NO_FINAL_WRITE, size=12),
-        ft.Text("final_write_allowed: false", size=12),
+        ft.Text(MSG_FINAL_WRITE_USER_ANSWER, size=12),
     ]
     for line in vm.finalization_preview_batch_summary_lines:
         if line in {
@@ -1761,8 +1823,8 @@ def _sandbox_final_write_panel(state: UiV2State, vm: ReviewPageVM) -> ft.Control
         ft.Text(MSG_CTA_CONTROLLED_ONLY, size=12),
         ft.Text(MSG_CTA_ORIGINALS_UNCHANGED, size=12),
         ft.Text(
-            "Sandbox-Test — kein Produktions-Final-Write · "
-            "final_write_allowed_for_production=false",
+            "Sandbox-Test — kein Produktions-Final-Write. "
+            + MSG_FINAL_WRITE_USER_ANSWER,
             size=12,
         ),
         ft.Text(
@@ -1929,9 +1991,8 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
     return ft.Column(
         [
             ft.Text(
-                "Bei Klick: nur Review-State / Vorschau. "
-                "Ausdrücklich nicht: run_once, produktive Final-Writes, "
-                "Originale verschieben.",
+                "Deine Entscheidung gilt nur für diese Vorschau. "
+                "Originale bleiben unverändert — es wird nichts final geschrieben.",
                 size=11,
             ),
             ft.Text(MSG_NOT_FINAL_YET, size=12),
@@ -1979,7 +2040,6 @@ def _copy_actions_row(
         _refresh()
 
     controls: list[ft.Control] = [
-        ft.Text(REVIEW_DECLUTTER_LAYOUT_MARKER, size=10),
         ft.Row(
             [
                 secondary_button(ACTION_COPY_CASE, on_click=_copy_case),
@@ -1996,10 +2056,13 @@ def _copy_actions_row(
 
 
 def _technical_detail_lines(detail: ReviewSelectedDetailVM) -> tuple[str, ...]:
+    """Collapsed developer dump — not shown on the primary user surface."""
+
     lines = [
         f"matching_reason: {detail.matched_configuration_reason or '—'}",
         f"configuration_coverage_status: {detail.configuration_coverage_status or '—'}",
         f"missing_configuration_type: {detail.missing_configuration_type or '—'}",
+        f"matched_configuration_id: {detail.matched_configuration_id or '—'}",
         f"proposed_configuration: {detail.proposed_configuration_name or '—'}",
         f"proposed_condition: {detail.proposed_condition or '—'}",
         f"proposed_filename_pattern: {detail.proposed_filename_pattern or '—'}",
@@ -2015,6 +2078,7 @@ def _technical_detail_lines(detail: ReviewSelectedDetailVM) -> tuple[str, ...]:
         f"review_decision: {detail.review_decision or '—'}",
         f"safety: {detail.safety_status}",
         SMOKE_DEV_UI_LAYOUT_MARKER,
+        REVIEW_USER_MODE_LAYOUT_MARKER,
     ]
     if detail.condition_results:
         cond = "; ".join(
@@ -2049,61 +2113,88 @@ def _finalization_declutter_panel(
     vm: ReviewPageVM,
     detail: ReviewSelectedDetailVM,
 ) -> ft.Control:
-    ready_label = (
-        MSG_FINALIZATION_READY_YES
-        if detail.finalization_ready
-        else MSG_FINALIZATION_READY_NO
-    )
-    dry_status = (
-        f"Dry-run: {vm.finalization_dry_run_package_path}"
-        if vm.finalization_dry_run_package_path
-        else "Dry-run: noch nicht erstellt"
-    )
-    sandbox_status = (
-        f"Sandbox-final-write: {vm.sandbox_final_write_result_path}"
-        if vm.sandbox_final_write_result_path
-        else "Sandbox-final-write: noch nicht ausgeführt"
-    )
+    """User-facing final-write answer — technical flags stay collapsed."""
 
-    def _refresh() -> None:
-        if state.refresh is not None:
-            state.refresh()
-
-    def _on_dry(_e: ft.ControlEvent) -> None:
-        apply_finalization_dry_run_package(state)
-        _refresh()
-
-    def _on_sandbox(_e: ft.ControlEvent) -> None:
-        apply_controlled_final_write_sandbox(state, sandbox_final_write=True)
-        _refresh()
-
+    _ = state  # panel is display-only in user mode
     body = ft.Column(
         [
-            ft.Text(ready_label, size=12),
-            ft.Text(
-                "Bereit"
-                if detail.finalization_ready
-                else ("Blockiert" if detail.finalization_blockers else "Weiter zur Prüfung"),
-                size=12,
-            ),
-            ft.Text(dry_status, size=12),
-            ft.Text(sandbox_status, size=12),
-            ft.Text("final_write_allowed=false", size=12),
-            ft.Text("production final-write disabled", size=12),
+            ft.Text(detail.final_write_user_answer or vm.final_write_user_answer, size=13),
             ft.Text(MSG_SAFETY_LINE_NO_FINAL, size=12),
-            ft.Row(
-                [
-                    secondary_button(MSG_CTA_CREATE_DRY_RUN, on_click=_on_dry),
-                    secondary_button(MSG_CTA_SANDBOX_WRITE, on_click=_on_sandbox),
-                ],
-                spacing=8,
-                wrap=True,
+            ft.Text(MSG_NOT_FINAL_YET, size=12),
+            ft.Text(
+                "Bereit für spätere Vorschau-Finalisierung"
+                if detail.finalization_ready
+                else (
+                    "Blockiert"
+                    if detail.finalization_blockers
+                    else "Weiter zur Prüfung"
+                ),
+                size=12,
             ),
         ],
         spacing=6,
         tight=True,
     )
-    return section_block(SECTION_FINALISIERUNG, body, subtitle=MSG_NOT_FINAL_YET)
+    return section_block(SECTION_FINAL_WRITE_Q, body, subtitle=MSG_NOT_FINAL_YET)
+
+
+def _ready_cases_panel(vm: ReviewPageVM) -> ft.Control:
+    if vm.ready_case_summaries:
+        lines = [ft.Text(f"· {line}", size=12) for line in vm.ready_case_summaries]
+    else:
+        lines = [ft.Text(f"· {MSG_NO_READY_CASES}", size=12)]
+    lines.insert(
+        0,
+        ft.Text(f"Anzahl: {vm.cases_ready_count}", size=12, weight=ft.FontWeight.W_600),
+    )
+    return section_block(SECTION_BEREIT, ft.Column(lines, spacing=4, tight=True))
+
+
+def _review_cases_panel(vm: ReviewPageVM) -> ft.Control:
+    if vm.review_case_summaries:
+        lines = [ft.Text(f"· {line}", size=12) for line in vm.review_case_summaries]
+    else:
+        lines = [ft.Text(f"· {MSG_NO_REVIEW_CASES}", size=12)]
+    lines.insert(
+        0,
+        ft.Text(
+            f"Anzahl: {vm.cases_review_count}",
+            size=12,
+            weight=ft.FontWeight.W_600,
+        ),
+    )
+    return section_block(SECTION_PRUEFUNG, ft.Column(lines, spacing=4, tight=True))
+
+
+def _developer_tools_collapsed(
+    state: UiV2State,
+    vm: ReviewPageVM,
+    detail: ReviewSelectedDetailVM | None,
+) -> ft.Control:
+    """Oracle / dry-run / sandbox / diagnosis — never primary user surface."""
+
+    tech_lines: list[str] = [
+        vm.user_mode_layout_marker,
+        vm.declutter_layout_marker,
+        MSG_ORACLE_AVAILABLE,
+        vm.oracle_command,
+        MSG_ORACLE_NO_AUTO_RUN,
+        "Kein Auto-Run — Terminal-Oracle bleibt fachliches Regressionsgate.",
+    ]
+    if detail is not None:
+        tech_lines.extend(_technical_detail_lines(detail))
+        tech_lines.extend(detail.finalization_summary_lines or ())
+        if vm.finalization_dry_run_package_path:
+            tech_lines.append(f"Dry-run: {vm.finalization_dry_run_package_path}")
+        if vm.sandbox_final_write_result_path:
+            tech_lines.append(
+                f"Sandbox-final-write: {vm.sandbox_final_write_result_path}"
+            )
+    return collapsible_details(
+        *tech_lines,
+        title=SECTION_TECHNISCHE,
+        initially_expanded=False,
+    )
 
 
 def build_review_page(state: UiV2State) -> ft.Control:
@@ -2111,11 +2202,10 @@ def build_review_page(state: UiV2State) -> ft.Control:
     items: list[ft.Control] = [
         page_header(
             vm.title,
-            subtitle="Prüffälle klar prüfen — technische Details standardmäßig versteckt.",
+            subtitle=MSG_USER_REVIEW_SUBTITLE,
         ),
+        ft.Text(vm.final_write_user_answer, size=12),
         ft.Text(vm.safety_line_declutter, size=12),
-        ft.Text(vm.declutter_layout_marker, size=10),
-        _oracle_dev_box(state, vm),
     ]
 
     if vm.empty:
@@ -2164,10 +2254,6 @@ def build_review_page(state: UiV2State) -> ft.Control:
                         on_click=_on_go_workspace,
                     ),
                     secondary_button(
-                        ACTION_COPY_ORACLE,
-                        on_click=_copy_oracle,
-                    ),
-                    secondary_button(
                         ACTION_CREATE_CONTROLLED_FOLDERS,
                         on_click=_on_create_folders,
                     ),
@@ -2180,18 +2266,38 @@ def build_review_page(state: UiV2State) -> ft.Control:
             items.append(
                 ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
             )
+        # Oracle copy stays available, but only under technical details.
         items.append(
             collapsible_details(
                 MSG_REVIEW_FROM_REAL_RUN,
                 MSG_REVIEW_NO_FILE_MUTATION,
                 MSG_UNCLEAR_CASES_STAY_REVIEW,
                 MSG_BUCKETS_SEPARATED,
+                MSG_ORACLE_AVAILABLE,
+                vm.oracle_command,
+                MSG_ORACLE_NO_AUTO_RUN,
+                ACTION_COPY_ORACLE,
                 *vm.separation_notes,
                 title=SECTION_TECHNISCHE,
                 initially_expanded=False,
             )
         )
+        items.append(
+            ft.Row(
+                [
+                    secondary_button(
+                        ACTION_COPY_ORACLE,
+                        on_click=_copy_oracle,
+                    ),
+                ],
+                spacing=8,
+                wrap=True,
+            )
+        )
         return page_scaffold(*items)
+
+    items.append(_ready_cases_panel(vm))
+    items.append(_review_cases_panel(vm))
 
     review_rows: list[ft.Control] = []
     for row in vm.list_items:
@@ -2201,10 +2307,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
             ("Betrag", row.amount or "—"),
             ("Zahlungsart", row.payment_field or "—"),
             ("Art", row.document_art or "—"),
-            ("Konfiguration", row.configuration or "—"),
             ("Status", ", ".join(row.status_badges) or row.preview_status_label),
             ("Vorschlag", row.suggested_filename or "—"),
-            ("Aktion", row.primary_action),
+            ("Nächster Schritt", row.primary_action),
             ("Sicherheit", row.safety_line),
         ]
         key = row.item_key
@@ -2244,11 +2349,36 @@ def build_review_page(state: UiV2State) -> ft.Control:
         detail = vm.selected_detail
         items.append(
             section_block(
-                SECTION_KURZPRUEFUNG,
-                _kv_lines(detail.kurzpruefung_fields),
+                SECTION_ERKANNT,
+                _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
             )
         )
-        vorschlag_body: list[ft.Control] = [_kv_lines(detail.vorschlag_fields)]
+        unclear_lines = [
+            ft.Text(f"· {line}", size=12)
+            for line in (detail.unclear_items or detail.why_review_plain)
+        ]
+        items.append(
+            section_block(
+                SECTION_UNKLAR,
+                ft.Column(
+                    unclear_lines
+                    or [ft.Text("· Prüfung erforderlich", size=12)],
+                    spacing=4,
+                    tight=True,
+                ),
+            )
+        )
+        vorschlag_body: list[ft.Control] = [
+            ft.Text(
+                detail.suggested_filename
+                or detail.preview_filename
+                or "—",
+                size=13,
+                weight=ft.FontWeight.W_600,
+                selectable=True,
+            ),
+            _kv_lines(detail.vorschlag_fields),
+        ]
         if detail.er_er_note:
             vorschlag_body.append(ft.Text(detail.er_er_note, size=11))
         elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
@@ -2277,23 +2407,21 @@ def build_review_page(state: UiV2State) -> ft.Control:
         )
         items.append(
             section_block(
-                SECTION_VORSCHLAG,
+                SECTION_DATEINAME,
                 ft.Column(vorschlag_body, spacing=8, tight=True),
             )
         )
-        why_lines = [
-            ft.Text(f"· {line}", size=12) for line in detail.why_review_plain
-        ]
         items.append(
             section_block(
-                SECTION_WARUM,
-                ft.Column(why_lines or [ft.Text("· Prüfung erforderlich", size=12)], spacing=4, tight=True),
-            )
-        )
-        items.append(
-            section_block(
-                SECTION_NAECHSTE,
-                _next_action_row(state, detail),
+                SECTION_ENTSCHEIDEN,
+                ft.Column(
+                    [
+                        ft.Text(detail.decision_prompt, size=13),
+                        _next_action_row(state, detail),
+                    ],
+                    spacing=8,
+                    tight=True,
+                ),
             )
         )
         items.append(_finalization_declutter_panel(state, vm, detail))
@@ -2304,28 +2432,33 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 subtitle=MSG_SAFETY_LINE_NO_FINAL,
             )
         )
-        # Keep rule draft / apply panels available but secondary.
+        # Rule draft / apply / remediation stay available under technical tools.
+        advanced: list[ft.Control] = []
         action_row = build_configuration_coverage_action_row(state, detail)
         if action_row is not None:
-            items.append(action_row)
-        items.append(build_duplicate_config_remediation_panel(state))
+            advanced.append(action_row)
+        advanced.append(build_duplicate_config_remediation_panel(state))
         if state.configuration_rule_draft is not None:
-            items.append(
+            advanced.append(
                 build_configuration_rule_draft_panel(
                     state, state.configuration_rule_draft
                 )
             )
         apply_panel = build_configuration_rule_apply_panel(state)
         if apply_panel is not None:
-            items.append(apply_panel)
-        items.append(
-            collapsible_details(
-                *_technical_detail_lines(detail),
-                *(detail.finalization_summary_lines or ()),
-                title=SECTION_TECHNISCHE,
-                initially_expanded=False,
+            advanced.append(apply_panel)
+        advanced.append(_oracle_dev_box(state, vm))
+        advanced.append(_finalization_dry_run_panel(state, vm))
+        advanced.append(_sandbox_final_write_panel(state, vm))
+        if advanced:
+            items.append(
+                section_block(
+                    "Erweiterte Werkzeuge (optional)",
+                    ft.Column(advanced, spacing=10, tight=True),
+                    subtitle="Nicht nötig für die normale Prüfung",
+                )
             )
-        )
+        items.append(_developer_tools_collapsed(state, vm, detail))
 
     items.append(
         collapsible_details(
@@ -2334,6 +2467,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
             MSG_TARGET_PATHS_VORSCHAU_ONLY,
             MSG_EMPTY_OUTPUT_EXPLAIN,
             MSG_SAFETY_LINE_NO_FINAL,
+            MSG_FINAL_WRITE_USER_ANSWER,
             *vm.separation_notes,
             title="Weitere Hinweise",
             initially_expanded=False,

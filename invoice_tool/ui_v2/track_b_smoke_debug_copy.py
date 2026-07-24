@@ -1,4 +1,4 @@
-"""Track-B developer smoke copy/debug text helpers + review declutter labels.
+"""Track-B developer smoke copy/debug text helpers + simple user review labels.
 
 Builds plain-text diagnostics and German review-surface labels.
 No file mutation, no run_once, no auto-oracle execution.
@@ -20,8 +20,12 @@ ACTION_OPEN_WORKSPACE = "Arbeitsbereich öffnen"
 # Layout marker for focused smoke UI tests / visual QA.
 SMOKE_DEV_UI_LAYOUT_MARKER = "track_b_smoke_dev_ui_layout_v1_no_overlap"
 REVIEW_DECLUTTER_LAYOUT_MARKER = "track_b_review_surface_declutter_v1"
+REVIEW_USER_MODE_LAYOUT_MARKER = "track_b_simple_user_review_mode_v1"
 
 MSG_SAFETY_LINE_NO_FINAL = "Vorschau — keine finalen Dateien geschrieben"
+MSG_FINAL_WRITE_USER_ANSWER = (
+    "Nein — nur Vorschau/Sandbox. Es wird nichts final geschrieben."
+)
 MSG_ORACLE_AVAILABLE = "Automatischer Smoke-Test verfügbar"
 ORACLE_COMMAND = (
     "KI_RECHNUNGEN_UI_V2_DEV_DEFAULTS=1 .venv/bin/python "
@@ -38,30 +42,48 @@ MSG_ER_ER_NOTE = (
 MSG_FILENAME_PREVIEW_ONLY = (
     "Dateiname ist nur Vorschau — noch keine finalen Dateien geschrieben."
 )
+MSG_NO_READY_CASES = "Noch keine Fälle bereit."
+MSG_NO_REVIEW_CASES = "Keine offenen Prüffälle."
+MSG_USER_REVIEW_SUBTITLE = (
+    "Einfache Prüfung: erkennen, entscheiden, Vorschau — ohne Technikjargon."
+)
 
-SECTION_KURZPRUEFUNG = "Kurzprüfung"
-SECTION_VORSCHLAG = "Vorschlag"
-SECTION_WARUM = "Warum zur Prüfung?"
-SECTION_NAECHSTE = "Nächste Aktion"
-SECTION_FINALISIERUNG = "Finalisierung"
+# Simple user review questions (primary surface).
+SECTION_ERKANNT = "Was wurde erkannt?"
+SECTION_UNKLAR = "Was ist unklar?"
+SECTION_DATEINAME = "Welcher Dateiname wird vorgeschlagen?"
+SECTION_ENTSCHEIDEN = "Was muss ich entscheiden?"
+SECTION_FINAL_WRITE_Q = "Wird etwas final geschrieben?"
+SECTION_BEREIT = "Welche Fälle sind bereit?"
+SECTION_PRUEFUNG = "Welche Fälle bleiben zur Prüfung?"
 SECTION_TECHNISCHE = "Technische Details"
 
+# Compatibility aliases for declutter-era imports / tests.
+SECTION_KURZPRUEFUNG = SECTION_ERKANNT
+SECTION_VORSCHLAG = SECTION_DATEINAME
+SECTION_WARUM = SECTION_UNKLAR
+SECTION_NAECHSTE = SECTION_ENTSCHEIDEN
+SECTION_FINALISIERUNG = SECTION_FINAL_WRITE_Q
+
 REVIEW_SECTION_TITLES = (
-    SECTION_KURZPRUEFUNG,
-    SECTION_VORSCHLAG,
-    SECTION_WARUM,
-    SECTION_NAECHSTE,
-    SECTION_FINALISIERUNG,
+    SECTION_ERKANNT,
+    SECTION_UNKLAR,
+    SECTION_DATEINAME,
+    SECTION_ENTSCHEIDEN,
+    SECTION_FINAL_WRITE_Q,
+    SECTION_BEREIT,
+    SECTION_PRUEFUNG,
     SECTION_TECHNISCHE,
 )
+USER_REVIEW_SECTION_TITLES = REVIEW_SECTION_TITLES
 
 BADGE_PAYPAL = "PayPal"
 BADGE_UNKLAR = "Unklar"
-BADGE_MISSING_PAYMENT = "Missing payment"
-BADGE_NOT_AMEX = "Not AMEX"
+BADGE_MISSING_PAYMENT = "Zahlung unklar"
+BADGE_NOT_AMEX = "Keine AMEX"
 BADGE_STORNO = "Storno"
-BADGE_READY = "Ready for finalization"
-BADGE_BLOCKED = "Blocked"
+BADGE_READY = "Bereit"
+BADGE_BLOCKED = "Blockiert"
 
 PRIMARY_PRUEFEN = "Prüfen"
 PRIMARY_ACCEPT = "Vorschlag akzeptieren"
@@ -310,6 +332,143 @@ def next_action_labels_for_detail(detail: Any) -> tuple[str, ...]:
     return tuple(labels)
 
 
+def payment_display_label(detail: Any) -> str:
+    """User-facing payment label — never expose the raw key ``payment_field``."""
+
+    raw = _g(detail, "selected_payment_field") or _g(detail, "payment_account")
+    text = str(raw or "").strip()
+    if not text:
+        return "nicht sicher erkannt"
+    mapping = {
+        "paypal": "PayPal",
+        "card": "Karte",
+        "credit card": "Karte",
+        "amex": "AMEX",
+        "bank": "Bank",
+        "ueberweisung": "Überweisung",
+        "überweisung": "Überweisung",
+    }
+    return mapping.get(_norm(text), text)
+
+
+def document_art_display_label(detail: Any) -> str:
+    art = str(
+        _g(detail, "selected_art") or _g(detail, "document_type") or ""
+    ).strip()
+    if art.casefold() == "storno":
+        return "Storno"
+    if art.casefold() in {"er", "rechnung", "invoice"}:
+        return "Rechnung"
+    return art or "Rechnung"
+
+
+def derive_recognized_fields(detail: Any) -> tuple[tuple[str, str], ...]:
+    """Fields for „Was wurde erkannt?“ — plain German, no technical keys."""
+
+    return (
+        (
+            "Originaldatei",
+            str(
+                _g(detail, "source_filename")
+                or _g(detail, "document_label")
+                or "—"
+            ),
+        ),
+        (
+            "Lieferant / Name",
+            str(
+                _g(detail, "counterparty_name")
+                or _g(detail, "supplier")
+                or "—"
+            ),
+        ),
+        ("Datum", str(_g(detail, "invoice_date") or "—")),
+        (
+            "Betrag",
+            str(
+                _g(detail, "selected_amount")
+                or _g(detail, "amount")
+                or "—"
+            ),
+        ),
+        ("Zahlungsart", payment_display_label(detail)),
+        ("Dokumentart", document_art_display_label(detail)),
+    )
+
+
+def derive_decision_prompt(detail: Any) -> str:
+    """Single plain-German decision question for the selected case."""
+
+    if paypal_action_relevant(detail):
+        return (
+            "PayPal-Regel speichern und Matching neu berechnen, "
+            "oder den Vorschlag akzeptieren / als unklar belassen?"
+        )
+    badges = derive_status_badges(detail)
+    if BADGE_MISSING_PAYMENT in badges:
+        return (
+            "Zahlungsart prüfen und entscheiden: Vorschlag akzeptieren, "
+            "als unklar belassen oder zurückstellen?"
+        )
+    if BADGE_NOT_AMEX in badges:
+        return (
+            "Kartenzahlung ohne AMEX: passende Zuordnung wählen, "
+            "Vorschlag akzeptieren oder als unklar belassen?"
+        )
+    if BADGE_STORNO in badges:
+        return "Storno prüfen: Vorschlag akzeptieren oder zur Prüfung belassen?"
+    if BADGE_READY in badges:
+        return "Vorschlag akzeptieren oder noch zurückstellen?"
+    return "Vorschlag akzeptieren, als unklar belassen oder zurückstellen?"
+
+
+def case_summary_line(detail: Any) -> str:
+    name = str(
+        _g(detail, "source_filename")
+        or _g(detail, "document_label")
+        or "Dokument"
+    )
+    supplier = str(
+        _g(detail, "counterparty_name") or _g(detail, "supplier") or ""
+    ).strip()
+    amount = str(
+        _g(detail, "selected_amount") or _g(detail, "amount") or ""
+    ).strip()
+    parts = [name]
+    if supplier:
+        parts.append(supplier)
+    if amount:
+        parts.append(amount)
+    return " · ".join(parts)
+
+
+def split_ready_and_review_cases(
+    details: Sequence[Any],
+    *,
+    readiness_by_key: Mapping[str, Any] | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Partition cases into ready vs. still-in-review summary lines."""
+
+    readiness_by_key = readiness_by_key or {}
+    ready: list[str] = []
+    review: list[str] = []
+    for detail in details:
+        key = str(
+            _g(detail, "item_key")
+            or _g(detail, "document_id")
+            or _g(detail, "source_filename")
+            or ""
+        )
+        readiness = readiness_by_key.get(key)
+        is_ready = bool(getattr(readiness, "ready", False))
+        line = case_summary_line(detail)
+        if is_ready:
+            ready.append(line)
+        else:
+            review.append(line)
+    return tuple(ready), tuple(review)
+
+
 def build_prueffall_copy_text(
     detail: Any,
     *,
@@ -472,9 +631,13 @@ __all__ = (
     "BADGE_UNKLAR",
     "MSG_ER_ER_NOTE",
     "MSG_FILENAME_PREVIEW_ONLY",
+    "MSG_FINAL_WRITE_USER_ANSWER",
+    "MSG_NO_READY_CASES",
+    "MSG_NO_REVIEW_CASES",
     "MSG_ORACLE_AVAILABLE",
     "MSG_ORACLE_NO_AUTO_RUN",
     "MSG_SAFETY_LINE_NO_FINAL",
+    "MSG_USER_REVIEW_SUBTITLE",
     "MSG_WHY_GENERIC",
     "MSG_WHY_MISSING_CATEGORY",
     "MSG_WHY_MISSING_PAYMENT",
@@ -489,22 +652,37 @@ __all__ = (
     "PRIMARY_UNKLAR",
     "REVIEW_DECLUTTER_LAYOUT_MARKER",
     "REVIEW_SECTION_TITLES",
+    "REVIEW_USER_MODE_LAYOUT_MARKER",
+    "SECTION_BEREIT",
+    "SECTION_DATEINAME",
+    "SECTION_ENTSCHEIDEN",
+    "SECTION_ERKANNT",
     "SECTION_FINALISIERUNG",
+    "SECTION_FINAL_WRITE_Q",
     "SECTION_KURZPRUEFUNG",
     "SECTION_NAECHSTE",
+    "SECTION_PRUEFUNG",
     "SECTION_TECHNISCHE",
+    "SECTION_UNKLAR",
     "SECTION_VORSCHLAG",
     "SECTION_WARUM",
     "SMOKE_DEV_UI_LAYOUT_MARKER",
+    "USER_REVIEW_SECTION_TITLES",
     "build_diagnosis_copy_text",
     "build_oracle_command_copy_text",
     "build_prueffall_copy_text",
+    "case_summary_line",
     "copy_text_to_state_and_clipboard",
+    "derive_decision_prompt",
     "derive_primary_list_action",
+    "derive_recognized_fields",
     "derive_status_badges",
     "derive_why_review_plain_german",
+    "document_art_display_label",
     "er_er_note_for_filename",
     "filename_has_er_er",
     "next_action_labels_for_detail",
+    "payment_display_label",
     "paypal_action_relevant",
+    "split_ready_and_review_cases",
 )
