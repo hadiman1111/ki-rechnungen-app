@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_FINALIZATION_DRY_RUN_PACKAGE_AND_AUDIT_01`
 2. **Masterplan position:** Prompt 31/34
 3. **HEAD before:** `cf8c9d9dbce5f6915e0eca33795cf76560b372cf`  
-   **HEAD after:** (feature commit of this task; tip after push — see remote `main`)
+   **HEAD after:** `ae697de5afe90614debf0850a1ab23cbeabafa0a` (feature); tip after docs: see remote `main`
 4. **Baseline:** Prompt 30 Finalization Preview Batch & Conflicts ready (`TRACK_B_FINALIZATION_PREVIEW_BATCH_AND_CONFLICTS_READY`); Batch-/Conflict-Modelle und Manifest-Felder vorhanden; Finalization Dry-Run Package fehlte.
 5. **Files changed:**
    - `invoice_tool/ui_v2/finalization_dry_run_package.py` (neu)
