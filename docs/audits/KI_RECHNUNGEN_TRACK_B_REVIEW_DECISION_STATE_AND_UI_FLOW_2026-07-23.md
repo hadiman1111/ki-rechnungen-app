@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_REVIEW_DECISION_STATE_AND_UI_FLOW_01`
 2. **Masterplan position:** Prompt 29/34
 3. **HEAD before:** `24055954124b9d859d30c041cf562a15bd683a36`  
-   **HEAD after:** *(gesetzt nach Commit)*
+   **HEAD after:** 
 4. **Baseline:** Prompt 28 Design ready (`TRACK_B_REVIEW_DECISION_TO_FINALIZATION_DESIGN_READY`); Decision-/Readiness-Modelle und UI/Manifest-Specs vorhanden; Implementierung fehlte.
 5. **Files changed:**
    - `invoice_tool/ui_v2/review_decision.py` (neu)
