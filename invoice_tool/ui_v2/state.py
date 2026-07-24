@@ -41,6 +41,7 @@ from invoice_tool.ui_v2.processing_contract import (
     default_processing_service,
 )
 from invoice_tool.ui_v2.processing_state import ProcessingRunState, idle_processing_state
+from invoice_tool.ui_v2.finalization_dry_run_package import FinalizationDryRunPackageBag
 from invoice_tool.ui_v2.finalization_preview_batch import FinalizationPreviewBatchBag
 from invoice_tool.ui_v2.review_decision import ReviewDecisionBag
 from invoice_tool.ui_v2.review_preview_state import ReviewPreviewUiState
@@ -105,6 +106,10 @@ class UiV2State:
     workspace_preview_export_feedback: str = ""
     workspace_preview_export_feedback_error: bool = False
     workspace_last_preview_export_folder: str = ""
+    # Prompt 31/34 — Finalization dry-run package feedback (sandbox output only).
+    workspace_finalization_dry_run_feedback: str = ""
+    workspace_finalization_dry_run_feedback_error: bool = False
+    workspace_last_finalization_dry_run_folder: str = ""
     # Last CTA feedback for the workspace start/sandbox button (always visible after click).
     workspace_start_feedback: str = ""
     # Compact run-interaction state for manual-test UX (idle → checking → blocked/…).
@@ -123,6 +128,10 @@ class UiV2State:
     # Prompt 30/34 — Finalization preview batch & conflicts (in-memory only).
     finalization_preview_batch_ui: FinalizationPreviewBatchBag = field(
         default_factory=FinalizationPreviewBatchBag
+    )
+    # Prompt 31/34 — Finalization dry-run package & audit (in-memory only).
+    finalization_dry_run_package_ui: FinalizationDryRunPackageBag = field(
+        default_factory=FinalizationDryRunPackageBag
     )
     # Prompt 26/34 — configuration rule draft from coverage guidance (unsaved until confirm).
     configuration_rule_draft: ConfigurationRuleDraft | None = None
@@ -457,6 +466,19 @@ class UiV2State:
         from invoice_tool.ui_v2.preview_export import apply_workspace_preview_export
 
         return apply_workspace_preview_export(self)
+
+    def write_finalization_dry_run_package_to_output(self):
+        """Write a controlled Finalization Dry-Run audit package (text artifacts only).
+
+        Never writes final PDFs, never mutates inputs, never calls run_once,
+        never sets final_write_allowed=True.
+        """
+
+        from invoice_tool.ui_v2.finalization_dry_run_package import (
+            apply_finalization_dry_run_package,
+        )
+
+        return apply_finalization_dry_run_package(self)
 
     def import_saas_draft(
         self,

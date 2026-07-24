@@ -167,6 +167,16 @@ from invoice_tool.ui_v2.review_decision import (
     get_review_decision_bag,
     set_edit_filename_draft,
 )
+from invoice_tool.ui_v2.finalization_dry_run_package import (
+    MSG_CTA_CHECK_ONLY,
+    MSG_CTA_CREATE_AUDIT,
+    MSG_CTA_CREATE_DRY_RUN,
+    MSG_DRY_RUN_TITLE,
+    MSG_FINAL_WRITE_FALSE,
+    apply_finalization_dry_run_package,
+    dry_run_package_summary_lines,
+    get_finalization_dry_run_package_bag,
+)
 from invoice_tool.ui_v2.finalization_preview_batch import (
     MSG_BATCH_BLOCKED,
     MSG_BATCH_DEFERRED,
@@ -451,6 +461,15 @@ class ReviewPageVM:
     finalization_preview_batch_still_review_required_count: int = 0
     finalization_preview_batch_summary_lines: tuple[str, ...] = ()
     finalization_preview_batch_no_final_write_text: str = MSG_BATCH_NO_FINAL_WRITE
+    # Prompt 31/34 — Finalization dry-run package / audit (no final write).
+    finalization_dry_run_title: str = MSG_DRY_RUN_TITLE
+    finalization_dry_run_cta_create: str = MSG_CTA_CREATE_DRY_RUN
+    finalization_dry_run_cta_audit: str = MSG_CTA_CREATE_AUDIT
+    finalization_dry_run_check_only: str = MSG_CTA_CHECK_ONLY
+    finalization_dry_run_package_path: str = ""
+    finalization_dry_run_feedback: str = ""
+    finalization_dry_run_feedback_error: bool = False
+    finalization_dry_run_summary_lines: tuple[str, ...] = ()
     calls_run_once: bool = False
     writes_final_files: bool = False
     mutates_input: bool = False
@@ -1061,6 +1080,8 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
 
     finalization_batch = build_finalization_preview_batch(state)
     batch_lines = batch_summary_lines(finalization_batch)
+    dry_run_bag = get_finalization_dry_run_package_bag(state)
+    dry_run_lines = dry_run_package_summary_lines(dry_run_bag.last_package)
 
     return ReviewPageVM(
         title=queue.title,
@@ -1114,6 +1135,21 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         ),
         finalization_preview_batch_summary_lines=batch_lines,
         finalization_preview_batch_no_final_write_text=MSG_BATCH_NO_FINAL_WRITE,
+        finalization_dry_run_title=MSG_DRY_RUN_TITLE,
+        finalization_dry_run_cta_create=MSG_CTA_CREATE_DRY_RUN,
+        finalization_dry_run_cta_audit=MSG_CTA_CREATE_AUDIT,
+        finalization_dry_run_check_only=MSG_CTA_CHECK_ONLY,
+        finalization_dry_run_package_path=dry_run_bag.last_package_root
+        or getattr(state, "workspace_last_finalization_dry_run_folder", "")
+        or "",
+        finalization_dry_run_feedback=dry_run_bag.last_feedback
+        or getattr(state, "workspace_finalization_dry_run_feedback", "")
+        or "",
+        finalization_dry_run_feedback_error=bool(
+            dry_run_bag.last_feedback_error
+            or getattr(state, "workspace_finalization_dry_run_feedback_error", False)
+        ),
+        finalization_dry_run_summary_lines=dry_run_lines,
         calls_run_once=False,
         writes_final_files=False,
         mutates_input=False,
@@ -1364,6 +1400,56 @@ def _finalization_preview_batch_panel(vm: ReviewPageVM) -> ft.Control:
         MSG_BATCH_TITLE,
         ft.Column(lines, spacing=4, tight=True),
         subtitle="Nicht-produktiv — kein finales Schreiben",
+    )
+
+
+def _finalization_dry_run_panel(state: UiV2State, vm: ReviewPageVM) -> ft.Control:
+    """Prompt-31 dry-run package CTA — audit artifacts only, never final write."""
+
+    def _refresh() -> None:
+        if state.refresh is not None:
+            state.refresh()
+
+    def _on_create(_e: ft.ControlEvent) -> None:
+        apply_finalization_dry_run_package(state)
+        _refresh()
+
+    lines: list[ft.Control] = [
+        ft.Text(MSG_CTA_CREATE_DRY_RUN, size=12),
+        ft.Text(MSG_CTA_CREATE_AUDIT, size=12),
+        ft.Text(MSG_CTA_CHECK_ONLY, size=12),
+        ft.Text(MSG_FINAL_WRITE_FALSE, size=12),
+        ft.Text(
+            f"{MSG_BATCH_READY}: {vm.finalization_preview_batch_ready_count} · "
+            f"{MSG_BATCH_BLOCKED}: {vm.finalization_preview_batch_blocked_count}",
+            size=12,
+        ),
+        secondary_button(
+            MSG_CTA_CREATE_DRY_RUN,
+            on_click=_on_create,
+            disabled=False,
+        ),
+    ]
+    if vm.finalization_dry_run_package_path:
+        lines.append(
+            ft.Text(f"Paket: {vm.finalization_dry_run_package_path}", size=12)
+        )
+    if vm.finalization_dry_run_feedback:
+        lines.append(ft.Text(vm.finalization_dry_run_feedback, size=12))
+    for line in vm.finalization_dry_run_summary_lines:
+        if line in {
+            MSG_DRY_RUN_TITLE,
+            MSG_CTA_CREATE_DRY_RUN,
+            MSG_CTA_CREATE_AUDIT,
+            MSG_CTA_CHECK_ONLY,
+            MSG_FINAL_WRITE_FALSE,
+        }:
+            continue
+        lines.append(ft.Text(line, size=12))
+    return section_block(
+        MSG_DRY_RUN_TITLE,
+        ft.Column(lines, spacing=6, tight=True),
+        subtitle=MSG_CTA_CHECK_ONLY,
     )
 
 
@@ -1818,6 +1904,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
             items.append(apply_panel)
         items.append(_decision_status_panel(detail))
         items.append(_finalization_preview_batch_panel(vm))
+        items.append(_finalization_dry_run_panel(state, vm))
         decision_bag = get_review_decision_bag(state)
         draft_value = decision_bag.edit_filename_draft_by_key.get(
             detail.item_key,
