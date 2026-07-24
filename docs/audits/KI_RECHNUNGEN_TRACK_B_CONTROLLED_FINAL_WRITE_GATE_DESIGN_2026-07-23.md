@@ -3,7 +3,7 @@
 1. **Task ID:** `KI_RECHNUNGEN_TRACK_B_CONTROLLED_FINAL_WRITE_GATE_DESIGN_01`
 2. **Masterplan position:** Prompt 32/34
 3. **HEAD before:** `30e02842a024b60656179952b98c878c6210ea88`  
-   **HEAD after:** *(gesetzt nach Commit)*
+   **HEAD after:** `272b8640a763006c2876f71f2eb6c3e4a7316b21`
 4. **Baseline:** Prompt 31 Finalization Dry-Run Package & Audit ready (`TRACK_B_FINALIZATION_DRY_RUN_PACKAGE_AND_AUDIT_READY`); Dry-Run-Package, Preview-Batch, Review-Decision vorhanden; Controlled Final Write Gate Design fehlte. Feature Prompt 31: `ae697de5afe90614debf0850a1ab23cbeabafa0a`.
 5. **Files changed:**
    - `docs/KI_RECHNUNGEN_TRACK_B_CONTROLLED_FINAL_WRITE_GATE_DESIGN_2026-07-23.md` (neu)
