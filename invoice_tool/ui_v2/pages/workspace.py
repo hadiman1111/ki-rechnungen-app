@@ -93,6 +93,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_CHANGE_PROFILE,
     ACTION_EDIT_CONFIGURATIONS,
     ACTION_OPEN_REVIEW,
+    ACTION_SHOW_DOCUMENT,
     ACTION_WORKSPACE_EDIT,
     IA_CLEANUP_LAYOUT_MARKER,
     LABEL_ACTIVE_STATUS,
@@ -105,6 +106,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     LABEL_WORKSPACE_PROFILE,
     MSG_MISSING_TARGETS_CONFIG,
     MSG_NO_RESULT_YET,
+    MSG_NOT_CHECKED_YET,
     MSG_RUN_ACTIVITY,
     MSG_START_HELPER,
     PICK_INPUT_FOLDER_CHANGE,
@@ -116,12 +118,27 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     SECTION_TEST_NACHWEIS_COLLAPSED,
     START_CTA_STRONG,
     WORKSPACE_CTA_PRIMARY_MARKER,
+    WORKSPACE_DOCUMENT_SHOW_MARKER,
     WORKSPACE_FILE_PAIR_MARKER,
     WORKSPACE_IA_SECTION_ORDER,
+    WORKSPACE_LIVE_FILE_PAIRS_MARKER,
     WORKSPACE_SHARED_SUMMARY_MARKER,
     clean_user_facing_filename,
     smart_path_display,
     truncate_filename_display,
+)
+from invoice_tool.ui_v2.workspace_input_listing import (
+    LIVE_INPUT_LISTING_MARKER,
+    refresh_workspace_input_listing_on_state,
+)
+from invoice_tool.ui_v2.workspace_file_pairs import (
+    LIVE_FILE_PAIRS_MARKER,
+    LIVE_PROPOSAL_UPDATE_MARKER,
+    MSG_PAIR_STATUS_INTEGRATED,
+    WorkspaceFilePairRow,
+    WorkspaceLiveFilePairsVM,
+    build_live_file_pairs_vm,
+    merge_input_names_with_proposal_sources,
 )
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
@@ -574,8 +591,11 @@ def _workspace_file_pair_rows(
     *,
     pairs: tuple[tuple[str, str], ...],
     on_open_review,
+    live_vm: WorkspaceLiveFilePairsVM | None = None,
+    on_show_document=None,
+    on_open_review_for_source=None,
 ) -> ft.Control:
-    """Paired original (left) / proposed output (right) list."""
+    """Paired original (left) / proposed output (right) list — live Arbeitsbereich."""
 
     header = ft.ResponsiveRow(
         [
@@ -600,7 +620,47 @@ def _workspace_file_pair_rows(
         ],
         spacing=8,
     )
-    if not pairs:
+
+    live_rows: tuple[WorkspaceFilePairRow, ...] = (
+        tuple(live_vm.rows) if live_vm is not None else ()
+    )
+    if live_vm is None and pairs:
+        # Legacy tuple path kept for older callers/tests.
+        legacy: list[WorkspaceFilePairRow] = []
+        for i, (source, target) in enumerate(pairs):
+            cleaned = clean_user_facing_filename(target) if target else ""
+            legacy.append(
+                WorkspaceFilePairRow(
+                    index=i,
+                    source_filename=source,
+                    proposed_filename=cleaned,
+                    output_status="proposed" if cleaned else "not_checked",
+                    output_display=cleaned or LABEL_NO_PROPOSAL_YET,
+                    status_label=MSG_NOT_CHECKED_YET if not cleaned else "Vorschlag erstellt",
+                    has_proposal=bool(cleaned),
+                )
+            )
+        live_rows = tuple(legacy)
+
+    if live_vm is not None and not live_rows and live_vm.empty_message:
+        status_bits = [
+            header,
+            ft.Text(live_vm.empty_message, size=13, color=COLOR_TEXT_MUTED),
+            ft.Text(MSG_START_HELPER, size=12, color=COLOR_TEXT_MUTED),
+        ]
+        return ft.Container(
+            content=ft.Column(status_bits, spacing=10, tight=True),
+            bgcolor=COLOR_SURFACE,
+            border=ft.Border.all(1, COLOR_BORDER),
+            border_radius=10,
+            padding=16,
+            data=(
+                f"{WORKSPACE_FILE_PAIR_MARKER}|empty|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
+                f"{LIVE_FILE_PAIRS_MARKER}|{SECOND_UX_CLEANUP_MARKER}"
+            ),
+        )
+
+    if not live_rows and not pairs:
         return ft.Container(
             content=ft.Column(
                 [
@@ -618,40 +678,117 @@ def _workspace_file_pair_rows(
         )
 
     rows: list[ft.Control] = [header]
-    for index, (source, target) in enumerate(pairs):
-        source_full = str(source or "").strip() or "—"
-        target_clean = clean_user_facing_filename(target) if target else ""
-        target_full = target_clean or LABEL_NO_PROPOSAL_YET
+    if live_vm is not None:
+        rows.append(
+            ft.Text(
+                live_vm.files_found_label,
+                size=12,
+                color=COLOR_TEXT_MUTED,
+                data=f"file_pair_files_found|{live_vm.input_count}|{MSG_PAIR_STATUS_INTEGRATED}",
+            )
+        )
+        if live_vm.checked_count or live_vm.review_count:
+            rows.append(
+                ft.Text(
+                    f"Geprüft: {live_vm.checked_count} · Zur Prüfung: {live_vm.review_count}",
+                    size=12,
+                    color=COLOR_TEXT_MUTED,
+                    data=f"file_pair_integrated_counts|{MSG_PAIR_STATUS_INTEGRATED}",
+                )
+            )
+        rows.append(
+            ft.Text(
+                MSG_START_HELPER,
+                size=12,
+                color=COLOR_TEXT_MUTED,
+                data="file_pair_safety_helper",
+            )
+        )
+
+    total = len(live_rows)
+    for row_vm in live_rows:
+        index = int(getattr(row_vm, "index", 0))
+        source_full = str(getattr(row_vm, "source_filename", "") or "").strip() or "—"
+        target_full = str(getattr(row_vm, "output_display", "") or "").strip() or MSG_NOT_CHECKED_YET
+        proposed = str(getattr(row_vm, "proposed_filename", "") or "").strip()
+        status_label = str(getattr(row_vm, "status_label", "") or "")
+
+        def _on_source_click(
+            _e: ft.ControlEvent,
+            name: str = source_full,
+        ) -> None:
+            if on_show_document is not None:
+                on_show_document(name)
+            elif on_open_review_for_source is not None:
+                on_open_review_for_source(name)
+            else:
+                on_open_review()
+
+        def _on_target_click(
+            _e: ft.ControlEvent,
+            name: str = source_full,
+        ) -> None:
+            if on_open_review_for_source is not None:
+                on_open_review_for_source(name)
+            else:
+                on_open_review()
+
+        source_col = ft.Column(
+            [
+                ft.Text(
+                    truncate_filename_display(source_full),
+                    size=13,
+                    weight=ft.FontWeight.W_500,
+                    tooltip=source_full,
+                    data=f"file_pair_source_full|{source_full}",
+                ),
+                ft.TextButton(
+                    ACTION_SHOW_DOCUMENT,
+                    on_click=_on_source_click,
+                    data=(
+                        f"file_pair_show_document|{ACTION_SHOW_DOCUMENT}|"
+                        f"{WORKSPACE_DOCUMENT_SHOW_MARKER}|non_mutating"
+                    ),
+                ),
+            ],
+            spacing=2,
+            tight=True,
+        )
+        target_col = ft.Column(
+            [
+                ft.Text(
+                    truncate_filename_display(target_full),
+                    size=13,
+                    tooltip=target_full if proposed else target_full,
+                    data=f"file_pair_target_full|{target_full}|proposed={proposed}",
+                ),
+                ft.Text(
+                    status_label,
+                    size=11,
+                    color=COLOR_TEXT_MUTED,
+                    data=f"file_pair_row_status|{status_label}",
+                ),
+            ],
+            spacing=2,
+            tight=True,
+        )
         row = ft.Container(
             content=ft.ResponsiveRow(
                 [
-                    ft.Container(
-                        content=ft.Text(
-                            truncate_filename_display(source_full),
-                            size=13,
-                            weight=ft.FontWeight.W_500,
-                            tooltip=source_full,
-                            data=f"file_pair_source_full|{source_full}",
-                        ),
-                        col={"xs": 12, "md": 6},
-                    ),
-                    ft.Container(
-                        content=ft.Text(
-                            truncate_filename_display(target_full),
-                            size=13,
-                            tooltip=target_full,
-                            data=f"file_pair_target_full|{target_full}",
-                        ),
-                        col={"xs": 12, "md": 6},
-                    ),
+                    ft.Container(content=source_col, col={"xs": 12, "md": 6}),
+                    ft.Container(content=target_col, col={"xs": 12, "md": 6}),
                 ],
                 spacing=8,
             ),
-            on_click=lambda _e: on_open_review(),
+            on_click=_on_target_click,
             ink=True,
             padding=ft.Padding.symmetric(vertical=8, horizontal=4),
-            border=ft.Border(bottom=ft.BorderSide(1, COLOR_BORDER)) if index < len(pairs) - 1 else None,
-            data=f"workspace_file_pair_row|{index}|nav_review|{SECOND_UX_CLEANUP_MARKER}",
+            border=ft.Border(bottom=ft.BorderSide(1, COLOR_BORDER)) if index < total - 1 else None,
+            data=(
+                f"workspace_file_pair_row|{index}|nav_review|"
+                f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
+                f"source={source_full}"
+            ),
         )
         rows.append(row)
     rows.append(
@@ -669,7 +806,9 @@ def _workspace_file_pair_rows(
         padding=16,
         data=(
             f"{WORKSPACE_FILE_PAIR_MARKER}|same_row|stable_order|"
-            f"{SECOND_UX_CLEANUP_MARKER}|{IA_CLEANUP_LAYOUT_MARKER}"
+            f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{LIVE_FILE_PAIRS_MARKER}|"
+            f"{LIVE_PROPOSAL_UPDATE_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
+            f"{IA_CLEANUP_LAYOUT_MARKER}|secondary_review_cta"
         ),
     )
 
@@ -1123,15 +1262,60 @@ def resolve_workspace_policy_bridge(state: UiV2State) -> RuntimePolicyBridgeResu
 
 
 def apply_workspace_input_folder_selection(state: UiV2State, path: str | None) -> None:
-    """Apply an explicit input folder path string to UI state — no FS create/scan/PDF IO."""
+    """Apply input folder and immediately list document basenames (read-only, non-mutating)."""
 
     state.set_workspace_input_folder(path)
+    refresh_workspace_input_listing_on_state(state)
 
 
 def apply_workspace_output_folder_selection(state: UiV2State, path: str | None) -> None:
-    """Apply an explicit output folder path string to UI state — no FS create/scan/PDF IO."""
+    """Apply an explicit output folder path string to UI state — no FS create/mutate."""
 
     state.set_workspace_output_folder(path)
+
+
+def ensure_workspace_input_listing(state: UiV2State) -> None:
+    """Refresh cached input listing when folder changed or cache empty."""
+
+    folder = (state.workspace_input_folder_override or "").strip() or None
+    cached_folder = (state.workspace_input_listing_folder or "").strip() or None
+    if not folder:
+        state.workspace_input_filenames = ()
+        state.workspace_input_listing_folder = None
+        state.workspace_input_listing_count = 0
+        state.workspace_input_listing_empty_message = None
+        return
+    if cached_folder != folder or not state.workspace_input_listing_marker:
+        refresh_workspace_input_listing_on_state(state)
+
+
+def open_workspace_document_preview(state: UiV2State, source_filename: str) -> str:
+    """Open/reveal an input document — non-mutating (delegates to review helper)."""
+
+    from invoice_tool.ui_v2.pages.review import open_review_document_preview
+
+    msg = open_review_document_preview(state, source_filename)
+    marker = (
+        f"{WORKSPACE_DOCUMENT_SHOW_MARKER}|non_mutating|"
+        f"{LIVE_INPUT_LISTING_MARKER}|action={ACTION_SHOW_DOCUMENT}"
+    )
+    state.workspace_document_preview_marker = marker
+    state.workspace_document_preview_feedback = msg
+    return msg
+
+
+def open_workspace_review_for_source(state: UiV2State, source_filename: str) -> None:
+    """Navigate to review and focus the matching document when possible."""
+
+    try:
+        from invoice_tool.ui_v2.pages.review import set_open_review_item_id
+
+        name = str(source_filename or "").strip()
+        if name:
+            set_open_review_item_id(state, name)
+    except Exception:  # noqa: BLE001
+        pass
+    _navigate_to_review(state)
 
 
 @dataclass(frozen=True)
@@ -1181,7 +1365,7 @@ def build_workspace_folder_selection_vm(state: UiV2State) -> WorkspaceFolderSele
         ),
         input_source=input_source,
         output_source=output_source,
-        # Native FilePicker is wired to state only — no scan/create/PDF processing.
+        # Native FilePicker wires paths to state; input listing is basename-only, non-mutating.
         picker_wired=True,
     )
 
@@ -1829,7 +2013,7 @@ def _schedule_folder_picker(
     *,
     role: Literal["input", "output"],
 ) -> Callable[[ft.ControlEvent], None]:
-    """Wire native folder picker to UI state only — no scan, create, or PDF processing."""
+    """Wire native folder picker to UI state — input lists basenames only (non-mutating)."""
 
     dialog_title = (
         "Eingangsordner auswählen" if role == "input" else "Ausgabeordner auswählen"
@@ -2260,6 +2444,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         profile_card=profile_card,
         configuration_card=configuration_card,
     )
+    ensure_workspace_input_listing(state)
     file_pairs = _collect_workspace_file_pairs(
         display_results=display_results if has_real_results else tuple(),
         processing_state=state.processing_run_state,
@@ -2267,9 +2452,41 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     show_result = interaction_status == "completed" or (
         has_real_results and state.processing_run_state.status == "completed"
     )
+    listed_names = tuple(state.workspace_input_filenames or ())
+    proposal_sources = [source for source, _target in file_pairs]
+    live_input_names = merge_input_names_with_proposal_sources(listed_names, proposal_sources)
+    # Prefer listing order; fall back to proposal sources after a completed check.
+    if not live_input_names and file_pairs:
+        live_input_names = tuple(source for source, _t in file_pairs)
+    live_vm = build_live_file_pairs_vm(
+        input_filenames=live_input_names,
+        output_folder_selected=bool(output_selected),
+        run_active=bool(run_is_active),
+        planned_destinations=tuple(
+            getattr(state.processing_run_state, "planned_destinations", ()) or ()
+        ),
+        display_results=display_results if has_real_results else tuple(),
+        review_count=int(readiness.review_count or run_shell.review.count or 0),
+        empty_input_message=(
+            state.workspace_input_listing_empty_message
+            if input_selected
+            else None
+        ),
+    )
+    # Show live pairs as soon as an input folder is selected (or after results).
+    show_live_pairs = bool(input_selected) or show_result or has_real_results
+    def _show_document(name: str) -> None:
+        open_workspace_document_preview(state, name)
+        _refresh()
+
     file_pair_panel = _workspace_file_pair_rows(
         pairs=file_pairs if (show_result or has_real_results) else tuple(),
+        live_vm=live_vm if show_live_pairs else None,
         on_open_review=lambda: _navigate_to_review(state),
+        on_show_document=_show_document,
+        on_open_review_for_source=lambda name: open_workspace_review_for_source(
+            state, name
+        ),
     )
 
     # Pilot / sandbox / export / controlled folders — advanced only.
@@ -2331,8 +2548,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         advanced_blocks.insert(0, run_status_panel)
 
     if show_result:
-        checked = readiness.result_count or len(display_results)
-        review_n = readiness.review_count or run_shell.review.count
+        # Counts are primary inside the file-pair panel; keep advanced summary collapsed.
+        checked = live_vm.checked_count or readiness.result_count or len(display_results)
+        review_n = live_vm.review_count or readiness.review_count or run_shell.review.count
         ready_n = ok_count if ok_count is not None else None
         advanced_blocks.insert(
             0,

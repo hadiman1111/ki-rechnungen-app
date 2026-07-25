@@ -90,6 +90,14 @@ class UiV2State:
     workspace_input_folder_source: str = SOURCE_UNSET
     workspace_output_folder_override: str | None = None
     workspace_output_folder_source: str = SOURCE_UNSET
+    # Live Arbeitsbereich: cached non-mutating input document basenames.
+    workspace_input_filenames: tuple[str, ...] = ()
+    workspace_input_listing_folder: str | None = None
+    workspace_input_listing_count: int = 0
+    workspace_input_listing_empty_message: str | None = None
+    workspace_input_listing_marker: str = ""
+    workspace_document_preview_feedback: str = ""
+    workspace_document_preview_marker: str = ""
     # Sandbox contract readiness — defaults keep productive execution blocked.
     # No automatic folder creation; paths only from explicit future UI wiring.
     workspace_sandbox_mode: bool = False
@@ -177,13 +185,22 @@ class UiV2State:
         return self.has_unsaved_profile_changes() or self.has_unsaved_config_changes()
 
     def set_workspace_input_folder(self, path: str | None) -> None:
-        """Store an explicitly selected input folder path string — no FS create/scan."""
+        """Store an explicitly selected input folder path string — no FS create/mutate.
+
+        Clears stale listing cache; callers refresh the non-mutating name list.
+        """
 
         cleaned = (path or "").strip() or None
         self.workspace_input_folder_override = cleaned
         self.workspace_input_folder_source = (
             SOURCE_EXPLICIT_USER_SELECTION if cleaned else SOURCE_UNSET
         )
+        if not cleaned:
+            self.workspace_input_filenames = ()
+            self.workspace_input_listing_folder = None
+            self.workspace_input_listing_count = 0
+            self.workspace_input_listing_empty_message = None
+            self.workspace_input_listing_marker = ""
 
     def set_workspace_output_folder(self, path: str | None) -> None:
         """Store an explicitly selected output folder path string — no FS create/scan."""

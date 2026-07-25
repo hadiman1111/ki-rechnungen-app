@@ -30,8 +30,10 @@ SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
 MENU_COMPACT_ROW_MARKER = "menu_compact_row_spacing_v2"
 WORKSPACE_SHARED_SUMMARY_MARKER = "workspace_profile_config_shared_summary_v2"
 WORKSPACE_FILE_PAIR_MARKER = "workspace_input_output_file_pairs_v2"
+WORKSPACE_LIVE_FILE_PAIRS_MARKER = "workspace_live_file_pairs_v1"
 WORKSPACE_CTA_PRIMARY_MARKER = "workspace_run_cta_primary_v2"
 REVIEW_DOCUMENT_PREVIEW_MARKER = "review_document_preview_open_non_mutating_v2"
+WORKSPACE_DOCUMENT_SHOW_MARKER = "workspace_document_show_open_non_mutating_v1"
 WORKSPACE_IA_SECTION_ORDER = (
     "Profil",
     "Konfiguration",
@@ -70,7 +72,13 @@ LABEL_PROPOSED_OUTPUT_FILES = "Vorgeschlagene Ausgabedateien"
 LABEL_ORIGINAL_FILE = "Originaldatei"
 LABEL_PROPOSED_FILENAME = "Vorgeschlagener Dateiname"
 LABEL_NO_PROPOSAL_YET = "Noch kein Vorschlag"
+MSG_NOT_CHECKED_YET = "Noch nicht geprüft"
 MSG_NO_RESULT_YET = "Noch kein Ergebnis vorhanden."
+MSG_NEED_OUTPUT_FOLDER = "Bitte Ausgangsordner wählen."
+MSG_NO_FILES_IN_INPUT = "Keine Belege im Eingangsordner gefunden."
+MSG_FILES_FOUND = "{count} Dateien gefunden"
+MSG_ROW_CHECKING = "Wird geprüft …"
+MSG_PROPOSAL_CREATED = "Vorschlag erstellt"
 MSG_START_HELPER = "Nur Vorschau — Originale bleiben unverändert."
 MSG_RUN_ACTIVITY = "Prüfung läuft…"
 MSG_FILENAME_FOLLOWS_SCHEMA = (
@@ -892,6 +900,14 @@ __all__ = (
     "LABEL_OUTPUT_FOLDER",
     "LABEL_PROPOSED_FILENAME",
     "LABEL_PROPOSED_OUTPUT_FILES",
+    "MSG_FILES_FOUND",
+    "MSG_NEED_OUTPUT_FOLDER",
+    "MSG_NO_FILES_IN_INPUT",
+    "MSG_NOT_CHECKED_YET",
+    "MSG_PROPOSAL_CREATED",
+    "MSG_ROW_CHECKING",
+    "WORKSPACE_DOCUMENT_SHOW_MARKER",
+    "WORKSPACE_LIVE_FILE_PAIRS_MARKER",
     "LABEL_REVIEW_AMOUNT",
     "LABEL_REVIEW_DATE",
     "LABEL_REVIEW_DOC_NAME",
