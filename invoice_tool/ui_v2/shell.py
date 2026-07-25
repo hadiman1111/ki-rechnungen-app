@@ -7,7 +7,12 @@ from typing import Callable
 
 import flet as ft
 
-from invoice_tool.ui_v2.navigation import ADMIN_NAV, DAILY_NAV
+from invoice_tool.ui_v2.navigation import (
+    ADMIN_NAV,
+    DAILY_NAV,
+    NAV_GROUP_ADVANCED,
+    NAV_GROUP_WORKFLOW,
+)
 from invoice_tool.ui_v2.theme import (
     COLOR_CANVAS,
     COLOR_PRIMARY,
@@ -146,14 +151,14 @@ def _build_sidebar(
                         [
                             ft.Container(
                                 padding=ft.Padding.symmetric(horizontal=8),
-                                content=_nav_group_label("ARBEITSNAVIGATION"),
+                                content=_nav_group_label(NAV_GROUP_WORKFLOW),
                             ),
                             ft.Container(height=3),
                             daily_group,
                             ft.Container(height=24),
                             ft.Container(
                                 padding=ft.Padding.symmetric(horizontal=8),
-                                content=_nav_group_label("VERWALTUNG"),
+                                content=_nav_group_label(NAV_GROUP_ADVANCED),
                             ),
                             ft.Container(height=3),
                             admin_group,

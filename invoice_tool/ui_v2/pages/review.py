@@ -200,6 +200,8 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_OPEN_WORKSPACE,
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
+    CLEAN_USER_FILENAME_MARKER,
+    FILENAME_EDIT_SECONDARY_MARKER,
     FILENAME_FIELD_POLISH_MARKER,
     FILENAME_PREVIEW_ONLY_MARKER,
     GUIDED_STATUS_PANEL_MARKER,
@@ -210,11 +212,15 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     LABEL_REVIEW_DOC_NAME,
     LABEL_SUGGESTED_FILENAME,
     LABEL_VORSCHAU_DATEINAME,
+    MSG_CLARIFICATION_STATUS,
+    MSG_FILENAME_FOLLOWS_SCHEMA,
     MSG_FILENAME_PREVIEW_HELPER,
     MSG_FILENAME_PREVIEW_ONLY,
     MSG_FINAL_WRITE_USER_ANSWER,
     MSG_GUIDED_SAFETY_LINE,
     MSG_GUIDED_STATUS_REVIEW,
+    REVIEW_CLARIFICATION_MARKER,
+    clean_user_facing_filename,
     MSG_NO_READY_CASES,
     MSG_NO_REVIEW_CASES,
     MSG_ORACLE_AVAILABLE,
@@ -2540,29 +2546,35 @@ def _filename_preview_panel(
     state: UiV2State,
     detail: ReviewSelectedDetailVM,
 ) -> ft.Control:
-    """Filename as preview text by default; editor only in explicit edit mode."""
+    """Filename as preview text by default; editor only in explicit edit mode.
+
+    User-facing filename never shows REVIEW_REQUIRED / SUGGESTED prefixes.
+    Status is shown separately from the filename.
+    """
 
     decision_bag = get_review_decision_bag(state)
-    draft_value = decision_bag.edit_filename_draft_by_key.get(
+    raw_draft = decision_bag.edit_filename_draft_by_key.get(
         detail.item_key,
         detail.approved_preview_filename
-        or detail.preview_filename
         or detail.suggested_filename
+        or detail.preview_filename
         or "",
     )
-    filename = (
-        draft_value
+    # Prefer suggested (clean) over preview (may carry internal prefixes).
+    raw_filename = (
+        raw_draft
         or detail.suggested_filename
         or detail.preview_filename
         or "—"
     )
+    filename = clean_user_facing_filename(raw_filename) or "—"
     edit_active = is_filename_editor_active(state, detail.item_key)
 
     def _copy_filename(_e: ft.ControlEvent, value: str = filename) -> None:
         current = decision_bag.edit_filename_draft_by_key.get(detail.item_key, value)
         copy_text_to_state_and_clipboard(
             state,
-            str(current or value or ""),
+            clean_user_facing_filename(str(current or value or "")) or str(value or ""),
             kind=ACTION_COPY_FILENAME,
         )
         if state.refresh is not None:
@@ -2581,14 +2593,25 @@ def _filename_preview_panel(
         )
 
     controls: list[ft.Control] = [
+        ft.Text(
+            MSG_CLARIFICATION_STATUS,
+            size=12,
+            weight=ft.FontWeight.W_600,
+            color=COLOR_TEXT_MUTED,
+            data=f"review_status_separate|{REVIEW_CLARIFICATION_MARKER}",
+        ),
         ft.Text(LABEL_SUGGESTED_FILENAME, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED),
         ft.Text(
             filename,
             size=13,
             weight=ft.FontWeight.W_600,
             selectable=True,
-            data=FILENAME_PREVIEW_ONLY_MARKER,
+            data=(
+                f"{FILENAME_PREVIEW_ONLY_MARKER}|{CLEAN_USER_FILENAME_MARKER}|"
+                f"{REVIEW_CLARIFICATION_MARKER}"
+            ),
         ),
+        ft.Text(MSG_FILENAME_FOLLOWS_SCHEMA, size=11, color=COLOR_TEXT_MUTED),
         ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED),
     ]
     if detail.er_er_note:
@@ -2596,15 +2619,27 @@ def _filename_preview_panel(
     elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
         controls.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
 
+    # Filename edit is secondary — not the primary decision path.
     action_row = [
-        secondary_button(ACTION_EDIT_FILENAME, on_click=_start_filename_edit),
+        secondary_button(
+            ACTION_EDIT_FILENAME,
+            on_click=_start_filename_edit,
+        ),
         secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename),
     ]
-    controls.append(ft.Row(action_row, spacing=SPACE_SM, wrap=True))
+    controls.append(
+        ft.Row(
+            action_row,
+            spacing=SPACE_SM,
+            wrap=True,
+            data=FILENAME_EDIT_SECONDARY_MARKER,
+        )
+    )
 
     if edit_active:
+        clean_draft = clean_user_facing_filename(str(raw_draft or filename or "")) or filename
         filename_field = ft.TextField(
-            value=str(draft_value or filename or ""),
+            value=str(clean_draft or ""),
             on_change=_on_filename_change,
             multiline=True,
             min_lines=2,
@@ -2636,7 +2671,7 @@ def _filename_preview_panel(
                     tight=True,
                     expand=True,
                 ),
-                helper=MSG_FILENAME_PREVIEW_HELPER,
+                helper=MSG_FILENAME_FOLLOWS_SCHEMA,
             )
         )
 

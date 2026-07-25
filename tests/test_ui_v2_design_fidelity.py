@@ -253,7 +253,7 @@ def test_nav_includes_review_and_settings(isolated_support: Path, monkeypatch: p
     build_ui_v2(page)
     labels = collect_labels(page.controls[0])
     assert "Zur Prüfung" in labels
-    assert "Einstellungen" in labels
+    assert any("Einstellungen" in label for label in labels)
     assert "Scanprofile" not in labels
 
 

@@ -42,14 +42,18 @@ PRIVATE_MARKERS = (
 def test_settings_navigation_item_exists() -> None:
     labels = {label for _, label, _ in ALL_NAV_ITEMS}
     ids = {nav_id for nav_id, _, _ in ALL_NAV_ITEMS}
-    assert "Einstellungen" in labels
+    assert any("Einstellungen" in label for label in labels)
     assert NAV_SETTINGS in ids
     assert NAV_SETTINGS == "einstellungen"
+    # Settings must not appear as a primary workflow step between core pages.
+    from invoice_tool.ui_v2.navigation import DAILY_NAV
+
+    assert NAV_SETTINGS not in {nav_id for nav_id, _, _ in DAILY_NAV}
 
 
 def test_settings_page_generic_sections() -> None:
     vm = build_settings_page_vm(UiV2State())
-    assert vm.title == "Einstellungen"
+    assert "Einstellungen" in vm.title
     section_titles = {section.title for section in vm.sections}
     assert section_titles == {
         "Allgemein",

@@ -87,7 +87,10 @@ def test_ui_text_honestly_says_no_folders_selected() -> None:
     assert vm.input_empty_text == EMPTY_INPUT_FOLDER_TEXT
     assert vm.output_empty_text == EMPTY_OUTPUT_FOLDER_TEXT
     assert "Kein Eingangsordner gewählt" in vm.input_empty_text
-    assert "Kein Ausgabeordner gewählt" in vm.output_empty_text
+    assert (
+        "Kein Ausgabeordner gewählt" in vm.output_empty_text
+        or "Kein Ausgangsordner gewählt" in vm.output_empty_text
+    )
     assert vm.input_pick_label == PICK_INPUT_FOLDER_LABEL
     assert vm.output_pick_label == PICK_OUTPUT_FOLDER_LABEL
 

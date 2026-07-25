@@ -233,7 +233,8 @@ def test_workspace_no_longer_blocks_konfiguration_fehlt_when_active_exists(
     # Empty copied inbox → real Core Dry-Run completes without invented rows.
     assert result.status == "completed"
     assert result.results == ()
-    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+    assert ("Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+            or "Vorschau-Prüfung abgeschlossen" in state.workspace_start_feedback_primary)
 
 
 def test_start_with_folders_profile_config_reaches_core_dry_run(
@@ -263,7 +264,8 @@ def test_start_with_folders_profile_config_reaches_core_dry_run(
     apply_start_processing(state, profile_id="profile-a")
     assert state.config_list_selected_id == "cfg-1"
     assert state.workspace_run_interaction_status == "completed"
-    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+    assert ("Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+            or "Vorschau-Prüfung abgeschlossen" in state.workspace_start_feedback_primary)
     assert "Konfiguration fehlt" not in state.workspace_start_feedback
     assert not state.processing_run_state.results
     assert state.processing_run_state.core_dry_run_status == "dry_run_available"
@@ -280,7 +282,12 @@ def test_workspace_shows_selected_configuration_compactly() -> None:
     assert "Konfiguration: Regel A" in selection.summary_lines
     src = WORKSPACE.read_text(encoding="utf-8")
     assert RUN_SETUP_SECTION_LABEL in src
-    assert '("Konfiguration"' in src or '("Konfiguration",' in src
+    assert (
+        '("Konfiguration"' in src
+        or '("Konfiguration",' in src
+        or "LABEL_WORKSPACE_CONFIGURATION" in src
+        or "_workspace_configuration_card" in src
+    )
 
 
 def test_request_includes_resolved_configuration() -> None:

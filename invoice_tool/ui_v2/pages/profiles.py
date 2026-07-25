@@ -72,6 +72,18 @@ from invoice_tool.ui_v2.saas_profile_surface import (
 )
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.theme import SPACE_SM
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_CREATE_PROFILE,
+    ACTION_EDIT_PROFILE_CONFIGS,
+    ACTION_RENAME_PROFILE,
+    IA_CLEANUP_LAYOUT_MARKER,
+    LABEL_ACTIVE_STATUS,
+    LABEL_NEW_PROFILE_NAME,
+    MSG_PROFILE_DRAFT_CURRENT,
+    PROFILE_PAGE_EXPLANATION,
+    SECTION_ADVANCED_PROFILE,
+)
+from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
 from invoice_tool.ui_v2.validation import validate_profile_name, validate_scan_model_id
 from invoice_tool.ui_v2.view_models import ProfileDetailVM, ProfileSummaryVM, UiV2ReadOnlySnapshot
 
@@ -308,35 +320,92 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         configuration_present=profile.configuration_count > 0,
     )
 
+    active_entry = next((p for p in profile.profiles if p.is_active), None)
+    active_name = (
+        active_entry.profile_name
+        if active_entry is not None
+        else snapshot.profile.profile_name
+    )
+    missing_targets = 0
+    try:
+        from invoice_tool.profile_store import load_profile_bundle as _lpb
+
+        bundle_for_active = _lpb(active_id) if active_id else None
+        if bundle_for_active is not None:
+            missing_targets = sum(
+                1
+                for cfg in bundle_for_active.configurations
+                if not str((getattr(cfg, "destination", None) or getattr(cfg, "target", None) or "") or "").strip()
+                and not str(getattr(cfg, "destination_path", "") or "").strip()
+            )
+    except Exception:
+        missing_targets = 0
+
+    active_summary = dense_card(
+        ft.Text("Aktives Profil", size=12, color="#6B7280"),
+        ft.Text(active_name or "—", size=22, weight=ft.FontWeight.W_700),
+        ft.Text(LABEL_ACTIVE_STATUS, size=12, color="#15803D"),
+        compact_info_row("Konfigurationen", str(profile.configuration_count)),
+        compact_info_row("Aktiv", str(profile.active_configuration_count)),
+    )
+    active_summary.data = f"profiles_active_summary|{IA_CLEANUP_LAYOUT_MARKER}"
+    if missing_targets > 0:
+        # Only show when meaningful; destination may be structured — keep soft.
+        pass
+
     items: list[ft.Control] = [
         page_header(
             "Profile",
-            subtitle="Erkennungsprofile und ihre Konfigurationen verwalten.",
+            subtitle=PROFILE_PAGE_EXPLANATION,
             trailing=action_button(
                 SAAS_SURFACE_UI_LABELS["new_profile"],
                 on_click=lambda _e: _start_create(),
                 primary=True,
             ),
         ),
-        dense_card(
-            compact_info_row(
-                "Hinweis",
-                "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
-            ),
-            compact_info_row("Regeln", policy_panel.rules_profile_specific_label),
-            compact_info_row("Readiness", policy_panel.selected_readiness_label),
-            compact_info_row("Defaults", policy_panel.no_private_default_label),
+        ft.Text(PROFILE_PAGE_EXPLANATION, size=13),
+        active_summary,
+        ft.Row(
+            [
+                action_button(
+                    ACTION_RENAME_PROFILE,
+                    on_click=lambda _e: _start_edit(active_id) if active_id else _start_create(),
+                ),
+                action_button(
+                    SAAS_SURFACE_UI_LABELS["new_profile"],
+                    on_click=lambda _e: _start_create(),
+                    primary=True,
+                ),
+                action_button(
+                    ACTION_EDIT_PROFILE_CONFIGS,
+                    on_click=lambda _e: state.navigate(NAV_CONFIGURATIONS) if state.navigate else None,
+                ),
+            ],
+            spacing=SPACE_SM,
+            wrap=True,
         ),
         collapsible_details(
+            "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
             MSG_PROFILES_CONTAIN_RULES,
             MSG_PAYMENT_BUSINESS_PER_PROFILE,
             MSG_WITHOUT_EVIDENCE_REVIEW,
-            title="Profil-Details anzeigen",
+            policy_panel.rules_profile_specific_label,
+            policy_panel.selected_readiness_label,
+            policy_panel.no_private_default_label,
+            title=SECTION_ADVANCED_PROFILE,
         ),
     ]
 
     if state.profile_feedback:
-        items.append(feedback_banner(state.profile_feedback, is_error=state.profile_feedback_error))
+        # Relabel confusing draft wording in primary feedback.
+        feedback_text = state.profile_feedback.replace(
+            "lokaler UI-v2-Profilentwurf", MSG_PROFILE_DRAFT_CURRENT
+        ).replace(
+            "lokaler Profilentwurf", MSG_PROFILE_DRAFT_CURRENT
+        ).replace(
+            "lokalen UI-v2-Profilentwurf", MSG_PROFILE_DRAFT_CURRENT
+        )
+        items.append(feedback_banner(feedback_text, is_error=state.profile_feedback_error))
 
     def _save_saas_draft_local(_event: ft.ControlEvent | None = None) -> None:
         result = state.save_saas_drafts_to_disk()
@@ -465,13 +534,21 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             )
         _refresh()
 
-    # Clear UX: SaaS draft ≠ internal working profile; local disk only.
-    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
+    # Draft / import-export / persistence — advanced only (not primary profile UI).
     selected_rename = ""
     for item in state.list_saas_drafts():
         if item.draft_id == state.saas_selected_draft_id:
             selected_rename = item.display_name
             break
+    items.append(
+        collapsible_details(
+            MSG_PROFILE_DRAFT_CURRENT,
+            "Lokale Entwürfe, Import und Export gehören zur erweiterten Diagnose.",
+            title=SECTION_ADVANCED_PROFILE,
+        )
+    )
+    # Keep functionality available but visually secondary.
+    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
     items.append(
         build_saas_draft_list_panel(
             state.saas_draft_list_vm(),
@@ -554,13 +631,14 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             state.saas_draft_store.update_profile_field("scan_model_id", draft.scan_model_id)
             saas_draft = state.saas_draft_store.profile_draft
         detail_title = (
-            SAAS_SURFACE_UI_LABELS["new_profile"]
+            "Neues Profil"
             if state.profile_edit_mode == "create"
             else f"Bearbeiten: {draft.name or 'Profil'}"
         )
         header_trailing = make_panel_close_button(_cancel_edit)
 
-        name_field = form_field("Profilname", value=draft.name)
+        name_label = LABEL_NEW_PROFILE_NAME if state.profile_edit_mode == "create" else "Profilname"
+        name_field = form_field(name_label, value=draft.name)
         model_dd = ft.Dropdown(
             value=draft.scan_model_id or None,
             options=[ft.dropdown.Option(model.id, model.label) for model in list_scan_models()],
@@ -625,7 +703,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
 
         editor_fields: list[ft.Control] = [
             form_field_group(
-                "Profilname",
+                name_label,
                 full_width_field(name_field),
                 error=field_errors.get("name") or field_errors.get("profile_name"),
             ),
@@ -661,15 +739,16 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
                 full_width_field(payment_field),
             ),
             helper_text(
-                "Entwurfsfelder im generischen Profilentwurfsmodell (In-Memory); "
-                "keine privaten Vorbelegungen. Verarbeitung wird hier nicht gestartet."
+                "Keine privaten Vorbelegungen. Verarbeitung wird hier nicht gestartet."
             ),
         ]
+        save_label = ACTION_CREATE_PROFILE if state.profile_edit_mode == "create" else "Speichern"
         footer = make_panel_footer_end(
             action_button("Abbrechen", on_click=_cancel_edit),
-            action_button("Speichern", on_click=_save_profile, primary=True),
+            action_button(save_label, on_click=_save_profile, primary=True),
         )
-        detail_body = ft.ListView(editor_fields, spacing=SPACE_SM, padding=0, auto_scroll=False, expand=True)
+        # Prefer page scroll over clipped internal side scrollbar for create/edit.
+        detail_body = ft.Column(editor_fields, spacing=SPACE_SM, tight=True, scroll=None)
 
     elif selected_id and (selected_entry := _profile_detail_for(state, profile, selected_id)) is not None:
         try:

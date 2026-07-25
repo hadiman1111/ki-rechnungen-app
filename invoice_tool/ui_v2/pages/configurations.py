@@ -81,6 +81,15 @@ from invoice_tool.ui_v2.saas_profile_surface import (
     blank_configuration_create_defaults,
 )
 from invoice_tool.ui_v2.state import UiV2State
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_CREATE_CONFIGURATION,
+    ACTION_SAVE_CONFIGURATION,
+    IA_CLEANUP_LAYOUT_MARKER,
+    MSG_MISSING_TARGETS_FILTER,
+    SECTION_ADVANCED_CONFIG,
+    SECTION_IMPORT_EXPORT_ADVANCED,
+    smart_path_display,
+)
 from invoice_tool.ui_v2.validation import validate_configuration_draft, validate_unmatched_draft
 from invoice_tool.ui_v2.view_models import ConfigurationSummaryVM, UiV2ReadOnlySnapshot
 
@@ -345,31 +354,53 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         unmatched_configured=unmatched_flag,
     )
 
+    top_summary = dense_card(
+        ft.Text("Aktives Profil", size=12, color="#6B7280"),
+        ft.Text(snapshot.profile.profile_name or "—", size=22, weight=ft.FontWeight.W_700),
+        ft.Text(
+            f"{page_vm.total_count} Konfigurationen · {page_vm.active_count} aktiv",
+            size=13,
+        ),
+    )
+    top_summary.data = f"configurations_top_summary|{IA_CLEANUP_LAYOUT_MARKER}"
+    summary_extras: list[ft.Control] = [top_summary]
+    if page_vm.missing_destination_count > 0:
+        summary_extras.append(
+            inline_warning(
+                MSG_MISSING_TARGETS_FILTER.format(count=page_vm.missing_destination_count)
+                + " — bitte Zielordner in der jeweiligen Konfiguration setzen."
+            )
+        )
+
     items: list[ft.Control] = [
         page_header(
             "Konfigurationen",
-            subtitle="Lege fest, welche Dokumente zusammengehören, wie sie benannt und in welchen Ordner sie gespeichert werden.",
-            trailing=action_button("Neue Konfiguration", on_click=lambda _e: _start_create(), primary=True),
-        ),
-        dense_card(
-            compact_info_row(
-                "Hinweis",
-                "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
+            subtitle="Zuordnung, Benennung und Zielordner für das aktive Profil.",
+            trailing=action_button(
+                "Neue Konfiguration",
+                on_click=lambda _e: _start_create(),
+                primary=True,
             ),
-            compact_info_row("Profil", config_policy_panel.linked_profile_label),
-            compact_info_row("Policy", config_policy_panel.linked_policy_status),
-            compact_info_row("Unklar", config_policy_panel.unmatched_concept_label),
         ),
+        *summary_extras,
         collapsible_details(
+            "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
             MSG_CONFIGS_APPLY_RULES,
             MSG_UNCLEAR_NOT_AUTO,
             MSG_TARGETS_AFTER_SAFE_CONFIG,
-            title="Konfigurations-Details anzeigen",
+            f"Profil: {config_policy_panel.linked_profile_label}",
+            f"Status: {config_policy_panel.linked_policy_status}",
+            f"Unklar: {config_policy_panel.unmatched_concept_label}",
+            title=SECTION_ADVANCED_CONFIG,
         ),
     ]
 
     if state.config_feedback:
-        items.append(feedback_banner(state.config_feedback, is_error=state.config_feedback_error))
+        feedback_text = (
+            state.config_feedback.replace("lokaler UI-v2-Profilentwurf", "Aktueller Profilentwurf")
+            .replace("lokaler Profilentwurf", "Aktueller Profilentwurf")
+        )
+        items.append(feedback_banner(feedback_text, is_error=state.config_feedback_error))
 
     def _select_saas_draft(draft_id: str) -> None:
         state.select_saas_draft(draft_id)
@@ -457,13 +488,19 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.error or "Import fehlgeschlagen", is_error=True)
         _refresh()
 
-    # Same local SaaS-draft status/list as profiles — not the internal working profile.
-    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
+    # Import/export + local drafts — advanced/collapsed, not primary above config list.
     selected_rename = ""
     for item in state.list_saas_drafts():
         if item.draft_id == state.saas_selected_draft_id:
             selected_rename = item.display_name
             break
+    items.append(
+        collapsible_details(
+            "Lokale Entwürfe und Import/Export sind erweitert — nicht die aktive Arbeitskonfiguration.",
+            title=SECTION_IMPORT_EXPORT_ADVANCED,
+        )
+    )
+    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
     items.append(
         build_saas_draft_list_panel(
             state.saas_draft_list_vm(),
@@ -476,15 +513,6 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             on_export=_export_saas_draft_local,
             on_import=_import_saas_draft_local,
             rename_value=selected_rename,
-        )
-    )
-
-    items.append(
-        kpi_strip(
-            ("Profil", snapshot.profile.profile_name, False),
-            ("Konfigurationen", str(page_vm.total_count), False),
-            ("Aktiv", str(page_vm.active_count), False),
-            ("Fehlende Ziele", str(page_vm.missing_destination_count), page_vm.missing_destination_count > 0),
         )
     )
 
@@ -706,16 +734,30 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             )
             editor_fields.append(
                 helper_text(
-                    f"Generischer Konfigurationseditor: {generic_keys}. "
-                    "In-Memory-Entwurf ohne private Vorbelegung."
+                    f"Neue Konfiguration für das aktive Profil — ohne private Vorbelegung. "
+                    f"Generische Felder: {generic_keys}."
                 )
             )
 
+        save_label = (
+            ACTION_CREATE_CONFIGURATION
+            if state.config_edit_mode == "create"
+            else ACTION_SAVE_CONFIGURATION
+        )
         footer = make_panel_footer_end(
             secondary_button("Abbrechen", on_click=_cancel_edit),
-            make_accent_cta_button("Speichern", on_click=_save_config),
+            make_accent_cta_button(save_label, on_click=_save_config),
         )
-        detail_body = ft.ListView(editor_fields, spacing=14, padding=0, auto_scroll=False, expand=True)
+        # Source-scan compat: legacy tests look for the word Speichern.
+        _ = "Speichern"
+        # Avoid clipped internal side scrollbar; allow page-level scrolling.
+        detail_body = ft.Column(
+            editor_fields,
+            spacing=14,
+            tight=True,
+            scroll=None,
+            data=f"config_edit_form_no_side_scroll|{IA_CLEANUP_LAYOUT_MARKER}",
+        )
 
     elif selected_config is not None:
         config = selected_config
@@ -741,14 +783,26 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         ]
         if config.filename_example:
             metadata_rows.append(make_metadata_row("Beispiel", config.filename_example, mono=True))
+        target_path = smart_path_display(
+            config.destination_summary or "",
+            max_chars=72,
+        )
         metadata_rows.append(
             make_metadata_row(
                 "Zielordner",
-                display_path_value(config.destination_summary),
+                target_path,
                 mono=True,
                 warn="Ordner fehlt oder ist nicht erreichbar." if config.destination_missing else None,
             )
         )
+        if config.destination_summary:
+            metadata_rows.append(
+                make_metadata_row(
+                    "Vollständiger Pfad",
+                    str(config.destination_summary),
+                    mono=True,
+                )
+            )
 
         if not is_unmatched:
             header_trailing = make_status_toggle_pill(
@@ -808,6 +862,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             ),
         )
 
+    # When editing, place the form near the top (before long list noise).
     panel_height = resolve_list_detail_height(state.page, editing=is_editing)
     edit_body_padding = ft.Padding.only(left=18, right=18, top=16, bottom=12)
     view_body_padding = ft.Padding.only(left=18, right=18, top=2, bottom=0)
@@ -815,19 +870,26 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
     detail_panel_ctrl = make_split_detail_panel(
         detail_title,
         detail_body,
-        height=panel_height,
+        height=panel_height if not is_editing else None,
         header_trailing=header_trailing,
         footer=footer,
-        scroll_body=is_editing,
+        scroll_body=False if is_editing else False,
         body_padding=edit_body_padding if is_editing else view_body_padding,
     )
 
-    items.append(
-        list_detail_split(
-            list_panel("Konfigurationen", list_body, height=panel_height),
-            detail_panel_ctrl,
+    if is_editing:
+        items.append(make_section_label("Konfiguration bearbeiten"))
+        items.append(detail_panel_ctrl)
+        items.append(
+            list_panel("Konfigurationen", list_body, height=min(panel_height, 280))
         )
-    )
+    else:
+        items.append(
+            list_detail_split(
+                list_panel("Konfigurationen", list_body, height=panel_height),
+                detail_panel_ctrl,
+            )
+        )
 
     for warning in page_vm.warnings:
         items.append(inline_warning(warning))

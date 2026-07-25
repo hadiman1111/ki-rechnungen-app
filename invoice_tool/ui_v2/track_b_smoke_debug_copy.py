@@ -24,6 +24,14 @@ REVIEW_USER_MODE_LAYOUT_MARKER = "track_b_simple_user_review_mode_v1"
 REVIEW_UI_POLISH_LAYOUT_MARKER = "track_b_simple_user_review_ui_polish_v1"
 REVIEW_ACCORDION_LAYOUT_MARKER = "track_b_review_accordion_layout_v1"
 REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
+REVIEW_CLARIFICATION_MARKER = "track_b_review_clarification_mode_v1"
+IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
+WORKSPACE_IA_SECTION_ORDER = (
+    "Profil",
+    "Konfiguration",
+    "Ordner",
+    "Lauf",
+)
 REVIEW_CARD_COLLAPSED_SUMMARY_ONLY = "review_card_collapsed_summary_only"
 REVIEW_CARD_ACTIVE_HIGHLIGHT = "review_card_active_highlight"
 INLINE_DETAIL_UNDER_SELECTED_CARD = "inline_detail_under_selected_card"
@@ -31,6 +39,47 @@ DETAIL_PANEL_DISTINCT_BACKGROUND = "detail_panel_distinct_background"
 FILENAME_PREVIEW_ONLY_MARKER = "review_filename_preview_only_default"
 GUIDED_STATUS_PANEL_MARKER = "guided_status_panel_top"
 DECISION_FIRST_PANEL_MARKER = "decision_first_panel"
+FILENAME_EDIT_SECONDARY_MARKER = "filename_edit_secondary_not_primary"
+CLEAN_USER_FILENAME_MARKER = "clean_user_facing_filename_no_internal_prefix"
+
+# Workspace / IA user-facing actions
+ACTION_CHANGE_PROFILE = "Profil ändern"
+ACTION_EDIT_CONFIGURATIONS = "Konfigurationen bearbeiten"
+ACTION_OPEN_REVIEW = "Zur Prüfung öffnen"
+ACTION_CREATE_PROFILE = "Profil erstellen"
+ACTION_CREATE_CONFIGURATION = "Konfiguration erstellen"
+ACTION_SAVE_CONFIGURATION = "Konfiguration speichern"
+ACTION_RENAME_PROFILE = "Profil umbenennen"
+LABEL_ACTIVE_STATUS = "Aktiv"
+LABEL_WORKSPACE_PROFILE = "Profil"
+LABEL_WORKSPACE_CONFIGURATION = "Konfiguration"
+LABEL_INPUT_FOLDER = "Eingangsordner"
+LABEL_OUTPUT_FOLDER = "Ausgangsordner"
+MSG_START_HELPER = (
+    "Es wird nichts final geschrieben. Originale bleiben unverändert."
+)
+MSG_RUN_ACTIVITY = "Prüfung läuft…"
+MSG_FILENAME_FOLLOWS_SCHEMA = (
+    "Der Dateiname folgt einem festen Schema. Bitte ergänze fehlende Merkmale."
+)
+MSG_CLARIFICATION_STATUS = "Zur Prüfung · Vorschlag · Nicht final geschrieben"
+SECTION_ADVANCED_HINTS = "Hinweise & Diagnose"
+SECTION_ADVANCED_PROFILE = "Erweiterte Profilinformationen"
+SECTION_ADVANCED_CONFIG = "Erweiterte Hinweise"
+SECTION_IMPORT_EXPORT_ADVANCED = "Import / Export (erweitert)"
+SECTION_DEV_DIAGNOSE = "Entwickler / Diagnose"
+SECTION_TEST_NACHWEIS_COLLAPSED = "Test & Nachweis"
+PROFILE_PAGE_EXPLANATION = (
+    "Ein Profil bündelt Konfigurationen, Zielbereiche und Regeln für einen Arbeitskontext."
+)
+MSG_PROFILE_DRAFT_CURRENT = "Aktueller Profilentwurf"
+MSG_PROFILE_DRAFT_UNSAVED = "Noch nicht gespeicherte Änderungen"
+MSG_MISSING_TARGETS_CONFIG = "Zielordner fehlen bei {count} Konfiguration(en)"
+MSG_MISSING_TARGETS_FILTER = (
+    "Bei {count} Konfiguration(en) fehlt ein Zielordner"
+)
+ACTION_EDIT_PROFILE_CONFIGS = "Konfigurationen dieses Profils bearbeiten"
+LABEL_NEW_PROFILE_NAME = "Name des neuen Profils"
 
 ACTION_DETAILS_OPEN = "Details öffnen"
 ACTION_DETAILS_CLOSE = "Details schließen"
@@ -133,7 +182,7 @@ PRIMARY_ACCEPT = "Vorschlag akzeptieren"
 PRIMARY_PAYPAL = "PayPal-Regel anwenden"
 PRIMARY_UNKLAR = "Als unklar lassen"
 
-MSG_WHY_MISSING_PAYMENT = "Zahlungsart fehlt."
+MSG_WHY_MISSING_PAYMENT = "Zahlungsart fehlt. Bitte Zahlungsart prüfen."
 MSG_WHY_MISSING_CATEGORY = "Geschäftskategorie fehlt oder ist unklar."
 MSG_WHY_PAYPAL_MISSING = (
     "PayPal erkannt, aber keine passende PayPal-Regel vorhanden."
@@ -143,6 +192,55 @@ MSG_WHY_NOT_AMEX = MSG_WHY_CARD_AMEX_SHORT
 MSG_WHY_STORNO = "Storno erkannt."
 MSG_WHY_GENERIC = "Der Beleg ist unklar und muss geprüft werden."
 MSG_WHY_PAYPAL_DETECTED = "PayPal erkannt."
+
+# Internal export prefixes — must never appear in user-facing filename display.
+# Include single-underscore variants (some resolvers collapse "__" → "_").
+INTERNAL_FILENAME_PREFIXES = (
+    "REVIEW_REQUIRED__SUGGESTED__INCOMPLETE__",
+    "REVIEW_REQUIRED__SUGGESTED__",
+    "REVIEW_REQUIRED_SUGGESTED_INCOMPLETE_",
+    "REVIEW_REQUIRED_SUGGESTED_",
+    "REVIEW_REQUIRED__",
+    "REVIEW_REQUIRED_",
+    "SUGGESTED__",
+    "SUGGESTED_",
+    "INCOMPLETE__",
+    "INCOMPLETE_",
+)
+
+
+def clean_user_facing_filename(name: str | None) -> str:
+    """Strip internal REVIEW_REQUIRED / SUGGESTED prefixes for user display."""
+
+    safe = str(name or "").strip()
+    if not safe:
+        return ""
+    changed = True
+    while changed:
+        changed = False
+        for prefix in INTERNAL_FILENAME_PREFIXES:
+            if safe.startswith(prefix):
+                safe = safe[len(prefix) :]
+                changed = True
+    # Collapse accidental double separators from nested prefixes.
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    # Final guard: drop leftover technical status tokens at the start.
+    for token in ("REVIEW_REQUIRED_", "REVIEW_REQUIRED", "SUGGESTED_", "SUGGESTED"):
+        if safe.startswith(token):
+            safe = safe[len(token) :].lstrip("_")
+    return safe.strip("_ ")
+
+
+def smart_path_display(raw: str, *, max_chars: int = 64) -> str:
+    """Show full path when short; truncate beginning and preserve end when long."""
+
+    text = str(raw or "").strip()
+    if not text or text in {"—", "Noch nicht konfiguriert"}:
+        return text or "—"
+    if len(text) <= max_chars:
+        return text
+    return "…" + text[-(max_chars - 1) :]
 
 ACTION_PAYPAL_SAVE_RERUN = "PayPal-Regel speichern und Matching neu berechnen"
 ACTION_ACCEPT_SUGGESTION = "Vorschlag akzeptieren"
@@ -705,21 +803,29 @@ def copy_text_to_state_and_clipboard(
 __all__ = (
     "ACTION_ACCEPT_SUGGESTION",
     "ACTION_ADD_PAYMENT",
+    "ACTION_CHANGE_PROFILE",
     "ACTION_COPY_CASE",
     "ACTION_COPY_DIAGNOSIS",
     "ACTION_COPY_FILENAME",
     "ACTION_COPY_ORACLE",
     "ACTION_CREATE_CARD_RULE",
+    "ACTION_CREATE_CONFIGURATION",
+    "ACTION_CREATE_PROFILE",
     "ACTION_DEFER",
     "ACTION_DETAILS_CLOSE",
     "ACTION_DETAILS_OPEN",
+    "ACTION_EDIT_CONFIGURATIONS",
     "ACTION_EDIT_FILENAME",
+    "ACTION_EDIT_PROFILE_CONFIGS",
     "ACTION_IGNORE_EXPORT",
     "ACTION_KEEP_IN_REVIEW_GUIDED",
     "ACTION_KEEP_UNCLEAR",
     "ACTION_KEEP_UNCLEAR_GUIDED",
+    "ACTION_OPEN_REVIEW",
     "ACTION_OPEN_WORKSPACE",
     "ACTION_PAYPAL_SAVE_RERUN",
+    "ACTION_RENAME_PROFILE",
+    "ACTION_SAVE_CONFIGURATION",
     "BADGE_BLOCKED",
     "BADGE_MISSING_PAYMENT",
     "BADGE_NOT_AMEX",
@@ -732,29 +838,47 @@ __all__ = (
     "CASE_MISSING_PAYMENT",
     "CASE_PAYPAL",
     "CASE_STORNO",
+    "CLEAN_USER_FILENAME_MARKER",
     "DECISION_FIRST_PANEL_MARKER",
     "DETAIL_PANEL_DISTINCT_BACKGROUND",
+    "FILENAME_EDIT_SECONDARY_MARKER",
     "FILENAME_FIELD_POLISH_MARKER",
     "FILENAME_PREVIEW_ONLY_MARKER",
     "GUIDED_STATUS_PANEL_MARKER",
+    "IA_CLEANUP_LAYOUT_MARKER",
     "INLINE_DETAIL_UNDER_SELECTED_CARD",
+    "INTERNAL_FILENAME_PREFIXES",
+    "LABEL_ACTIVE_STATUS",
     "LABEL_DATEINAME_BEARBEITEN",
+    "LABEL_INPUT_FOLDER",
+    "LABEL_NEW_PROFILE_NAME",
+    "LABEL_OUTPUT_FOLDER",
     "LABEL_REVIEW_AMOUNT",
     "LABEL_REVIEW_DATE",
     "LABEL_REVIEW_DOC_NAME",
     "LABEL_SUGGESTED_FILENAME",
     "LABEL_VORSCHAU_DATEINAME",
+    "LABEL_WORKSPACE_CONFIGURATION",
+    "LABEL_WORKSPACE_PROFILE",
+    "MSG_CLARIFICATION_STATUS",
     "MSG_ER_ER_NOTE",
+    "MSG_FILENAME_FOLLOWS_SCHEMA",
     "MSG_FILENAME_PREVIEW_HELPER",
     "MSG_FILENAME_PREVIEW_ONLY",
     "MSG_FINAL_WRITE_USER_ANSWER",
     "MSG_GUIDED_SAFETY_LINE",
     "MSG_GUIDED_STATUS_REVIEW",
+    "MSG_MISSING_TARGETS_CONFIG",
+    "MSG_MISSING_TARGETS_FILTER",
     "MSG_NO_READY_CASES",
     "MSG_NO_REVIEW_CASES",
     "MSG_ORACLE_AVAILABLE",
     "MSG_ORACLE_NO_AUTO_RUN",
+    "MSG_PROFILE_DRAFT_CURRENT",
+    "MSG_PROFILE_DRAFT_UNSAVED",
+    "MSG_RUN_ACTIVITY",
     "MSG_SAFETY_LINE_NO_FINAL",
+    "MSG_START_HELPER",
     "MSG_USER_REVIEW_SUBTITLE",
     "MSG_WHY_GENERIC",
     "MSG_WHY_MISSING_CATEGORY",
@@ -769,35 +893,45 @@ __all__ = (
     "PRIMARY_PAYPAL",
     "PRIMARY_PRUEFEN",
     "PRIMARY_UNKLAR",
+    "PROFILE_PAGE_EXPLANATION",
     "REVIEW_ACCORDION_LAYOUT_MARKER",
     "REVIEW_CARD_ACTIVE_HIGHLIGHT",
     "REVIEW_CARD_COLLAPSED_SUMMARY_ONLY",
+    "REVIEW_CLARIFICATION_MARKER",
     "REVIEW_DECLUTTER_LAYOUT_MARKER",
     "REVIEW_GUIDED_LAYOUT_MARKER",
     "REVIEW_SECTION_TITLES",
     "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
+    "SECTION_ADVANCED_CONFIG",
+    "SECTION_ADVANCED_HINTS",
+    "SECTION_ADVANCED_PROFILE",
     "SECTION_BEREIT",
     "SECTION_DATEINAME",
+    "SECTION_DEV_DIAGNOSE",
     "SECTION_ENTSCHEIDEN",
     "SECTION_ERKANNT",
     "SECTION_FINALISIERUNG",
     "SECTION_FINAL_WRITE_Q",
     "SECTION_GUIDED_STATUS",
+    "SECTION_IMPORT_EXPORT_ADVANCED",
     "SECTION_KURZPRUEFUNG",
     "SECTION_NAECHSTE",
     "SECTION_PRUEFUNG",
     "SECTION_TECHNISCHE",
+    "SECTION_TEST_NACHWEIS_COLLAPSED",
     "SECTION_TEST_TOOLS",
     "SECTION_UNKLAR",
     "SECTION_VORSCHLAG",
     "SECTION_WARUM",
     "SMOKE_DEV_UI_LAYOUT_MARKER",
     "USER_REVIEW_SECTION_TITLES",
+    "WORKSPACE_IA_SECTION_ORDER",
     "build_diagnosis_copy_text",
     "build_oracle_command_copy_text",
     "build_prueffall_copy_text",
     "case_summary_line",
+    "clean_user_facing_filename",
     "copy_text_to_state_and_clipboard",
     "derive_decision_prompt",
     "derive_guided_status_lines",
@@ -815,5 +949,6 @@ __all__ = (
     "paypal_action_relevant",
     "paypal_rule_present",
     "review_case_kind",
+    "smart_path_display",
     "split_ready_and_review_cases",
 )

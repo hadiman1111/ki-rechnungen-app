@@ -119,8 +119,10 @@ def _state_with_adapter(**kwargs) -> UiV2State:
 
 
 def test_start_cta_label_is_sandbox_honest() -> None:
-    assert "Sandbox" in START_CTA_LABEL
-    assert "starten" in START_CTA_LABEL.lower()
+    # User-facing CTA is preview-honest (no primary "Sandbox Lauf starten").
+    assert "Vorschau" in START_CTA_LABEL or "prüfen" in START_CTA_LABEL.lower()
+    assert "Sandbox Lauf starten" not in START_CTA_LABEL
+    assert START_CTA_LABEL.strip()
 
 
 def test_workspace_start_handler_has_on_click_wiring_in_source() -> None:
@@ -233,7 +235,8 @@ def test_core_bridge_wired_shows_visible_completed_not_noop(tmp_path: Path) -> N
     assert result.status == "completed"
     feedback = state.workspace_start_feedback
     assert feedback
-    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+    assert ("Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+            or "Vorschau-Prüfung abgeschlossen" in state.workspace_start_feedback_primary)
     assert MSG_SANDBOX_NO_ORIGINALS_USED in feedback
     assert "Originale unverändert" in feedback
     assert "sandbox_core_runner_unbound" not in result.errors

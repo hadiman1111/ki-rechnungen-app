@@ -150,13 +150,14 @@ def page_scaffold(
 
 
 def display_path_value(raw: str, *, max_chars: int = 56) -> str:
-    """Readable path for UI — home shortened, ellipsized when long."""
+    """Readable path for UI — home shortened; long paths keep the end."""
     text = redact_private_path(str(raw or "").strip())
     if not text or text in {"—", "Noch nicht konfiguriert"}:
         return "Noch nicht konfiguriert"
     if len(text) <= max_chars:
         return text
-    return text[: max_chars - 1] + "…"
+    # Preserve path end (folder name / last segments); truncate beginning.
+    return "…" + text[-(max_chars - 1) :]
 
 
 def path_value_text(value: str) -> ft.Text:

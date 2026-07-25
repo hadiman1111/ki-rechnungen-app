@@ -49,18 +49,20 @@ from invoice_tool.ui_v2.onboarding import (
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
-SETTINGS_SUBTITLE = "Lokale Pilot-Einstellungen und Status."
+SETTINGS_PAGE_TITLE = "Erweiterte Einstellungen"
+SETTINGS_SUBTITLE = "Erweiterte Hinweise und Diagnose — nicht Teil des normalen Arbeitsflusses."
 PRODUCTIVE_EXECUTION_NOTICE = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 DRY_RUN_UNAVAILABLE_NOTICE = MSG_DRY_RUN_UNAVAILABLE
 PRODUCT_NEUTRAL_NOTICE = (
     "Diese Einstellungen sind produktneutral und enthalten keine privaten Standardwerte."
 )
 PRODUCT_STATUS_ONE_LINE = (
-    "Lokale Pilotversion · nicht SaaS-ready · produktiv gesperrt"
+    "Vorschau-Modus · nicht SaaS-ready · produktiv gesperrt"
 )
 READINESS_BANNER = PRODUCT_STATUS_ONE_LINE
 NO_AUTOMATIC_FOLDER_SCAN = "Kein automatischer Ordner-Scan."
 NO_PRIVATE_DEFAULTS = "Keine privaten Standardwerte."
+SECTION_DEV_DIAGNOSE = "Entwickler / Diagnose"
 
 EXPORT_SECTION_DETAIL = (
     "Exportvorschau · kein produktiver DATEV-/Cloud-Export"
@@ -86,7 +88,7 @@ EXPORT_SECTION_DETAIL_EXPANDED = (
 )
 
 SETTINGS_SECTIONS = (
-    ("Allgemein", "Allgemeine Anzeige- und Programmhinweise (Readiness)."),
+    ("Allgemein", "Allgemeine Anzeige- und Programmhinweise."),
     ("Verarbeitung", "Verarbeitungsoptionen bleiben deaktiviert, bis ein PO-Gate freigibt."),
     ("Sicherheit", "Sicherheitsoptionen sind noch nicht konfigurierbar."),
     ("Export", EXPORT_SECTION_DETAIL),
@@ -168,7 +170,7 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
     )
     pilot = build_local_pilot_readiness()
     return SettingsPageVM(
-        title="Einstellungen",
+        title=SETTINGS_PAGE_TITLE,
         subtitle=SETTINGS_SUBTITLE,
         banner=READINESS_BANNER,
         productive_execution_enabled=False,
@@ -191,76 +193,49 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
 
 def build_settings_page(state: UiV2State) -> ft.Control:
     vm = build_settings_page_vm(state)
+    # Primary: short user-relevant safety summary only.
     controls: list[ft.Control] = [
         page_header(vm.title, subtitle=vm.subtitle),
-        compact_status_banner(
-            PRODUCT_STATUS_ONE_LINE,
-            vm.compact_status_items,
-        ),
-        make_section_label("Status"),
         dense_card(
             compact_info_row("Produktive Ausführung", "Deaktiviert"),
-            compact_info_row("Dry-Run", "Nicht verfügbar"),
+            compact_info_row("Originale", "bleiben unverändert"),
             compact_info_row("Standardwerte", NO_PRIVATE_DEFAULTS),
             compact_info_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
         ),
         collapsible_details(
+            PRODUCT_STATUS_ONE_LINE,
+            *vm.compact_status_items,
             vm.productive_execution_notice,
             vm.dry_run_notice,
             vm.product_neutral_notice,
-            title="Status-Details anzeigen",
+            title=SECTION_DEV_DIAGNOSE,
         ),
     ]
 
+    # Remaining sections + policy editor stay accessible under advanced.
+    advanced_lines: list[str] = []
     for section in vm.sections:
-        controls.append(make_section_label(section.title))
-        if section.title == "Produktstatus":
-            controls.append(
-                dense_card(
-                    compact_info_row("Produktstatus", PRODUCT_STATUS_ONE_LINE),
-                    compact_info_row("Export", MSG_EXPORT_PREVIEW_NOT_DATEV),
-                    compact_info_row("Originalordner", MSG_ORIGINAL_FOLDERS_PROTECTED),
-                )
-            )
-            controls.append(
-                compact_capability_matrix(
-                    tuple((item.label, item.status_label) for item in vm.capability_matrix),
-                    title="Fähigkeiten / Grenzen",
-                )
-            )
-            controls.append(
-                collapsible_details(
-                    STATUS_SECTION_DETAIL_EXPANDED,
-                    MSG_SAAS_NOT_INCLUDED,
-                    NO_PRIVATE_DEFAULTS,
-                    NO_AUTOMATIC_FOLDER_SCAN,
-                    title="Produktgrenzen anzeigen",
-                )
-            )
-        elif section.title == "Export":
-            controls.append(
-                dense_card(
-                    compact_info_row("Export", EXPORT_SECTION_DETAIL),
-                    compact_info_row("Cloud-Sync", "Nein"),
-                    compact_info_row("Originalmutation", "Nein"),
-                )
-            )
-            controls.append(
-                collapsible_details(
-                    EXPORT_SECTION_DETAIL_EXPANDED,
-                    title="Export-Details anzeigen",
-                )
-            )
-        else:
-            controls.append(
-                dense_card(
-                    compact_info_row("Status", SECTION_STATUS_DISABLED),
-                    compact_info_row("Modus", section.status),
-                )
-            )
-            controls.append(
-                collapsible_details(section.detail, title=f"{section.title}-Details")
-            )
-
+        advanced_lines.append(f"{section.title}: {section.detail}")
+    advanced_lines.extend(
+        [
+            STATUS_SECTION_DETAIL_EXPANDED,
+            EXPORT_SECTION_DETAIL_EXPANDED,
+            MSG_SAAS_NOT_INCLUDED,
+            MSG_EXPORT_PREVIEW_NOT_DATEV,
+            MSG_ORIGINAL_FOLDERS_PROTECTED,
+        ]
+    )
+    controls.append(
+        collapsible_details(
+            *advanced_lines,
+            title="Erweiterte Hinweise",
+        )
+    )
+    controls.append(
+        compact_capability_matrix(
+            tuple((item.label, item.status_label) for item in vm.capability_matrix),
+            title="Fähigkeiten / Grenzen",
+        )
+    )
     controls.extend(build_policy_editor_controls_panel(vm.policy_editor))
     return page_scaffold(*controls)

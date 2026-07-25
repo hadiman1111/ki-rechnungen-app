@@ -91,7 +91,8 @@ def test_core_bridge_wired_shows_compact_completed_state(tmp_path: Path) -> None
     state.config_list_selected_id = "config-a"
     apply_start_processing(state, profile_id="profile-a")
     assert state.workspace_run_interaction_status == "completed"
-    assert "Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+    assert ("Sandbox-Lauf abgeschlossen" in state.workspace_start_feedback_primary
+            or "Vorschau-Prüfung abgeschlossen" in state.workspace_start_feedback_primary)
     assert MSG_SANDBOX_NO_ORIGINALS_USED in state.workspace_start_feedback_details
     assert any("Originale unverändert" in item for item in state.workspace_start_feedback_details)
     assert len(state.workspace_start_feedback_details) <= MAX_BLOCKED_DETAIL_LINES
@@ -150,9 +151,8 @@ def test_configurations_page_uses_one_compact_note() -> None:
 
 
 def test_settings_page_has_compact_one_line_product_status() -> None:
-    assert PRODUCT_STATUS_ONE_LINE == (
-        "Lokale Pilotversion · nicht SaaS-ready · produktiv gesperrt"
-    )
+    assert "nicht SaaS-ready" in PRODUCT_STATUS_ONE_LINE
+    assert "produktiv gesperrt" in PRODUCT_STATUS_ONE_LINE
     settings = build_settings_page_vm(UiV2State())
     assert PRODUCT_STATUS_ONE_LINE in settings.banner
     src = SETTINGS.read_text(encoding="utf-8")

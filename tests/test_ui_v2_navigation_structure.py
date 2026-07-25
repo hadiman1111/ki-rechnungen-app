@@ -35,32 +35,37 @@ def test_navigation_contains_required_labels() -> None:
     labels = [label for _, label, _ in ALL_NAV_ITEMS]
     assert labels == [
         "Arbeitsbereich",
+        "Profile",
         "Konfigurationen",
         "Zur Prüfung",
-        "Profile",
-        "Einstellungen",
+        "Erweiterte Einstellungen",
     ]
     assert "Arbeitsbereich" in labels
     assert "Konfigurationen" in labels
     assert "Profile" in labels
     assert "Zur Prüfung" in labels
-    assert "Einstellungen" in labels
+    assert any("Einstellungen" in label for label in labels)
 
 
 def test_navigation_order_matches_track_b_shell() -> None:
+    # Workflow: Arbeitsbereich → Profile → Konfigurationen → Zur Prüfung
     assert [item[0] for item in DAILY_NAV] == [
         NAV_WORKSPACE,
+        NAV_PROFILES,
         NAV_CONFIGURATIONS,
         NAV_REVIEW,
     ]
-    assert [item[0] for item in ADMIN_NAV] == [NAV_PROFILES, NAV_SETTINGS]
+    # Settings is secondary / advanced only.
+    assert [item[0] for item in ADMIN_NAV] == [NAV_SETTINGS]
     assert ALL_NAV_IDS == (
         NAV_WORKSPACE,
+        NAV_PROFILES,
         NAV_CONFIGURATIONS,
         NAV_REVIEW,
-        NAV_PROFILES,
         NAV_SETTINGS,
     )
+    # Profile appears before Konfigurationen.
+    assert ALL_NAV_IDS.index(NAV_PROFILES) < ALL_NAV_IDS.index(NAV_CONFIGURATIONS)
 
 
 def test_no_top_level_scanprofile() -> None:

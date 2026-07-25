@@ -88,7 +88,35 @@ from invoice_tool.ui_v2.preview_export import (
     apply_workspace_preview_export,
     preview_export_available,
 )
-from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
+from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS, NAV_PROFILES, NAV_REVIEW
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_CHANGE_PROFILE,
+    ACTION_EDIT_CONFIGURATIONS,
+    ACTION_OPEN_REVIEW,
+    IA_CLEANUP_LAYOUT_MARKER,
+    LABEL_ACTIVE_STATUS,
+    LABEL_INPUT_FOLDER,
+    LABEL_OUTPUT_FOLDER,
+    LABEL_WORKSPACE_CONFIGURATION,
+    LABEL_WORKSPACE_PROFILE,
+    MSG_MISSING_TARGETS_CONFIG,
+    MSG_RUN_ACTIVITY,
+    MSG_START_HELPER,
+    SECTION_DEV_DIAGNOSE,
+    SECTION_TEST_NACHWEIS_COLLAPSED,
+    WORKSPACE_IA_SECTION_ORDER,
+    smart_path_display,
+)
+from invoice_tool.ui_v2.theme import (
+    COLOR_BORDER,
+    COLOR_PRIMARY_SUBTLE,
+    COLOR_SUCCESS,
+    COLOR_SUCCESS_SOFT,
+    COLOR_SURFACE,
+    COLOR_TEXT_MUTED,
+    COLOR_TEXT_PRIMARY,
+    COLOR_WARNING_SOFT,
+)
 from invoice_tool.saas_product_model import default_classification_policy
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_POLICY_INCOMPLETE,
@@ -171,13 +199,13 @@ ErgebnisAction = Literal["neue-konfiguration", "konfiguration-bearbeiten"]
 # Honest empty-state copy (generic product UI-v2 — no private/demo run data).
 EMPTY_NO_RUN_TITLE = "Noch kein Laufergebnis."
 EMPTY_NO_RUN_DETAIL = (
-    "Ordner wählen und Sandbox-Lauf starten. Ergebnisse erscheinen erst nach "
+    "Ordner wählen und Belege prüfen — nur Vorschau. Ergebnisse erscheinen erst nach "
     "einem erfolgreichen Lauf. Unklare Fälle bleiben zur Prüfung."
 )
 EMPTY_NO_RUN_DETAIL_EXPANDED = (
-    "Wähle Eingangs- und Ausgabeordner explizit und starte eine Verarbeitung erst, "
-    "wenn Dry-Run und produktive Ausführung freigegeben sind. "
+    "Wähle Eingangs- und Ausgabeordner explizit und starte eine Vorschau-Prüfung. "
     "Ergebnisse erscheinen hier erst nach einem echten Lauf. "
+    "Es wird nichts final geschrieben. Originale bleiben unverändert. "
     "Unklare Dokumente werden später im Prüfbereich angezeigt. "
     f"{MSG_CLARITY_UNCLEAR_STAYS_REVIEW} "
     f"{MSG_CLARITY_BUCKETS_SEPARATED} "
@@ -187,8 +215,14 @@ EMPTY_NO_RESULTS_TITLE = "Keine Ergebnisse vorhanden"
 EMPTY_NO_RESULTS_DETAIL = "Keine Dokumente verarbeitet. Kein Lauf gestartet."
 EMPTY_NO_RUN_STATUS = "Kein Lauf gestartet"
 EMPTY_RESULT_COMPACT_TITLE = "Noch kein Laufergebnis."
-START_CTA_LABEL = "Sandbox-Lauf starten"
+START_CTA_LABEL = "Belege prüfen — nur Vorschau"
 ADAPTER_NOT_CONNECTED_HINT = MSG_BLOCKED_ADAPTER
+WORKSPACE_SUBTITLE = "Profil → Konfiguration → Ordner → Vorschau prüfen."
+# Folder card accents (subtle input vs output coding).
+FOLDER_INPUT_BG = "#EEF6F1"
+FOLDER_OUTPUT_BG = "#EEF2F8"
+FOLDER_INPUT_BORDER = "#B7D7C4"
+FOLDER_OUTPUT_BORDER = "#B8C7E0"
 
 # Preferred CTA feedback copy — always visible after click (no silent no-op).
 MSG_RUN_STATUS_READY = "Bereit"
@@ -226,19 +260,22 @@ MSG_SANDBOX_BLOCKED_NO_ACTIVE_CONFIG = (
 MSG_DETAIL_PRODUCTIVE_LOCKED = MSG_PRODUCTIVE_LOCKED
 MSG_DETAIL_EXPORT_DRAFT = MSG_EXPORT_REMAINS_DRAFT
 MSG_DETAIL_CORE_BRIDGE = MSG_CORE_BRIDGE_TECHNICAL
-RUN_SETUP_SECTION_LABEL = "Lauf-Setup"
-MSG_SANDBOX_COMPLETED = "Sandbox-Lauf abgeschlossen."
-MSG_SANDBOX_COMPLETED_WITH_REVIEW = "Sandbox-Lauf mit Prüffällen abgeschlossen."
-MSG_SANDBOX_FAILED = "Sandbox-Lauf fehlgeschlagen."
-MSG_SANDBOX_SAFETY_PROOF = "Originale unverändert · Produktiv gesperrt · Export Vorschau"
+RUN_SETUP_SECTION_LABEL = "Profil & Konfiguration"
+MSG_SANDBOX_COMPLETED = "Vorschau-Prüfung abgeschlossen."
+MSG_SANDBOX_COMPLETED_WITH_REVIEW = (
+    "Vorschau-Prüfung mit Prüffällen abgeschlossen — Fälle zur Prüfung."
+)
+MSG_SANDBOX_FAILED = "Vorschau-Prüfung fehlgeschlagen."
+MSG_SANDBOX_SAFETY_PROOF = "Originale unverändert · Produktiv gesperrt · nur Vorschau"
 MSG_EXPORT_DISCLAIMER_COMPACT = MSG_EXPORT_DISCLAIMER_FROM_MODULE
 
 # Explicit folder selection copy — no private/default paths.
 EMPTY_INPUT_FOLDER_TEXT = "Kein Eingangsordner gewählt."
-EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgabeordner gewählt."
+EMPTY_OUTPUT_FOLDER_TEXT = "Kein Ausgangsordner gewählt."
 PICK_INPUT_FOLDER_LABEL = "Eingangsordner wählen"
-PICK_OUTPUT_FOLDER_LABEL = "Ausgabeordner wählen"
-FOLDER_SELECTION_SECTION_LABEL = "Ordnerauswahl"
+PICK_OUTPUT_FOLDER_LABEL = "Ausgangsordner wählen"
+FOLDER_SELECTION_SECTION_LABEL = "Ordner"
+RUN_ACTION_SECTION_LABEL = "Lauf"
 RUN_REPORT_SECTION_LABEL = "Export-Vorschau"
 EXPORT_PATH_HINT = "Lokaler Export-Vorschau-Pfad (JSON oder Ordner)"
 EXPORT_ACTION_LABEL = "Export-Vorschau lokal speichern"
@@ -338,6 +375,168 @@ def _snapshot(state: UiV2State) -> UiV2ReadOnlySnapshot | None:
 def _navigate_to_configurations(state: UiV2State) -> None:
     if state.navigate:
         state.navigate(NAV_CONFIGURATIONS)
+
+
+def _navigate_to_profiles(state: UiV2State) -> None:
+    if state.navigate:
+        state.navigate(NAV_PROFILES)
+
+
+def _navigate_to_review(state: UiV2State) -> None:
+    if state.navigate:
+        state.navigate(NAV_REVIEW)
+
+
+def _workspace_folder_card(
+    *,
+    title: str,
+    path_display: str,
+    empty_text: str,
+    pick_label: str,
+    selected: bool,
+    running: bool,
+    bgcolor: str,
+    border_color: str,
+    on_pick,
+    pick_disabled: bool,
+) -> ft.Control:
+    """Input/output folder card with checkmark + subtle color coding."""
+
+    path_text = smart_path_display(path_display) if selected else empty_text
+    header_bits: list[ft.Control] = [
+        ft.Text(title, size=13, weight=ft.FontWeight.W_600, color=COLOR_TEXT_PRIMARY),
+    ]
+    if selected:
+        header_bits.append(
+            ft.Icon(ft.Icons.CHECK_CIRCLE, size=18, color=COLOR_SUCCESS, data="folder_selected_checkmark")
+        )
+    body: list[ft.Control] = [
+        ft.Row(header_bits, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ft.Text(
+            path_text,
+            size=12,
+            color=COLOR_TEXT_MUTED if not selected else COLOR_TEXT_PRIMARY,
+            selectable=True,
+            data=f"folder_path_{title.lower()}",
+        ),
+    ]
+    if running:
+        body.append(
+            ft.Row(
+                [
+                    ft.ProgressRing(width=14, height=14, stroke_width=2),
+                    ft.Text(MSG_RUN_ACTIVITY, size=11, color=COLOR_TEXT_MUTED),
+                ],
+                spacing=8,
+            )
+        )
+    body.append(
+        action_button(pick_label, on_click=on_pick, primary=False)
+        if not pick_disabled
+        else helper_text(pick_label)
+    )
+    return ft.Container(
+        content=ft.Column(body, spacing=8, tight=True),
+        bgcolor=bgcolor,
+        border=ft.Border.all(1, border_color),
+        border_radius=10,
+        padding=14,
+        data=f"workspace_folder_card|{title}|{IA_CLEANUP_LAYOUT_MARKER}",
+    )
+
+
+def _workspace_profile_card(
+    *,
+    profile_name: str,
+    on_change,
+) -> ft.Control:
+    card = dense_card(
+        ft.Text(LABEL_WORKSPACE_PROFILE, size=12, color=COLOR_TEXT_MUTED),
+        ft.Text(profile_name or "—", size=20, weight=ft.FontWeight.W_700, color=COLOR_TEXT_PRIMARY),
+        ft.Row(
+            [
+                ft.Text(LABEL_ACTIVE_STATUS, size=12, color=COLOR_SUCCESS),
+                action_button(
+                    ACTION_CHANGE_PROFILE,
+                    on_click=lambda _e: on_change(),
+                    primary=False,
+                ),
+            ],
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True,
+        ),
+    )
+    card.data = f"workspace_profile_card|{IA_CLEANUP_LAYOUT_MARKER}"
+    return card
+
+
+def _workspace_configuration_card(
+    *,
+    configuration_display: str,
+    active_count: int | None,
+    missing_targets: int,
+    on_edit,
+) -> ft.Control:
+    lines: list[ft.Control] = [
+        ft.Text(LABEL_WORKSPACE_CONFIGURATION, size=12, color=COLOR_TEXT_MUTED),
+        ft.Text(
+            configuration_display or "—",
+            size=16,
+            weight=ft.FontWeight.W_600,
+            color=COLOR_TEXT_PRIMARY,
+        ),
+    ]
+    if active_count is not None:
+        lines.append(
+            ft.Text(f"{active_count} aktive Konfiguration(en)", size=12, color=COLOR_TEXT_MUTED)
+        )
+    if missing_targets > 0:
+        lines.append(
+            ft.Text(
+                MSG_MISSING_TARGETS_CONFIG.format(count=missing_targets),
+                size=12,
+                color="#B45309",
+            )
+        )
+    lines.append(
+        action_button(
+            ACTION_EDIT_CONFIGURATIONS,
+            on_click=lambda _e: on_edit(),
+            primary=False,
+        )
+    )
+    card = dense_card(*lines)
+    card.data = f"workspace_config_card|{IA_CLEANUP_LAYOUT_MARKER}"
+    return card
+
+
+def _workspace_result_summary(
+    *,
+    checked_count: int,
+    review_count: int,
+    ready_count: int | None,
+    on_open_review,
+) -> ft.Control:
+    rows: list[ft.Control] = [
+        compact_info_row("Geprüfte Dokumente", str(checked_count)),
+        compact_info_row("Zur Prüfung", str(review_count)),
+    ]
+    if ready_count is not None:
+        rows.append(compact_info_row("Bereit / erledigt", str(ready_count)))
+    rows.append(
+        action_button(
+            ACTION_OPEN_REVIEW,
+            on_click=lambda _e: on_open_review(),
+            primary=True,
+        )
+    )
+    card = dense_card(
+        ft.Text("Ergebnis", size=13, weight=ft.FontWeight.W_600),
+        *rows,
+    )
+    card.data = f"workspace_result_summary|{IA_CLEANUP_LAYOUT_MARKER}"
+    return card
 
 
 def _action_label(action: ErgebnisAction | None) -> str | None:
@@ -1538,25 +1737,54 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     ok_count = (len(display_results) - fail_count) if has_real_results else None
     fail_count_display = fail_count if has_real_results else None
 
-    folder_selection_panel = make_workspace_folder_selection_panel(
-        input_path_display=input_path,
-        output_path_display=output_path,
-        input_empty_text=folder_selection.input_empty_text,
-        output_empty_text=folder_selection.output_empty_text,
-        input_pick_label=folder_selection.input_pick_label,
-        output_pick_label=folder_selection.output_pick_label,
-        on_pick_input=pick_input_folder if folder_selection.picker_wired else None,
-        on_pick_output=pick_output_folder if folder_selection.picker_wired else None,
-        pick_disabled=not folder_selection.picker_wired,
+    interaction_status_early = (state.workspace_run_interaction_status or "idle").strip() or "idle"
+    run_is_active = interaction_status_early == "checking" or state.processing_run_state.status in {
+        "running",
+        "checking",
+    }
+    input_selected = bool(input_path)
+    output_selected = bool(output_path)
+    folder_selection_panel = ft.Column(
+        [
+            _workspace_folder_card(
+                title=LABEL_INPUT_FOLDER,
+                path_display=input_path or "",
+                empty_text=folder_selection.input_empty_text or EMPTY_INPUT_FOLDER_TEXT,
+                pick_label=folder_selection.input_pick_label or PICK_INPUT_FOLDER_LABEL,
+                selected=input_selected,
+                running=run_is_active and input_selected,
+                bgcolor=FOLDER_INPUT_BG,
+                border_color=FOLDER_INPUT_BORDER,
+                on_pick=pick_input_folder if folder_selection.picker_wired else None,
+                pick_disabled=not folder_selection.picker_wired,
+            ),
+            _workspace_folder_card(
+                title=LABEL_OUTPUT_FOLDER,
+                path_display=output_path or "",
+                empty_text=folder_selection.output_empty_text or EMPTY_OUTPUT_FOLDER_TEXT,
+                pick_label=folder_selection.output_pick_label or PICK_OUTPUT_FOLDER_LABEL,
+                selected=output_selected,
+                running=run_is_active and output_selected,
+                bgcolor=FOLDER_OUTPUT_BG,
+                border_color=FOLDER_OUTPUT_BORDER,
+                on_pick=pick_output_folder if folder_selection.picker_wired else None,
+                pick_disabled=not folder_selection.picker_wired,
+            ),
+        ],
+        spacing=10,
+        tight=True,
+        data=f"workspace_folder_pair|{IA_CLEANUP_LAYOUT_MARKER}",
     )
 
-    track_b_dev_blocks: list[ft.Control] = []
+    # Dev / controlled-folder tools — collapsed advanced only (not primary workflow).
+    track_b_dev_lines: list[str] = []
+    track_b_dev_controls: list[ft.Control] = []
     if is_track_b_dev_defaults_enabled() or state.track_b_dev_defaults_active:
         note = (state.track_b_dev_defaults_note or "").strip() or MSG_DEV_NOTE
-        track_b_dev_blocks.append(ft.Text(note, size=11, color="#6B7280"))
+        track_b_dev_lines.append(note)
         missing_msg = controlled_folders_status_message()
         if missing_msg:
-            track_b_dev_blocks.append(inline_warning(missing_msg))
+            track_b_dev_lines.append(missing_msg)
 
         def _on_create_controlled_folders(_e: ft.ControlEvent) -> None:
             result = ensure_track_b_dev_folders_if_requested(explicit_user_action=True)
@@ -1565,14 +1793,14 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             if state.refresh is not None:
                 state.refresh()
 
-        track_b_dev_blocks.append(
+        track_b_dev_controls.append(
             action_button(
                 ACTION_CREATE_CONTROLLED_FOLDERS,
                 on_click=_on_create_controlled_folders,
             )
         )
         if state.track_b_dev_defaults_folder_feedback:
-            track_b_dev_blocks.append(
+            track_b_dev_controls.append(
                 ft.Text(
                     state.track_b_dev_defaults_folder_feedback,
                     size=11,
@@ -1584,10 +1812,25 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 )
             )
 
+    run_start_panel = ft.Column(
+        [
+            action_button(
+                honesty.start_cta_label or START_CTA_LABEL,
+                on_click=start_processing,
+                primary=True,
+            ),
+            helper_text(MSG_START_HELPER),
+        ],
+        spacing=6,
+        tight=True,
+        data=f"workspace_run_action|{RUN_ACTION_SECTION_LABEL}|{IA_CLEANUP_LAYOUT_MARKER}",
+    )
+
+    # Keep legacy run panel available only for detailed mappings under advanced tabs.
     run_panel = make_workspace_run_panel(
         folder_path=input_path,
-        on_change_folder=pick_input_folder if input_path else None,
-        on_pick_folder=pick_input_folder if not input_path else None,
+        on_change_folder=None,
+        on_pick_folder=None,
         on_start=start_processing,
         start_label=honesty.start_cta_label,
         start_disabled=honesty.start_cta_disabled,
@@ -1691,10 +1934,16 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 )
             tab_blocks.append(make_full_width_panel(ft.Column(result_rows, spacing=0)))
 
-    interaction_status = (state.workspace_run_interaction_status or "idle").strip() or "idle"
+    interaction_status = interaction_status_early
     primary_feedback = (state.workspace_start_feedback_primary or "").strip()
     if not primary_feedback and state.processing_run_state.status != "idle":
         primary_feedback = (state.processing_run_state.message or "").strip()
+    # Do not surface old sandbox/pilot status wording as primary user feedback.
+    if primary_feedback and (
+        "Sandbox-Lauf mit Prüffällen" in primary_feedback
+        or "Sandbox-Lauf abgeschlossen" in primary_feedback
+    ):
+        primary_feedback = MSG_SANDBOX_COMPLETED_WITH_REVIEW if "Prüf" in primary_feedback else MSG_SANDBOX_COMPLETED
     detail_feedback = list(state.workspace_start_feedback_details or [])
     core_bridge_relevant = interaction_status == "sandbox_not_connected" or (
         "core-bridge" in primary_feedback.lower()
@@ -1708,7 +1957,7 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             tone = "blocked"
             status_label = MSG_RUN_STATUS_BLOCKED
         else:
-            primary_feedback = "Ordner wählen und Sandbox-Lauf starten."
+            primary_feedback = "Ordner wählen und Belege prüfen — nur Vorschau."
             tone = "ready"
         detail_feedback = list(
             _compact_details(
@@ -1735,7 +1984,6 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         status_label = MSG_RUN_STATUS_BLOCKED
         tone = "blocked"
 
-    # Compact details only — no sandbox readiness bullet wall.
     sandbox_detail_lines = list(
         _compact_details(
             configuration_label=config_selection.configuration_display,
@@ -1752,64 +2000,108 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         details_title="Details anzeigen",
     )
 
-    run_setup_panel = make_context_strip(
-        ("Profil", config_selection.profile_display or profile_name),
-        ("Konfiguration", config_selection.configuration_display),
-        ("Eingang", "gewählt" if readiness.input_folder_selected else "fehlt"),
-        ("Ausgang", "gewählt" if readiness.output_folder_selected else "fehlt"),
-    )
-    run_setup_hint = None
-    if config_selection.is_ready and config_selection.change_hint:
-        run_setup_hint = helper_text(config_selection.change_hint)
-    elif config_selection.blocker_message:
-        run_setup_hint = helper_text(config_selection.blocker_message)
+    missing_targets = 0
+    if snapshot.workspace.destinations:
+        missing_targets = sum(
+            1 for destination in snapshot.workspace.destinations if destination.destination_missing
+        )
+    active_config_count = None
+    try:
+        active_config_count = int(getattr(snapshot.profile, "active_configuration_count", 0) or 0)
+    except (TypeError, ValueError):
+        active_config_count = None
 
-    onboarding_panel = ft.Column(
-        [
-            compact_status_banner(
-                "Lokale Pilotversion",
-                onboarding.compact_status_items,
-            ),
-            collapsible_details(
-                MSG_SAAS_NOT_INCLUDED,
-                onboarding.next_step,
-                *[item.label for item in onboarding.checklist],
-                title="Pilot-Details anzeigen",
-            ),
-        ],
-        spacing=2,
-        tight=True,
+    profile_card = _workspace_profile_card(
+        profile_name=config_selection.profile_display or profile_name,
+        on_change=lambda: _navigate_to_profiles(state),
     )
+    configuration_card = _workspace_configuration_card(
+        configuration_display=config_selection.configuration_display,
+        active_count=active_config_count,
+        missing_targets=missing_targets,
+        on_edit=lambda: _navigate_to_configurations(state),
+    )
+
+    # Pilot / sandbox / export / controlled folders — advanced only.
+    advanced_dev_lines = [
+        MSG_SAAS_NOT_INCLUDED,
+        onboarding.next_step,
+        *[item.label for item in onboarding.checklist],
+        *track_b_dev_lines,
+        *WORKSPACE_IA_SECTION_ORDER,
+        IA_CLEANUP_LAYOUT_MARKER,
+    ]
+    advanced_blocks: list[ft.Control] = [
+        collapsible_details(
+            *advanced_dev_lines,
+            title=SECTION_DEV_DIAGNOSE,
+        ),
+    ]
+    if track_b_dev_controls:
+        advanced_blocks.append(
+            collapsible_details(
+                "Kontrollierte Testordner und Dev-Defaults.",
+                title=SECTION_TEST_NACHWEIS_COLLAPSED,
+            )
+        )
+        advanced_blocks.extend(track_b_dev_controls)
 
     items: list[ft.Control] = [
         page_header(
             "Arbeitsbereich",
-            subtitle="Ordner wählen, Sandbox starten, Ergebnis prüfen.",
+            subtitle=WORKSPACE_SUBTITLE,
         ),
-        make_context_strip(("Profil", profile_name), ("Modell", scan_model)),
-        make_section_label(RUN_SETUP_SECTION_LABEL),
-        run_setup_panel,
+        ft.Text(
+            " → ".join(WORKSPACE_IA_SECTION_ORDER),
+            size=11,
+            color=COLOR_TEXT_MUTED,
+            data=f"workspace_section_order|{IA_CLEANUP_LAYOUT_MARKER}",
+        ),
+        make_section_label(LABEL_WORKSPACE_PROFILE),
+        profile_card,
+        make_section_label(LABEL_WORKSPACE_CONFIGURATION),
+        configuration_card,
+        make_section_label(FOLDER_SELECTION_SECTION_LABEL),
+        folder_selection_panel,
+        make_section_label(RUN_ACTION_SECTION_LABEL),
+        run_start_panel,
     ]
-    if run_setup_hint is not None:
-        items.append(run_setup_hint)
-    items.extend(
-        [
-            make_section_label(ONBOARDING_SECTION_LABEL_COMPACT),
-            onboarding_panel,
-            make_section_label(FOLDER_SELECTION_SECTION_LABEL),
-            folder_selection_panel,
-            *track_b_dev_blocks,
-            make_section_label(START_FEEDBACK_SECTION_LABEL),
-            run_status_panel,
-            make_context_strip(
-                ("Ergebnisse", str(readiness.result_count)),
-                ("Prüffälle", str(readiness.review_count)),
-            ),
-            run_panel,
-        ]
+    if tone in {"blocked", "checking", "failed", "sandbox_not_connected"} or interaction_status != "idle":
+        items.extend(
+            [
+                make_section_label(START_FEEDBACK_SECTION_LABEL),
+                run_status_panel,
+            ]
+        )
+
+    show_result = interaction_status == "completed" or (
+        has_real_results and state.processing_run_state.status == "completed"
     )
-    items.extend(_build_run_report_panel(state, run_report))
-    if run_shell.review.has_items:
+    if show_result:
+        checked = readiness.result_count or len(display_results)
+        review_n = readiness.review_count or run_shell.review.count
+        ready_n = ok_count if ok_count is not None else None
+        items.append(
+            _workspace_result_summary(
+                checked_count=int(checked or 0),
+                review_count=int(review_n or 0),
+                ready_count=ready_n,
+                on_open_review=lambda: _navigate_to_review(state),
+            )
+        )
+
+    items.extend(advanced_blocks)
+    # Export preview + detailed run panel stay under advanced/test — not primary setup.
+    items.append(
+        collapsible_details(
+            "Detaillierte Exportvorschau und Zuordnungsliste (erweitert).",
+            title=SECTION_TEST_NACHWEIS_COLLAPSED,
+        )
+    )
+    if has_real_results:
+        items.append(run_panel)
+        items.extend(_build_run_report_panel(state, run_report))
+    if run_shell.review.has_items and not show_result:
         items.append(
             summary_alert(
                 f"{MSG_REVIEW_SUMMARY_SECTION}: {run_shell.review.count}. "
@@ -1822,8 +2114,6 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count}."
             )
         )
-    if has_real_results and contract_display:
-        items.append(make_section_label(MSG_RESULTS_SECTION))
     items.extend(
         [
             tab_bar,
