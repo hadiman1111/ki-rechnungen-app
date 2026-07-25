@@ -3,7 +3,7 @@
 1. **Task ID:** `TRACK_B_UI_V2_PRODUCT_UX_AUDIT_AND_WORKSPACE_CLEANUP_2026-07-25`
 
 2. **HEAD before:** `573fc839507ff363fd8e73940a094045d016c598`  
-   **HEAD after:** _(filled after commit)_
+   **HEAD after:** `a8a2a720631c11234203f24563981ff7bc7e636d`
 
 3. **Files changed (expected):**
    - `invoice_tool/ui_v2/track_b_smoke_debug_copy.py`
