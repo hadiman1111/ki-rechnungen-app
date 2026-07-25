@@ -236,11 +236,14 @@ def test_10_placeholder_noch_nicht_geaendert_not_clickable() -> None:
 def test_11_placeholder_no_pointer_hover_action_icon() -> None:
     pair_fn = _pair_fn_src()
     assert "OUTPUT_ROW_PLACEHOLDER_MARKER" in pair_fn
-    assert "MouseCursor.BASIC" in pair_fn
     assert "no_action_icon" in pair_fn
-    # Actionable branch has pointer; placeholder branch must not.
+    # Flet 0.85 Container rejects cursor kwargs — neither branch may set them.
+    assert "mouse_cursor=" not in pair_fn
+    assert "MouseCursor." not in pair_fn
+    # Placeholder branch: no click / hover / action icon.
     placeholder_branch = pair_fn.split("else:")[-1]
-    assert "MouseCursor.CLICK" not in placeholder_branch
+    assert "on_click=_on_target_click" not in placeholder_branch
+    assert "on_hover=_on_output_hover" not in placeholder_branch
     assert (
         "OUTPUT_ACTION_ICON_MARKER" not in placeholder_branch
         or "no_action" in placeholder_branch
@@ -285,10 +288,12 @@ def test_12_valid_proposed_row_clickable_when_target_exists() -> None:
 
 def test_13_valid_proposed_row_shows_hover_click_marker() -> None:
     pair_fn = _pair_fn_src()
-    assert "MouseCursor.CLICK" in pair_fn
-    assert "hover_pointer" in pair_fn
+    # Clickability via on_click + ink; hover via bgcolor (no Container cursor kwarg).
+    assert "on_click=_on_target_click" in pair_fn
+    assert "hover_bg" in pair_fn
     assert "on_hover=_on_output_hover" in pair_fn
     assert "_OUTPUT_ROW_HOVER_BG" in _ws_src()
+    assert "mouse_cursor=" not in pair_fn
 
 
 def test_14_output_action_icon_right_aligned_only_when_valid() -> None:
@@ -534,3 +539,126 @@ def test_35_eye_and_review_actions_still_present() -> None:
     assert "ACTION_SHOW_DOCUMENT" in src
     assert "ACTION_OPEN_REVIEW" in src
     assert "VISIBILITY_OUTLINED" in src
+
+
+def _flet_version_tuple() -> tuple[int, int, int]:
+    try:
+        from flet.version import flet_version  # type: ignore[attr-defined]
+
+        raw = str(flet_version)
+    except Exception:
+        try:
+            from flet.version import version as raw  # type: ignore[attr-defined]
+        except Exception:
+            return (0, 0, 0)
+    parts: list[int] = []
+    for part in str(raw).split(".")[:3]:
+        digits = "".join(ch for ch in part if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def test_36_workspace_file_pair_rows_construct_with_current_flet() -> None:
+    """Startup/render gate: construct pair rows with UI-v2 Flet (0.85+).
+
+    Catches incompatible constructor kwargs (e.g. Container mouse_cursor= on
+    Flet 0.85) that source-string tests previously missed. When the active
+    pytest interpreter is older, run the construct check via .venv-flet085.
+    """
+    flet085_python = ROOT / ".venv-flet085" / "bin" / "python"
+    construct_script = r"""
+import inspect
+import sys
+from pathlib import Path
+
+ROOT = Path(r""" + repr(str(ROOT)) + r""")
+sys.path.insert(0, str(ROOT))
+
+import flet as ft
+from invoice_tool.ui_v2.pages.workspace import _workspace_file_pair_rows
+from invoice_tool.ui_v2.processing_state import ProcessingPlannedDestination
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    OUTPUT_ROW_ACTIONABLE_MARKER,
+    OUTPUT_ROW_PLACEHOLDER_MARKER,
+)
+from invoice_tool.ui_v2.workspace_file_pairs import build_live_file_pairs_vm
+
+params = inspect.signature(ft.Container.__init__).parameters
+assert "mouse_cursor" not in params, "assumption: Container has no mouse_cursor"
+
+planned = (
+    ProcessingPlannedDestination(
+        document_name="a.pdf",
+        planned_path="p",
+        destination_label="x",
+        preview_only=True,
+        applied=False,
+        suggested_filename="a_proposed.pdf",
+    ),
+)
+vm = build_live_file_pairs_vm(
+    input_filenames=("a.pdf", "b.pdf"),
+    output_folder_selected=True,
+    planned_destinations=planned,
+)
+assert vm.rows[0].has_proposal is True
+assert vm.rows[1].has_proposal is False
+
+panel = _workspace_file_pair_rows(
+    pairs=(),
+    on_open_review=lambda: None,
+    live_vm=vm,
+    on_show_document=lambda _name: None,
+    on_open_review_for_source=lambda _name: None,
+)
+assert panel.input_list is not None
+assert panel.output_list is not None
+assert panel.review_cta is not None
+
+def walk(control):
+    found = [control]
+    content = getattr(control, "content", None)
+    if content is not None:
+        found.extend(walk(content))
+    for child in getattr(control, "controls", None) or []:
+        found.extend(walk(child))
+    return found
+
+built = walk(panel.input_list) + walk(panel.output_list) + walk(panel.review_cta)
+assert any(OUTPUT_ROW_ACTIONABLE_MARKER in str(getattr(c, "data", "") or "") for c in built)
+assert any(OUTPUT_ROW_PLACEHOLDER_MARKER in str(getattr(c, "data", "") or "") for c in built)
+for control in built:
+    data = str(getattr(control, "data", "") or "")
+    if OUTPUT_ROW_PLACEHOLDER_MARKER in data and "workspace_file_pair_row" in data:
+        assert getattr(control, "on_click", None) in (None, False)
+    if OUTPUT_ROW_ACTIONABLE_MARKER in data and "workspace_file_pair_row" in data:
+        assert callable(getattr(control, "on_click", None))
+print("OK_WORKSPACE_PAIR_ROWS_CONSTRUCT")
+"""
+    # Always also guard source: assignment form must stay absent.
+    assert "mouse_cursor=" not in _pair_fn_src()
+
+    if _flet_version_tuple() >= (0, 85, 0):
+        ns: dict[str, object] = {}
+        exec(construct_script, ns, ns)
+        return
+
+    if not flet085_python.is_file():
+        raise AssertionError(
+            "UI-v2 construct gate requires Flet >= 0.85 or .venv-flet085/bin/python"
+        )
+
+    result = subprocess.run(
+        [str(flet085_python), "-c", construct_script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "Workspace pair-row construct failed under .venv-flet085:\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "OK_WORKSPACE_PAIR_ROWS_CONSTRUCT" in result.stdout

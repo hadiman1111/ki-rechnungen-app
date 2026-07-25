@@ -971,13 +971,13 @@ def _workspace_file_pair_rows(
                 on_hover=_on_output_hover,
                 ink=True,
                 border=row_border,
-                mouse_cursor=ft.MouseCursor.CLICK,
+                # Flet 0.85 Container: no cursor kwarg — hover via on_hover only.
                 data=(
                     f"workspace_file_pair_row|{index}|output|nav_review|clickable|"
                     f"{OUTPUT_ROW_ACTIONABLE_MARKER}|{OUTPUT_ACTION_ICON_MARKER}|"
                     f"{PRODUCT_UX_CLEANUP_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
                     f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{shared_row_style}|"
-                    f"source={source_full}|same_row|stable_order|hover_pointer"
+                    f"source={source_full}|same_row|stable_order|hover_bg"
                 ),
             )
         else:
@@ -1016,9 +1016,8 @@ def _workspace_file_pair_rows(
                     horizontal=PAIR_ROW_PADDING_H,
                 ),
                 alignment=ft.Alignment.CENTER_LEFT,
-                # No on_click / ink / pointer — placeholders are not actionable.
+                # No on_click / ink / hover — placeholders are not actionable.
                 border=row_border,
-                mouse_cursor=ft.MouseCursor.BASIC,
                 data=(
                     f"workspace_file_pair_row|{index}|output|placeholder|non_clickable|"
                     f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
