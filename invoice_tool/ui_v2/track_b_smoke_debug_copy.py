@@ -27,6 +27,12 @@ REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
 REVIEW_CLARIFICATION_MARKER = "track_b_review_clarification_mode_v1"
 IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
 SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
+PRODUCT_UX_CLEANUP_MARKER = "track_b_ui_v2_product_ux_audit_workspace_cleanup_v1"
+WORKSPACE_COMPACT_STATUS_MARKER = "workspace_compact_status_line_v1"
+WORKSPACE_NO_PRIMARY_DEV_MARKER = "workspace_no_primary_dev_test_evidence_v1"
+OUTPUT_ROW_ACTIONABLE_MARKER = "workspace_output_row_actionable_v1"
+OUTPUT_ROW_PLACEHOLDER_MARKER = "workspace_output_row_placeholder_non_clickable_v1"
+OUTPUT_ACTION_ICON_MARKER = "workspace_output_action_icon_v1"
 MENU_COMPACT_ROW_MARKER = "menu_compact_row_spacing_v2"
 WORKSPACE_SHARED_SUMMARY_MARKER = "workspace_profile_config_shared_summary_v2"
 WORKSPACE_FILE_PAIR_MARKER = "workspace_input_output_file_pairs_v2"
@@ -50,6 +56,7 @@ FILENAME_PREVIEW_ONLY_MARKER = "review_filename_preview_only_default"
 GUIDED_STATUS_PANEL_MARKER = "guided_status_panel_top"
 DECISION_FIRST_PANEL_MARKER = "decision_first_panel"
 FILENAME_EDIT_SECONDARY_MARKER = "filename_edit_secondary_not_primary"
+FILENAME_EDIT_FOCUS_MARKER = "review_filename_edit_focus_in_place_v1"
 CLEAN_USER_FILENAME_MARKER = "clean_user_facing_filename_no_internal_prefix"
 
 # Workspace / IA user-facing actions
@@ -63,6 +70,8 @@ ACTION_SAVE_CONFIGURATION = "Konfiguration speichern"
 ACTION_RENAME_PROFILE = "Profil umbenennen"
 ACTION_NEW_CONFIGURATION = "Neue Konfiguration erstellen"
 ACTION_SHOW_DOCUMENT = "Dokument anzeigen"
+ACTION_VIEW_PROPOSAL = "Vorschlag ansehen"
+ACTION_SHOW_OUTPUT_FILE = "Datei anzeigen"
 LABEL_ACTIVE_STATUS = "Aktiv"
 LABEL_ACTIVE_EXPLAIN = "aktiv = wird bei der Prüfung verwendet"
 LABEL_WORKSPACE_PROFILE = "Profil"
@@ -869,6 +878,8 @@ __all__ = (
     "ACTION_RENAME_PROFILE",
     "ACTION_SAVE_CONFIGURATION",
     "ACTION_SHOW_DOCUMENT",
+    "ACTION_SHOW_OUTPUT_FILE",
+    "ACTION_VIEW_PROPOSAL",
     "ACTION_WORKSPACE_EDIT",
     "BADGE_BLOCKED",
     "BADGE_MISSING_PAYMENT",
@@ -885,6 +896,7 @@ __all__ = (
     "CLEAN_USER_FILENAME_MARKER",
     "DECISION_FIRST_PANEL_MARKER",
     "DETAIL_PANEL_DISTINCT_BACKGROUND",
+    "FILENAME_EDIT_FOCUS_MARKER",
     "FILENAME_EDIT_SECONDARY_MARKER",
     "FILENAME_FIELD_POLISH_MARKER",
     "FILENAME_PREVIEW_ONLY_MARKER",
@@ -972,13 +984,19 @@ __all__ = (
     "REVIEW_SECTION_TITLES",
     "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
+    "OUTPUT_ACTION_ICON_MARKER",
+    "OUTPUT_ROW_ACTIONABLE_MARKER",
+    "OUTPUT_ROW_PLACEHOLDER_MARKER",
+    "PRODUCT_UX_CLEANUP_MARKER",
     "SECOND_UX_CLEANUP_MARKER",
     "START_CTA_HEIGHT_PX",
     "START_CTA_STRONG",
+    "WORKSPACE_COMPACT_STATUS_MARKER",
     "WORKSPACE_CTA_BLACK_PRIMARY_MARKER",
     "WORKSPACE_CTA_DISABLED_MARKER",
     "WORKSPACE_CTA_PRIMARY_MARKER",
     "WORKSPACE_FILE_PAIR_MARKER",
+    "WORKSPACE_NO_PRIMARY_DEV_MARKER",
     "WORKSPACE_SHARED_SUMMARY_MARKER",
     "SECTION_ADVANCED_CONFIG",
     "SECTION_ADVANCED_HINTS",

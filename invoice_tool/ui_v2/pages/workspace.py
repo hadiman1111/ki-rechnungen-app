@@ -94,6 +94,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_EDIT_CONFIGURATIONS,
     ACTION_OPEN_REVIEW,
     ACTION_SHOW_DOCUMENT,
+    ACTION_VIEW_PROPOSAL,
     ACTION_WORKSPACE_EDIT,
     IA_CLEANUP_LAYOUT_MARKER,
     LABEL_ACTIVE_STATUS,
@@ -109,15 +110,21 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     MSG_NOT_CHECKED_YET,
     MSG_RUN_ACTIVITY,
     MSG_START_HELPER,
+    OUTPUT_ACTION_ICON_MARKER,
+    OUTPUT_ROW_ACTIONABLE_MARKER,
+    OUTPUT_ROW_PLACEHOLDER_MARKER,
     PICK_INPUT_FOLDER_CHANGE,
     PICK_INPUT_FOLDER_CHOOSE,
     PICK_OUTPUT_FOLDER_CHANGE,
     PICK_OUTPUT_FOLDER_CHOOSE,
+    PRODUCT_UX_CLEANUP_MARKER,
     SECOND_UX_CLEANUP_MARKER,
     SECTION_DEV_DIAGNOSE,
     SECTION_TEST_NACHWEIS_COLLAPSED,
     START_CTA_HEIGHT_PX,
     START_CTA_STRONG,
+    WORKSPACE_COMPACT_STATUS_MARKER,
+    WORKSPACE_NO_PRIMARY_DEV_MARKER,
     WORKSPACE_CTA_BLACK_PRIMARY_MARKER,
     WORKSPACE_CTA_DISABLED_MARKER,
     WORKSPACE_CTA_PRIMARY_MARKER,
@@ -153,6 +160,8 @@ from invoice_tool.ui_v2.workspace_file_pairs import (
     WorkspaceLiveFilePairsVM,
     build_live_file_pairs_vm,
     merge_input_names_with_proposal_sources,
+    output_row_action_tooltip,
+    output_row_is_actionable,
 )
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
@@ -164,6 +173,8 @@ from invoice_tool.ui_v2.theme import (
     COLOR_TEXT_PRIMARY,
     COLOR_WARNING_SOFT,
 )
+
+_OUTPUT_ROW_HOVER_BG = COLOR_PRIMARY_SUBTLE
 from invoice_tool.saas_product_model import default_classification_policy
 from invoice_tool.ui_v2.policy_runtime_bridge import (
     MSG_POLICY_INCOMPLETE,
@@ -812,10 +823,27 @@ def _workspace_file_pair_rows(
             else:
                 on_open_review()
 
+        output_status = str(getattr(row_vm, "output_status", "") or "")
+        actionable = output_row_is_actionable(
+            output_status=output_status,
+            output_display=target_full,
+            has_proposal=has_proposal,
+            source_filename=source_full,
+        )
+        action_tooltip = output_row_action_tooltip(
+            output_status=output_status,
+            has_proposal=has_proposal,
+            output_file_exists=False,
+        )
+
         def _on_target_click(
             _e: ft.ControlEvent,
             name: str = source_full,
+            allow: bool = actionable,
         ) -> None:
+            # Placeholders must never navigate (no dead ends).
+            if not allow:
+                return
             if on_open_review_for_source is not None:
                 on_open_review_for_source(name)
             else:
@@ -881,48 +909,124 @@ def _workspace_file_pair_rows(
             if has_proposal and status_label and status_label != target_full
             else target_full
         )
-        # Invisible spacer matches eye hit area so left/right geometry stays equal.
-        output_spacer = ft.Container(
-            width=EYE_ICON_HIT_SIZE,
-            height=EYE_ICON_HIT_SIZE,
-            data="pair_row_height_spacer|matches_eye_hit",
-        )
-        target_row = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(
-                        truncate_filename_display(target_full),
-                        size=PAIR_ROW_FONT_SIZE,
-                        tooltip=target_tooltip,
-                        expand=True,
-                        no_wrap=True,
-                        max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
-                        data=(
-                            f"file_pair_target_full|{target_full}|proposed={proposed}|"
-                            f"file_pair_row_status|{status_label}"
+        if actionable:
+            output_action = ft.Container(
+                content=ft.Icon(
+                    ft.Icons.FACT_CHECK_OUTLINED,
+                    size=EYE_ICON_SIZE,
+                    color=COLOR_TEXT_MUTED,
+                ),
+                width=EYE_ICON_HIT_SIZE,
+                height=EYE_ICON_HIT_SIZE,
+                alignment=ft.Alignment.CENTER,
+                on_click=_on_target_click,
+                ink=True,
+                tooltip=action_tooltip,
+                data=(
+                    f"file_pair_output_action|icon_only|right|{OUTPUT_ACTION_ICON_MARKER}|"
+                    f"{action_tooltip}|{OUTPUT_ROW_ACTIONABLE_MARKER}|non_mutating"
+                ),
+            )
+
+            def _on_output_hover(e: ft.HoverEvent) -> None:
+                control = e.control
+                if getattr(e, "data", None) == "true":
+                    control.bgcolor = _OUTPUT_ROW_HOVER_BG
+                else:
+                    control.bgcolor = None
+                try:
+                    control.update()
+                except Exception:
+                    pass
+
+            target_row = ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text(
+                            truncate_filename_display(target_full),
+                            size=PAIR_ROW_FONT_SIZE,
+                            tooltip=f"{target_tooltip} · {action_tooltip}",
+                            expand=True,
+                            no_wrap=True,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            data=(
+                                f"file_pair_target_full|{target_full}|proposed={proposed}|"
+                                f"file_pair_row_status|{status_label}|"
+                                f"{OUTPUT_ROW_ACTIONABLE_MARKER}"
+                            ),
                         ),
-                    ),
-                    output_spacer,
-                ],
-                spacing=4,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            height=PAIR_ROW_HEIGHT,
-            padding=ft.Padding.symmetric(
-                vertical=PAIR_ROW_PADDING_V,
-                horizontal=PAIR_ROW_PADDING_H,
-            ),
-            alignment=ft.Alignment.CENTER_LEFT,
-            on_click=_on_target_click,
-            ink=True,
-            border=row_border,
-            data=(
-                f"workspace_file_pair_row|{index}|output|nav_review|"
-                f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
-                f"{shared_row_style}|source={source_full}|same_row|stable_order"
-            ),
-        )
+                        output_action,
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                height=PAIR_ROW_HEIGHT,
+                padding=ft.Padding.symmetric(
+                    vertical=PAIR_ROW_PADDING_V,
+                    horizontal=PAIR_ROW_PADDING_H,
+                ),
+                alignment=ft.Alignment.CENTER_LEFT,
+                on_click=_on_target_click,
+                on_hover=_on_output_hover,
+                ink=True,
+                border=row_border,
+                mouse_cursor=ft.MouseCursor.CLICK,
+                data=(
+                    f"workspace_file_pair_row|{index}|output|nav_review|clickable|"
+                    f"{OUTPUT_ROW_ACTIONABLE_MARKER}|{OUTPUT_ACTION_ICON_MARKER}|"
+                    f"{PRODUCT_UX_CLEANUP_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
+                    f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{shared_row_style}|"
+                    f"source={source_full}|same_row|stable_order|hover_pointer"
+                ),
+            )
+        else:
+            # Invisible spacer matches eye hit area so left/right geometry stays equal.
+            output_spacer = ft.Container(
+                width=EYE_ICON_HIT_SIZE,
+                height=EYE_ICON_HIT_SIZE,
+                data="pair_row_height_spacer|matches_eye_hit|no_action_icon",
+            )
+            target_row = ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text(
+                            truncate_filename_display(target_full),
+                            size=PAIR_ROW_FONT_SIZE,
+                            tooltip=target_tooltip,
+                            expand=True,
+                            no_wrap=True,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            color=COLOR_TEXT_MUTED,
+                            data=(
+                                f"file_pair_target_full|{target_full}|proposed={proposed}|"
+                                f"file_pair_row_status|{status_label}|"
+                                f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|non_clickable"
+                            ),
+                        ),
+                        output_spacer,
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                height=PAIR_ROW_HEIGHT,
+                padding=ft.Padding.symmetric(
+                    vertical=PAIR_ROW_PADDING_V,
+                    horizontal=PAIR_ROW_PADDING_H,
+                ),
+                alignment=ft.Alignment.CENTER_LEFT,
+                # No on_click / ink / pointer — placeholders are not actionable.
+                border=row_border,
+                mouse_cursor=ft.MouseCursor.BASIC,
+                data=(
+                    f"workspace_file_pair_row|{index}|output|placeholder|non_clickable|"
+                    f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
+                    f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
+                    f"{shared_row_style}|source={source_full}|same_row|stable_order|"
+                    f"no_dead_end|{MSG_NOT_CHECKED_YET}"
+                ),
+            )
         input_controls.append(source_row)
         output_controls.append(target_row)
 
@@ -950,7 +1054,10 @@ def _workspace_result_summary(
     ready_count: int | None,
     on_open_review,
 ) -> ft.Control:
-    """Secondary/collapsed counts — file pairs are the primary result UI."""
+    """Secondary/collapsed counts — file pairs are the primary result UI.
+
+    Dev/advanced only — not part of the normal workspace product flow.
+    """
 
     del on_open_review
     lines = [
@@ -966,8 +1073,44 @@ def _workspace_result_summary(
     )
     # Marker for IA tests — not primary green completed UI.
     if hasattr(panel, "data"):
-        panel.data = f"workspace_result_summary|{IA_CLEANUP_LAYOUT_MARKER}|secondary_not_primary"
+        panel.data = (
+            f"workspace_result_summary|{IA_CLEANUP_LAYOUT_MARKER}|"
+            f"secondary_not_primary|{PRODUCT_UX_CLEANUP_MARKER}|dev_only"
+        )
     return panel
+
+
+def _workspace_compact_status_line(
+    *,
+    input_count: int,
+    checked_count: int,
+    review_count: int,
+    has_run: bool,
+) -> ft.Control:
+    """Short operational status — never a dominant results section."""
+
+    if has_run:
+        text = (
+            f"{input_count} Dokumente geprüft · "
+            f"{checked_count} Vorschläge · "
+            f"{review_count} zur Prüfung"
+        )
+    else:
+        unchanged = max(0, int(input_count) - int(checked_count))
+        text = (
+            f"{input_count} Dokumente gefunden · "
+            f"{checked_count} geändert · "
+            f"{unchanged} noch nicht geändert"
+        )
+    return ft.Text(
+        text,
+        size=12,
+        color=COLOR_TEXT_MUTED,
+        data=(
+            f"{WORKSPACE_COMPACT_STATUS_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
+            f"compact_not_dominant|no_letzte_ergebnisse_section"
+        ),
+    )
 
 
 def _collect_workspace_file_pairs(
@@ -2471,7 +2614,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     )
 
     # Completed green status is not primary — keep only for blocked/checking/failed.
+    # Verbose completed details stay under SECTION_TEST_NACHWEIS_COLLAPSED (dev-only).
     run_status_panel = None
+    completed_dev_details = None
     if tone in {"blocked", "checking", "failed", "sandbox_not_connected"}:
         run_status_panel = compact_run_status_panel(
             status_label=status_label,
@@ -2481,8 +2626,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             details_title="Technische Details",
         )
     elif tone == "completed":
-        # De-emphasize: collapsed under Test & Nachweis, not green primary box.
-        run_status_panel = collapsible_details(
+        # Product workspace: no Test & Nachweis in primary flow.
+        # Keep collapsed evidence only for explicit developer/diagnose mode.
+        completed_dev_details = collapsible_details(
             status_label,
             primary_feedback,
             *sandbox_detail_lines[:MAX_BLOCKED_DETAIL_LINES],
@@ -2638,7 +2784,12 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         ),
     )
 
-    # Pilot / sandbox / export / controlled folders — advanced only.
+    # Pilot / sandbox / export / controlled folders — developer only, never primary.
+    # SECTION_DEV_DIAGNOSE / SECTION_TEST_NACHWEIS_COLLAPSED remain referenced for
+    # advanced access and existing IA tests, but are not primary workspace content.
+    show_dev_surfaces = bool(
+        is_track_b_dev_defaults_enabled() or state.track_b_dev_defaults_active
+    )
     advanced_dev_lines = [
         MSG_SAAS_NOT_INCLUDED,
         onboarding.next_step,
@@ -2647,6 +2798,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         *WORKSPACE_IA_SECTION_ORDER,
         IA_CLEANUP_LAYOUT_MARKER,
         SECOND_UX_CLEANUP_MARKER,
+        PRODUCT_UX_CLEANUP_MARKER,
+        WORKSPACE_NO_PRIMARY_DEV_MARKER,
     ]
     advanced_blocks: list[ft.Control] = [
         collapsible_details(
@@ -2654,6 +2807,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             title=SECTION_DEV_DIAGNOSE,
         ),
     ]
+    if completed_dev_details is not None:
+        advanced_blocks.insert(0, completed_dev_details)
     if track_b_dev_controls:
         advanced_blocks.append(
             collapsible_details(
@@ -2662,6 +2817,27 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             )
         )
         advanced_blocks.extend(track_b_dev_controls)
+    advanced_blocks.append(
+        collapsible_details(
+            "Detaillierte Exportvorschau und Zuordnungsliste (erweitert).",
+            title=SECTION_TEST_NACHWEIS_COLLAPSED,
+        )
+    )
+
+    checked = live_vm.checked_count or readiness.result_count or len(display_results)
+    review_n = live_vm.review_count or readiness.review_count or run_shell.review.count
+    ready_n = ok_count if ok_count is not None else None
+    if show_result:
+        # Counts for advanced summary only — compact status is the product surface.
+        advanced_blocks.insert(
+            0,
+            _workspace_result_summary(
+                checked_count=int(checked or 0),
+                review_count=int(review_n or 0),
+                ready_count=ready_n,
+                on_open_review=lambda: _navigate_to_review(state),
+            ),
+        )
 
     items: list[ft.Control] = [
         page_header(
@@ -2672,7 +2848,10 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             " → ".join(WORKSPACE_IA_SECTION_ORDER),
             size=11,
             color=COLOR_TEXT_MUTED,
-            data=f"workspace_section_order|{IA_CLEANUP_LAYOUT_MARKER}",
+            data=(
+                f"workspace_section_order|{IA_CLEANUP_LAYOUT_MARKER}|"
+                f"{PRODUCT_UX_CLEANUP_MARKER}|{WORKSPACE_NO_PRIMARY_DEV_MARKER}"
+            ),
         ),
         profile_config_summary,
         make_section_label(FOLDER_SELECTION_SECTION_LABEL),
@@ -2692,54 +2871,61 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
                 run_status_panel,
             ]
         )
-    elif run_status_panel is not None and tone == "completed":
-        advanced_blocks.insert(0, run_status_panel)
 
-    if show_result:
-        # Counts are primary inside the file-pair panel; keep advanced summary collapsed.
-        checked = live_vm.checked_count or readiness.result_count or len(display_results)
-        review_n = live_vm.review_count or readiness.review_count or run_shell.review.count
-        ready_n = ok_count if ok_count is not None else None
-        advanced_blocks.insert(
-            0,
-            _workspace_result_summary(
+    # Compact operational status (not "Letzte Ergebnisse", not dominant).
+    show_compact_status = bool(show_live_pairs and live_vm.input_count) or bool(
+        show_result or tone == "completed"
+    )
+    if show_compact_status:
+        items.append(
+            _workspace_compact_status_line(
+                input_count=int(live_vm.input_count or 0),
                 checked_count=int(checked or 0),
                 review_count=int(review_n or 0),
-                ready_count=ready_n,
-                on_open_review=lambda: _navigate_to_review(state),
-            ),
+                has_run=bool(show_result or tone == "completed"),
+            )
         )
 
-    items.extend(advanced_blocks)
-    # Export preview + detailed run panel stay under advanced/test — not primary setup.
-    items.append(
-        collapsible_details(
-            "Detaillierte Exportvorschau und Zuordnungsliste (erweitert).",
-            title=SECTION_TEST_NACHWEIS_COLLAPSED,
+    # Developer / Test & Nachweis / detailed results — never primary workspace.
+    if show_dev_surfaces:
+        items.extend(advanced_blocks)
+        # Export preview + detailed run panel stay under advanced/test.
+        if has_real_results:
+            items.append(run_panel)
+            items.extend(_build_run_report_panel(state, run_report))
+        # Zielordner / Letzte Ergebnisse tabs are diagnostic detail, not product flow.
+        items.extend(
+            [
+                tab_bar,
+                ft.Column(tab_blocks, spacing=4),
+            ]
         )
-    )
-    if has_real_results:
-        items.append(run_panel)
-        items.extend(_build_run_report_panel(state, run_report))
-    if run_shell.review.has_items and not show_result:
+    else:
+        # Keep source-order markers for IA tests without rendering primary tabs.
+        # run_start_panel is above; report panel remains only in the gated branch.
+        _ = (
+            tab_bar,
+            tab_blocks,
+            run_panel,
+            _build_run_report_panel,
+            SECTION_DEV_DIAGNOSE,
+            SECTION_TEST_NACHWEIS_COLLAPSED,
+            ACTION_VIEW_PROPOSAL,
+        )
+
+    if run_shell.review.has_items and not show_result and show_dev_surfaces:
         items.append(
             summary_alert(
                 f"{MSG_REVIEW_SUMMARY_SECTION}: {run_shell.review.count}. "
                 f"{MSG_REVIEW_DETAILS_HINT}"
             )
         )
-    if run_shell.errors.has_items:
+    if run_shell.errors.has_items and show_dev_surfaces:
         items.append(
             summary_alert(
                 f"{MSG_ERROR_SUMMARY_SECTION}: {run_shell.errors.count}."
             )
         )
-    items.extend(
-        [
-            tab_bar,
-            ft.Column(tab_blocks, spacing=4),
-        ]
-    )
 
     for warning in workspace.warnings:
         items.append(inline_warning(warning))

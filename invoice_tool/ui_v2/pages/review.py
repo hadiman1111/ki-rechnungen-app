@@ -20,7 +20,6 @@ from invoice_tool.ui_v2.components import (
     collapsible_details,
     compact_entry_row,
     empty_state,
-    form_field_group,
     page_header,
     page_scaffold,
     primary_button,
@@ -202,6 +201,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
     CLEAN_USER_FILENAME_MARKER,
+    FILENAME_EDIT_FOCUS_MARKER,
     FILENAME_EDIT_SECONDARY_MARKER,
     FILENAME_FIELD_POLISH_MARKER,
     FILENAME_PREVIEW_ONLY_MARKER,
@@ -2753,19 +2753,76 @@ def _filename_preview_panel(
             data=f"review_status_separate|{REVIEW_CLARIFICATION_MARKER}",
         ),
         ft.Text(LABEL_SUGGESTED_FILENAME, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED),
-        ft.Text(
-            filename,
-            size=13,
-            weight=ft.FontWeight.W_600,
-            selectable=True,
-            data=(
-                f"{FILENAME_PREVIEW_ONLY_MARKER}|{CLEAN_USER_FILENAME_MARKER}|"
-                f"{REVIEW_CLARIFICATION_MARKER}"
-            ),
-        ),
-        ft.Text(MSG_FILENAME_FOLLOWS_SCHEMA, size=11, color=COLOR_TEXT_MUTED),
-        ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED),
     ]
+    # Edit field replaces the preview in place — same detail section, no distant jump.
+    if edit_active:
+        clean_draft = clean_user_facing_filename(str(raw_draft or filename or "")) or filename
+        filename_field = ft.TextField(
+            value=str(clean_draft or ""),
+            on_change=_on_filename_change,
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+            expand=True,
+            text_size=FONT_SIZE_MONO,
+            border_color=COLOR_BORDER,
+            dense=False,
+            autofocus=True,
+            data=(
+                f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
+                f"in_place|same_detail_section|autofocus|visible_edit_field|"
+                f"{LABEL_DATEINAME_BEARBEITEN}|{LABEL_VORSCHAU_DATEINAME}"
+            ),
+        )
+        controls.append(
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            LABEL_DATEINAME_BEARBEITEN,
+                            size=FONT_SIZE_HELPER,
+                            color=COLOR_TEXT_MUTED,
+                            data=f"{FILENAME_EDIT_FOCUS_MARKER}|label_in_place",
+                        ),
+                        ft.Container(
+                            content=filename_field,
+                            expand=True,
+                            width=None,
+                            data=(
+                                f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
+                                f"no_layout_collapse|focus_visibility_marker"
+                            ),
+                        ),
+                    ],
+                    spacing=SPACE_XS,
+                    tight=True,
+                    expand=True,
+                ),
+                data=(
+                    f"{FILENAME_EDIT_FOCUS_MARKER}|edit_active_in_place|"
+                    f"same_section|{SECTION_DATEINAME}|no_distant_hidden_section"
+                ),
+            )
+        )
+    else:
+        controls.append(
+            ft.Text(
+                filename,
+                size=13,
+                weight=ft.FontWeight.W_600,
+                selectable=True,
+                data=(
+                    f"{FILENAME_PREVIEW_ONLY_MARKER}|{CLEAN_USER_FILENAME_MARKER}|"
+                    f"{REVIEW_CLARIFICATION_MARKER}"
+                ),
+            )
+        )
+    controls.extend(
+        [
+            ft.Text(MSG_FILENAME_FOLLOWS_SCHEMA, size=11, color=COLOR_TEXT_MUTED),
+            ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED),
+        ]
+    )
     if detail.er_er_note:
         controls.append(ft.Text(detail.er_er_note, size=11))
     elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
@@ -2788,48 +2845,14 @@ def _filename_preview_panel(
         )
     )
 
-    if edit_active:
-        clean_draft = clean_user_facing_filename(str(raw_draft or filename or "")) or filename
-        filename_field = ft.TextField(
-            value=str(clean_draft or ""),
-            on_change=_on_filename_change,
-            multiline=True,
-            min_lines=2,
-            max_lines=4,
-            expand=True,
-            text_size=FONT_SIZE_MONO,
-            border_color=COLOR_BORDER,
-            dense=False,
-            data=FILENAME_FIELD_POLISH_MARKER,
-        )
-        controls.append(
-            form_field_group(
-                LABEL_VORSCHAU_DATEINAME,
-                ft.Column(
-                    [
-                        ft.Text(
-                            LABEL_DATEINAME_BEARBEITEN,
-                            size=FONT_SIZE_HELPER,
-                            color=COLOR_TEXT_MUTED,
-                        ),
-                        ft.Container(
-                            content=filename_field,
-                            expand=True,
-                            width=None,
-                            data=FILENAME_FIELD_POLISH_MARKER,
-                        ),
-                    ],
-                    spacing=SPACE_XS,
-                    tight=True,
-                    expand=True,
-                ),
-                helper=MSG_FILENAME_FOLLOWS_SCHEMA,
-            )
-        )
-
     return review_section(
         SECTION_DATEINAME,
-        ft.Column(controls, spacing=SPACE_SM, tight=True),
+        ft.Column(
+            controls,
+            spacing=SPACE_SM,
+            tight=True,
+            data=f"{FILENAME_EDIT_FOCUS_MARKER}|section_stable|{SECTION_DATEINAME}",
+        ),
     )
 
 

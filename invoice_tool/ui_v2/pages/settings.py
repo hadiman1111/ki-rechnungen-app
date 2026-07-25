@@ -193,14 +193,18 @@ def build_settings_page_vm(state: UiV2State | None = None) -> SettingsPageVM:
 
 def build_settings_page(state: UiV2State) -> ft.Control:
     vm = build_settings_page_vm(state)
-    # Primary: short user-relevant safety summary only.
+    # Honest developer/diagnose page — not a normal user settings page.
+    # No meaningful end-user settings; diagnostics stay collapsed by default.
     controls: list[ft.Control] = [
         page_header(vm.title, subtitle=vm.subtitle),
-        dense_card(
-            compact_info_row("Produktive Ausführung", "Deaktiviert"),
-            compact_info_row("Originale", "bleiben unverändert"),
-            compact_info_row("Standardwerte", NO_PRIVATE_DEFAULTS),
-            compact_info_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
+        ft.Container(
+            content=dense_card(
+                compact_info_row("Produktive Ausführung", "Deaktiviert"),
+                compact_info_row("Originale", "bleiben unverändert"),
+                compact_info_row("Standardwerte", NO_PRIVATE_DEFAULTS),
+                compact_info_row("Ordner-Scan", NO_AUTOMATIC_FOLDER_SCAN),
+            ),
+            data="settings_dev_diagnose_summary|not_user_settings|dev_advanced_only",
         ),
         collapsible_details(
             PRODUCT_STATUS_ONE_LINE,

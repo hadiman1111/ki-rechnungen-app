@@ -9,11 +9,17 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_OPEN_REVIEW,
+    ACTION_SHOW_OUTPUT_FILE,
+    ACTION_VIEW_PROPOSAL,
     LABEL_NO_PROPOSAL_YET,
     MSG_NEED_OUTPUT_FOLDER as MSG_NEED_OUTPUT_FOLDER_COPY,
     MSG_NOT_CHECKED_YET,
     MSG_PROPOSAL_CREATED as MSG_PROPOSAL_CREATED_COPY,
     MSG_ROW_CHECKING as MSG_ROW_CHECKING_COPY,
+    OUTPUT_ACTION_ICON_MARKER,
+    OUTPUT_ROW_ACTIONABLE_MARKER,
+    OUTPUT_ROW_PLACEHOLDER_MARKER,
     clean_user_facing_filename,
 )
 from invoice_tool.ui_v2.workspace_input_listing import MSG_FILES_FOUND, MSG_NO_FILES_IN_INPUT
@@ -51,6 +57,23 @@ STATUS_CHECKING = "checking"
 STATUS_PROPOSED = "proposed"
 STATUS_REVIEW = "review"
 STATUS_ERROR = "error"
+
+_OUTPUT_PLACEHOLDER_DISPLAYS = frozenset(
+    {
+        MSG_NOT_CHECKED_YET,
+        LABEL_NO_PROPOSAL_YET,
+        MSG_NEED_OUTPUT_FOLDER_COPY,
+        MSG_ROW_CHECKING_COPY,
+        "",
+    }
+)
+_OUTPUT_NON_ACTIONABLE_STATUSES = frozenset(
+    {
+        STATUS_NEED_OUTPUT,
+        STATUS_NOT_CHECKED,
+        STATUS_CHECKING,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -142,6 +165,51 @@ def _proposal_map_from_results(
         else:
             out[source] = (target, STATUS_PROPOSED if target else STATUS_REVIEW)
     return out
+
+
+def output_row_is_actionable(
+    *,
+    output_status: str,
+    output_display: str,
+    has_proposal: bool,
+    source_filename: str = "",
+) -> bool:
+    """True only when an output row has a valid review/proposal target.
+
+    Placeholder rows (Noch nicht geändert / Noch kein Vorschlag / …) are never
+    actionable — no dead-end navigation.
+    """
+
+    status = str(output_status or "").strip()
+    display = str(output_display or "").strip()
+    source = str(source_filename or "").strip()
+    if not source or source == "—":
+        return False
+    if status in _OUTPUT_NON_ACTIONABLE_STATUSES:
+        return False
+    if display in _OUTPUT_PLACEHOLDER_DISPLAYS and not has_proposal:
+        return False
+    if has_proposal:
+        return True
+    return status in {STATUS_PROPOSED, STATUS_REVIEW, STATUS_ERROR}
+
+
+def output_row_action_tooltip(
+    *,
+    output_status: str,
+    has_proposal: bool,
+    output_file_exists: bool = False,
+) -> str:
+    """Plain-German tooltip for a valid output-row action."""
+
+    if output_file_exists:
+        return ACTION_SHOW_OUTPUT_FILE
+    status = str(output_status or "").strip()
+    if status == STATUS_REVIEW:
+        return ACTION_OPEN_REVIEW
+    if has_proposal or status == STATUS_PROPOSED:
+        return ACTION_VIEW_PROPOSAL
+    return ACTION_OPEN_REVIEW
 
 
 def build_live_file_pairs_vm(
@@ -272,6 +340,9 @@ __all__ = (
     "MSG_ROW_CHECKING",
     "MSG_ROW_ERROR",
     "MSG_ROW_REVIEW",
+    "OUTPUT_ACTION_ICON_MARKER",
+    "OUTPUT_ROW_ACTIONABLE_MARKER",
+    "OUTPUT_ROW_PLACEHOLDER_MARKER",
     "PAIR_ROW_ALIGNED_MARKER",
     "PAIR_ROW_COLUMN_SPACING",
     "PAIR_ROW_DENSITY_MARKER",
@@ -290,4 +361,6 @@ __all__ = (
     "WorkspaceLiveFilePairsVM",
     "build_live_file_pairs_vm",
     "merge_input_names_with_proposal_sources",
+    "output_row_action_tooltip",
+    "output_row_is_actionable",
 )

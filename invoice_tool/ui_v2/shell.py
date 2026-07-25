@@ -134,6 +134,7 @@ def _build_sidebar(
     nav_items = {**daily_items, **admin_items}
 
     # Developer diagnosis is never primary — always collapsed/secondary.
+    # Not a user "Erweiterte Einstellungen" page; honest label: Entwickler / Diagnose.
     # Remains in the tree so advanced access stays possible without looking like settings.
     _ = is_track_b_dev_defaults_enabled  # reserved for future stricter gating
     column_controls: list[ft.Control] = [
@@ -158,7 +159,10 @@ def _build_sidebar(
                     content=admin_group,
                 )
             ],
-            data="nav_dev_diagnose_collapsed_secondary",
+            data=(
+                "nav_dev_diagnose_collapsed_secondary|"
+                "not_erweiterte_einstellungen|dev_advanced_only"
+            ),
         ),
     ]
 
