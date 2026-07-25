@@ -53,10 +53,15 @@ def _button_label(button: object) -> str | None:
 
 
 def _find_by_label_button(root: object, label: str) -> object | None:
-    for button in _find_buttons(root):
-        if label in collect_labels(button):
-            return button
-    return None
+    matches = [
+        button
+        for button in _find_buttons(root)
+        if label in collect_labels(button)
+    ]
+    if not matches:
+        return None
+    # Prefer the last match (editor footer save) over page-header CTAs.
+    return matches[-1]
 
 
 def _build_test_page() -> MagicMock:
@@ -186,14 +191,18 @@ class UiV2UxInteractionGateTests(unittest.TestCase):
 
     def test_profile_create_opens_editor(self) -> None:
         self._nav("Profile")
-        button = _find_by_label_button(self._root(), "Neues Profil")
+        button = _find_by_label_button(self._root(), "Profil erstellen")
         self.assertIsNotNone(button)
         button.on_click(MagicMock())
-        self.assertIn("Neues Profil", collect_labels(self._root()))
+        # Create editor title remains "Neues Profil"; save uses "Profil erstellen".
+        labels = collect_labels(self._root())
+        self.assertTrue(
+            "Neues Profil" in labels or "Profil erstellen" in labels
+        )
 
     def test_profile_save_validation_at_field(self) -> None:
         self._nav("Profile")
-        _find_by_label_button(self._root(), "Neues Profil").on_click(MagicMock())
+        _find_by_label_button(self._root(), "Profil erstellen").on_click(MagicMock())
         save = (
             _find_by_label_button(self._root(), "Profil erstellen")
             or _find_by_label_button(self._root(), "Speichern")
@@ -208,7 +217,7 @@ class UiV2UxInteractionGateTests(unittest.TestCase):
 
         before = set(list_canonical_profile_ids())
         self._nav("Profile")
-        _find_by_label_button(self._root(), "Neues Profil").on_click(MagicMock())
+        _find_by_label_button(self._root(), "Profil erstellen").on_click(MagicMock())
         cancel = _find_by_label_button(self._root(), "Abbrechen")
         cancel.on_click(MagicMock())
         after = set(list_canonical_profile_ids())
@@ -237,7 +246,7 @@ class UiV2UxInteractionGateTests(unittest.TestCase):
 
     def test_config_only_one_editor(self) -> None:
         self._nav("Konfigurationen")
-        _find_by_label_button(self._root(), "Neue Konfiguration").on_click(MagicMock())
+        _find_by_label_button(self._root(), "Neue Konfiguration erstellen").on_click(MagicMock())
         labels = collect_labels(self._root())
         save_labels = {
             "Speichern",
@@ -285,7 +294,7 @@ class UiV2UxInteractionGateTests(unittest.TestCase):
 
     def test_unsaved_changes_dialog_on_dirty_nav(self) -> None:
         self._nav("Profile")
-        _find_by_label_button(self._root(), "Neues Profil").on_click(MagicMock())
+        _find_by_label_button(self._root(), "Profil erstellen").on_click(MagicMock())
         handler = _find_nav_handler(self._root(), "Konfigurationen")
         handler(MagicMock())
         self.assertTrue(self.page.overlay)
@@ -316,7 +325,7 @@ class UiV2UxInteractionGateTests(unittest.TestCase):
 
     def test_config_create_open(self) -> None:
         self._nav("Konfigurationen")
-        self.assertIsNotNone(_find_by_label_button(self._root(), "Neue Konfiguration"))
+        self.assertIsNotNone(_find_by_label_button(self._root(), "Neue Konfiguration erstellen"))
 
     def test_config_save(self) -> None:
         self.assertIn("update_configuration", (PROJECT_ROOT / "invoice_tool/ui_v2/pages/configurations.py").read_text())

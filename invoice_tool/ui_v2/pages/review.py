@@ -198,15 +198,22 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_KEEP_UNCLEAR,
     ACTION_KEEP_UNCLEAR_GUIDED,
     ACTION_OPEN_WORKSPACE,
+    ACTION_SHOW_DOCUMENT,
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
     CLEAN_USER_FILENAME_MARKER,
     FILENAME_EDIT_SECONDARY_MARKER,
     FILENAME_FIELD_POLISH_MARKER,
     FILENAME_PREVIEW_ONLY_MARKER,
+    FILTER_ALL_DOCS,
+    FILTER_READY_DOCS,
+    FILTER_REVIEW_DOCS,
     GUIDED_STATUS_PANEL_MARKER,
     INLINE_DETAIL_UNDER_SELECTED_CARD,
     LABEL_DATEINAME_BEARBEITEN,
+    LABEL_NO_PROPOSAL_YET,
+    LABEL_ORIGINAL_FILE,
+    LABEL_PROPOSED_FILENAME,
     LABEL_REVIEW_AMOUNT,
     LABEL_REVIEW_DATE,
     LABEL_REVIEW_DOC_NAME,
@@ -219,8 +226,12 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     MSG_FINAL_WRITE_USER_ANSWER,
     MSG_GUIDED_SAFETY_LINE,
     MSG_GUIDED_STATUS_REVIEW,
+    MSG_REVIEW_SAFETY_ONCE,
     REVIEW_CLARIFICATION_MARKER,
+    REVIEW_DOCUMENT_PREVIEW_MARKER,
+    SECOND_UX_CLEANUP_MARKER,
     clean_user_facing_filename,
+    truncate_filename_display,
     MSG_NO_READY_CASES,
     MSG_NO_REVIEW_CASES,
     MSG_ORACLE_AVAILABLE,
@@ -345,13 +356,77 @@ def set_filename_editor_active(
 
 
 def review_summary_display_name(row: ReviewListItemVM | Any) -> str:
-    """Prefer Lieferant/Name, else original filename."""
+    """Prefer full original filename; supplier is secondary metadata."""
 
+    source = str(getattr(row, "source_filename", None) or "").strip()
+    if source and source != "—":
+        return source
     supplier = str(getattr(row, "supplier", None) or "").strip()
     if supplier and supplier != "—":
         return supplier
-    source = str(getattr(row, "source_filename", None) or "").strip()
-    return source or "Dokument"
+    return "Dokument"
+
+
+def _resolve_review_document_path(
+    state: UiV2State, source_filename: str
+) -> "Path | None":
+    """Resolve controlled input document for non-mutating preview/open only."""
+
+    from pathlib import Path
+
+    name = str(source_filename or "").strip()
+    if not name or "/" in name or "\\" in name or name in {".", ".."}:
+        return None
+    root = str(getattr(state, "workspace_input_folder_override", "") or "").strip()
+    if not root:
+        return None
+    candidate = Path(root) / name
+    try:
+        if candidate.is_file():
+            return candidate.resolve()
+    except OSError:
+        return None
+    return None
+
+
+def open_review_document_preview(
+    state: UiV2State, source_filename: str
+) -> str:
+    """Open/reveal document with system viewer — never mutates the file."""
+
+    import os
+    import subprocess
+    import sys
+
+    path = _resolve_review_document_path(state, source_filename)
+    marker = (
+        f"{REVIEW_DOCUMENT_PREVIEW_MARKER}|non_mutating|"
+        f"{SECOND_UX_CLEANUP_MARKER}|action={ACTION_SHOW_DOCUMENT}"
+    )
+    setattr(state, "review_document_preview_marker", marker)
+    if path is None:
+        msg = (
+            f"{ACTION_SHOW_DOCUMENT}: Datei nicht gefunden — "
+            f"{source_filename or '—'}. Keine Änderung an Originalen. "
+            f"{marker}"
+        )
+        setattr(state, "review_document_preview_feedback", msg)
+        return msg
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        elif os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
+        msg = (
+            f"{ACTION_SHOW_DOCUMENT}: {path.name} geöffnet (nur Anzeige, "
+            f"nicht verändert). {marker}"
+        )
+    except OSError as exc:
+        msg = f"{ACTION_SHOW_DOCUMENT}: Öffnen fehlgeschlagen ({exc}). {marker}"
+    setattr(state, "review_document_preview_feedback", msg)
+    return msg
 
 
 def review_section(
@@ -1112,7 +1187,8 @@ def _build_list_items(
         )
         supplier = detail.counterparty_name or detail.supplier
         source_filename = detail.source_filename or detail.document_label
-        summary_name = str(supplier or source_filename or "Dokument").strip()
+        # Primary label is the original document filename (not supplier-only).
+        summary_name = str(source_filename or supplier or "Dokument").strip()
         is_open = bool(open_key and key == open_key)
         rows.append(
             ReviewListItemVM(
@@ -2459,25 +2535,71 @@ def render_review_summary_card(
     *,
     is_open: bool,
     on_toggle,
+    on_preview=None,
 ) -> ft.Control:
-    """Collapsed overview: name, date, amount + Details öffnen/schließen."""
+    """Collapsed overview: original filename ↔ proposed filename + metadata."""
 
     display_name = row.summary_display_name or review_summary_display_name(row)
-    fields: list[tuple[str, str]] = [
-        (LABEL_REVIEW_DOC_NAME, display_name),
-        (LABEL_REVIEW_DATE, row.invoice_date or "—"),
-        (LABEL_REVIEW_AMOUNT, row.amount or "—"),
+    source_full = str(row.source_filename or display_name or "—").strip() or "—"
+    proposed_raw = clean_user_facing_filename(row.suggested_filename)
+    proposed_full = proposed_raw or LABEL_NO_PROPOSAL_YET
+    meta_bits = [
+        bit
+        for bit in (
+            str(row.supplier or "").strip(),
+            str(row.invoice_date or "").strip(),
+            str(row.amount or "").strip(),
+        )
+        if bit and bit != "—"
     ]
+    meta_line = " · ".join(meta_bits) if meta_bits else "—"
     action_label = ACTION_DETAILS_CLOSE if is_open else ACTION_DETAILS_OPEN
-    trailing = status_badge(
-        action_label,
-        tone="active" if is_open else "neutral",
+    mapping = ft.ResponsiveRow(
+        [
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(LABEL_ORIGINAL_FILE, size=11, color=COLOR_TEXT_MUTED),
+                        ft.Text(
+                            truncate_filename_display(source_full),
+                            size=14,
+                            weight=ft.FontWeight.W_600,
+                            tooltip=source_full,
+                            data=(
+                                f"review_original_filename_full|{source_full}|"
+                                f"{REVIEW_DOCUMENT_PREVIEW_MARKER}"
+                            ),
+                        ),
+                    ],
+                    spacing=2,
+                    tight=True,
+                ),
+                col={"xs": 12, "md": 6},
+            ),
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(LABEL_PROPOSED_FILENAME, size=11, color=COLOR_TEXT_MUTED),
+                        ft.Text(
+                            truncate_filename_display(proposed_full),
+                            size=14,
+                            tooltip=proposed_full,
+                            data=f"review_proposed_filename_full|{proposed_full}",
+                        ),
+                    ],
+                    spacing=2,
+                    tight=True,
+                ),
+                col={"xs": 12, "md": 6},
+            ),
+        ],
+        spacing=8,
+        data=f"review_filename_side_by_side|{SECOND_UX_CLEANUP_MARKER}",
     )
-    entry = compact_entry_row(
-        display_name,
-        *fields,
-        trailing=trailing,
-    )
+    preview_btn = secondary_button(
+        ACTION_SHOW_DOCUMENT,
+        on_click=on_preview,
+    ) if on_preview is not None else ft.Container(height=0)
     border = ft.Border.all(
         2 if is_open else 1,
         COLOR_PRIMARY if is_open else COLOR_BORDER,
@@ -2487,9 +2609,39 @@ def render_review_summary_card(
         bgcolor=COLOR_PRIMARY if is_open else COLOR_BORDER,
         border_radius=RADIUS_CARD,
     )
+    body = ft.Column(
+        [
+            mapping,
+            ft.Text(
+                f"{LABEL_REVIEW_DOC_NAME}: {truncate_filename_display(source_full)}",
+                size=11,
+                color=COLOR_TEXT_MUTED,
+            ),
+            ft.Text(
+                f"{LABEL_REVIEW_DATE}: {row.invoice_date or '—'} · "
+                f"{LABEL_REVIEW_AMOUNT}: {row.amount or '—'} · {meta_line}",
+                size=12,
+                color=COLOR_TEXT_MUTED,
+                data="review_secondary_metadata_supplier_date_amount",
+            ),
+            ft.Row(
+                [
+                    status_badge(
+                        action_label,
+                        tone="active" if is_open else "neutral",
+                    ),
+                    preview_btn,
+                ],
+                spacing=8,
+                wrap=True,
+            ),
+        ],
+        spacing=SPACE_SM,
+        tight=True,
+    )
     return ft.Container(
         content=ft.Row(
-            [accent, ft.Container(content=entry, expand=True)],
+            [accent, ft.Container(content=body, expand=True)],
             spacing=SPACE_SM,
             vertical_alignment=ft.CrossAxisAlignment.START,
         ),
@@ -2500,9 +2652,9 @@ def render_review_summary_card(
         border=border,
         border_radius=RADIUS_CARD,
         data=(
-            REVIEW_CARD_ACTIVE_HIGHLIGHT
+            f"{REVIEW_CARD_ACTIVE_HIGHLIGHT}|expand_detail_below"
             if is_open
-            else REVIEW_CARD_COLLAPSED_SUMMARY_ONLY
+            else f"{REVIEW_CARD_COLLAPSED_SUMMARY_ONLY}|{SECOND_UX_CLEANUP_MARKER}"
         ),
     )
 
@@ -2771,8 +2923,12 @@ def build_review_page(state: UiV2State) -> ft.Control:
             vm.title,
             subtitle=MSG_USER_REVIEW_SUBTITLE,
         ),
-        ft.Text(vm.final_write_user_answer, size=12),
-        ft.Text(vm.safety_line_declutter, size=12),
+        ft.Text(
+            MSG_REVIEW_SAFETY_ONCE,
+            size=12,
+            color=COLOR_TEXT_MUTED,
+            data=f"review_safety_once|{SECOND_UX_CLEANUP_MARKER}",
+        ),
     ]
 
     if vm.empty:
@@ -2863,8 +3019,27 @@ def build_review_page(state: UiV2State) -> ft.Control:
         )
         return page_scaffold(*items)
 
-    items.append(_ready_cases_panel(vm))
-    items.append(_review_cases_panel(vm))
+    # Counts only — no duplicate short text lists of the same documents.
+    items.append(
+        ft.Text(
+            f"{FILTER_ALL_DOCS} · {FILTER_REVIEW_DOCS}: {vm.cases_review_count} · "
+            f"{FILTER_READY_DOCS}: {vm.cases_ready_count}",
+            size=12,
+            color=COLOR_TEXT_MUTED,
+            data=f"review_doc_filters|{SECOND_UX_CLEANUP_MARKER}|no_duplicate_summary_list",
+        )
+    )
+    # Keep section title constants accessible for VMs/tests; panels not primary.
+    items.append(
+        collapsible_details(
+            f"{SECTION_BEREIT}: {vm.cases_ready_count}",
+            f"{SECTION_PRUEFUNG}: {vm.cases_review_count}",
+            MSG_NO_READY_CASES if not vm.ready_case_summaries else "—",
+            MSG_NO_REVIEW_CASES if not vm.review_case_summaries else "—",
+            title="Dokumentanzahl (erweitert)",
+            initially_expanded=False,
+        )
+    )
     items.append(
         ft.Text(
             REVIEW_ACCORDION_LAYOUT_MARKER,
@@ -2873,19 +3048,33 @@ def build_review_page(state: UiV2State) -> ft.Control:
             selectable=False,
         )
     )
+    preview_feedback = str(getattr(state, "review_document_preview_feedback", "") or "")
+    if preview_feedback:
+        items.append(ft.Text(preview_feedback, size=11, color=COLOR_TEXT_MUTED))
 
     accordion_blocks: list[ft.Control] = []
     open_key = vm.open_review_item_id
     for row in vm.list_items:
         key = row.item_key
         is_open = bool(open_key and key == open_key)
+        source_name = row.source_filename or review_summary_display_name(row)
 
         def _toggle(_e: ft.ControlEvent, item_key: str = key) -> None:
             toggle_review_item_details(state, item_key)
             if state.refresh is not None:
                 state.refresh()
 
-        card = render_review_summary_card(row, is_open=is_open, on_toggle=_toggle)
+        def _preview(_e: ft.ControlEvent, filename: str = source_name) -> None:
+            open_review_document_preview(state, filename)
+            if state.refresh is not None:
+                state.refresh()
+
+        card = render_review_summary_card(
+            row,
+            is_open=is_open,
+            on_toggle=_toggle,
+            on_preview=_preview,
+        )
         block_controls: list[ft.Control] = [card]
         if is_open and vm.selected_detail is not None:
             if vm.selected_detail.item_key == key:
@@ -2898,9 +3087,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
 
     items.append(
         section_block(
-            f"{vm.review_count} Dokument(e) zur Prüfung",
+            f"{SECTION_PRUEFUNG}: {vm.review_count} Dokument(e)",
             stacked_list(*accordion_blocks),
-            subtitle="Zur Prüfung — kompakte Übersicht, Details unter dem Dokument",
+            subtitle="Originaldatei und vorgeschlagener Dateiname nebeneinander — Details darunter",
         )
     )
 
@@ -2913,7 +3102,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
             MSG_SAFETY_LINE_NO_FINAL,
             MSG_FINAL_WRITE_USER_ANSWER,
             *vm.separation_notes,
-            title="Weitere Hinweise",
+            title=SECTION_TECHNISCHE,
             initially_expanded=False,
         )
     )

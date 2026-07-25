@@ -38,13 +38,13 @@ def test_navigation_contains_required_labels() -> None:
         "Profile",
         "Konfigurationen",
         "Zur Prüfung",
-        "Erweiterte Einstellungen",
+        "Entwickler / Diagnose",
     ]
     assert "Arbeitsbereich" in labels
     assert "Konfigurationen" in labels
     assert "Profile" in labels
     assert "Zur Prüfung" in labels
-    assert any("Einstellungen" in label for label in labels)
+    assert any("Diagnose" in label or "Entwickler" in label for label in labels)
 
 
 def test_navigation_order_matches_track_b_shell() -> None:

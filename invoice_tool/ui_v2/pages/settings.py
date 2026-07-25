@@ -49,8 +49,8 @@ from invoice_tool.ui_v2.onboarding import (
 from invoice_tool.ui_v2.processing_state import MSG_DRY_RUN_UNAVAILABLE
 from invoice_tool.ui_v2.state import UiV2State
 
-SETTINGS_PAGE_TITLE = "Erweiterte Einstellungen"
-SETTINGS_SUBTITLE = "Erweiterte Hinweise und Diagnose — nicht Teil des normalen Arbeitsflusses."
+SETTINGS_PAGE_TITLE = "Entwickler / Diagnose"
+SETTINGS_SUBTITLE = "Nur für Diagnose und Tests — nicht Teil des normalen Arbeitsflusses."
 PRODUCTIVE_EXECUTION_NOTICE = MSG_CLARITY_PRODUCTIVE_NOT_RELEASED
 DRY_RUN_UNAVAILABLE_NOTICE = MSG_DRY_RUN_UNAVAILABLE
 PRODUCT_NEUTRAL_NOTICE = (

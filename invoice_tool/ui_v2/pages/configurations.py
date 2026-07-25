@@ -20,6 +20,7 @@ from invoice_tool.ui_v2.adapters.configuration_write_adapter import (
 from invoice_tool.ui_v2.adapters.folder_picker_adapter import choose_target_folder
 from invoice_tool.ui_v2.components import (
     collapsible_details,
+    make_expansion_tile,
     compact_info_row,
     compact_list_item,
     dense_card,
@@ -83,10 +84,14 @@ from invoice_tool.ui_v2.saas_profile_surface import (
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_CREATE_CONFIGURATION,
+    ACTION_NEW_CONFIGURATION,
     ACTION_SAVE_CONFIGURATION,
     IA_CLEANUP_LAYOUT_MARKER,
+    LABEL_ACTIVE_EXPLAIN,
     MSG_MISSING_TARGETS_FILTER,
+    SECOND_UX_CLEANUP_MARKER,
     SECTION_ADVANCED_CONFIG,
+    SECTION_DEV_DIAGNOSE,
     SECTION_IMPORT_EXPORT_ADVANCED,
     smart_path_display,
 )
@@ -361,8 +366,12 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             f"{page_vm.total_count} Konfigurationen · {page_vm.active_count} aktiv",
             size=13,
         ),
+        ft.Text(LABEL_ACTIVE_EXPLAIN, size=11, color="#6B7280"),
     )
-    top_summary.data = f"configurations_top_summary|{IA_CLEANUP_LAYOUT_MARKER}"
+    top_summary.data = (
+        f"configurations_top_summary|{IA_CLEANUP_LAYOUT_MARKER}|"
+        f"{SECOND_UX_CLEANUP_MARKER}|slim_summary_band|mirrors_profile"
+    )
     summary_extras: list[ft.Control] = [top_summary]
     if page_vm.missing_destination_count > 0:
         summary_extras.append(
@@ -377,14 +386,14 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             "Konfigurationen",
             subtitle="Zuordnung, Benennung und Zielordner für das aktive Profil.",
             trailing=action_button(
-                "Neue Konfiguration",
+                ACTION_NEW_CONFIGURATION,
                 on_click=lambda _e: _start_create(),
                 primary=True,
             ),
         ),
         *summary_extras,
         collapsible_details(
-            "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
+            "Regeln ordnen Dokumente zu; unklare Dokumente bleiben zur Prüfung.",
             MSG_CONFIGS_APPLY_RULES,
             MSG_UNCLEAR_NOT_AUTO,
             MSG_TARGETS_AFTER_SAFE_CONFIG,
@@ -488,31 +497,52 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             _set_feedback(result.error or "Import fehlgeschlagen", is_error=True)
         _refresh()
 
-    # Import/export + local drafts — advanced/collapsed, not primary above config list.
+    # Import/export + local drafts — collapsed developer area, not primary.
     selected_rename = ""
     for item in state.list_saas_drafts():
         if item.draft_id == state.saas_selected_draft_id:
             selected_rename = item.display_name
             break
     items.append(
-        collapsible_details(
-            "Lokale Entwürfe und Import/Export sind erweitert — nicht die aktive Arbeitskonfiguration.",
-            title=SECTION_IMPORT_EXPORT_ADVANCED,
-        )
-    )
-    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
-    items.append(
-        build_saas_draft_list_panel(
-            state.saas_draft_list_vm(),
-            on_select=_select_saas_draft,
-            on_new=_create_saas_draft_local,
-            on_load=_load_saas_draft_local,
-            on_save=_save_saas_draft_local,
-            on_rename=_rename_saas_draft_local,
-            on_delete=_delete_saas_draft_local,
-            on_export=_export_saas_draft_local,
-            on_import=_import_saas_draft_local,
-            rename_value=selected_rename,
+        make_expansion_tile(
+            title=ft.Text(
+                SECTION_IMPORT_EXPORT_ADVANCED,
+                size=12,
+                weight=ft.FontWeight.W_600,
+            ),
+            subtitle=ft.Text(
+                f"Nicht die aktive Arbeitskonfiguration — {SECTION_DEV_DIAGNOSE}",
+                size=11,
+            ),
+            initially_expanded=False,
+            controls=[
+                ft.Container(
+                    padding=ft.Padding.only(left=4, right=4, bottom=8),
+                    content=ft.Column(
+                        [
+                            build_saas_persistence_status_panel(
+                                state.saas_persistence_status_vm()
+                            ),
+                            build_saas_draft_list_panel(
+                                state.saas_draft_list_vm(),
+                                on_select=_select_saas_draft,
+                                on_new=_create_saas_draft_local,
+                                on_load=_load_saas_draft_local,
+                                on_save=_save_saas_draft_local,
+                                on_rename=_rename_saas_draft_local,
+                                on_delete=_delete_saas_draft_local,
+                                on_export=_export_saas_draft_local,
+                                on_import=_import_saas_draft_local,
+                                rename_value=selected_rename,
+                            ),
+                        ],
+                        spacing=8,
+                        tight=True,
+                    ),
+                    data=f"config_drafts_not_primary|{SECOND_UX_CLEANUP_MARKER}",
+                )
+            ],
+            data=f"{SECTION_IMPORT_EXPORT_ADVANCED}|not_primary|{SECOND_UX_CLEANUP_MARKER}",
         )
     )
 

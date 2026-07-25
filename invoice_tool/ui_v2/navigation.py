@@ -3,8 +3,8 @@
 Workflow order (primary):
   Arbeitsbereich → Profile → Konfigurationen → Zur Prüfung
 
-Advanced / secondary:
-  Erweiterte Einstellungen (developer / diagnose readiness)
+Developer / diagnosis (not a user settings page):
+  Entwickler / Diagnose — secondary, typically hidden unless dev defaults.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ DAILY_NAV = (
     (NAV_REVIEW, "Zur Prüfung", ft.Icons.FACT_CHECK_OUTLINED),
 )
 
-# Secondary / advanced — not a core workflow step.
+# Not a normal user settings page — developer/diagnose only.
 ADMIN_NAV = (
-    (NAV_SETTINGS, "Erweiterte Einstellungen", ft.Icons.SETTINGS_OUTLINED),
+    (NAV_SETTINGS, "Entwickler / Diagnose", ft.Icons.BUG_REPORT_OUTLINED),
 )
 
 ALL_NAV_ITEMS = (*DAILY_NAV, *ADMIN_NAV)
@@ -35,4 +35,4 @@ ALL_NAV_IDS = tuple(nav_id for nav_id, _, _ in ALL_NAV_ITEMS)
 
 # Group labels for sidebar (shell).
 NAV_GROUP_WORKFLOW = "NUTZERFLUSS"
-NAV_GROUP_ADVANCED = "ERWEITERT"
+NAV_GROUP_ADVANCED = "ENTWICKLER"

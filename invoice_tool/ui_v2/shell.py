@@ -7,6 +7,8 @@ from typing import Callable
 
 import flet as ft
 
+from invoice_tool.ui_v2.components import make_expansion_tile
+from invoice_tool.ui_v2.dev_defaults import is_track_b_dev_defaults_enabled
 from invoice_tool.ui_v2.navigation import (
     ADMIN_NAV,
     DAILY_NAV,
@@ -27,15 +29,16 @@ from invoice_tool.ui_v2.theme import (
     COLOR_SIDEBAR_TEXT_HOVER,
     NAV_WIDTH,
 )
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import MENU_COMPACT_ROW_MARKER
 
 
 def _apply_nav_style(container: ft.Container, *, active: bool) -> None:
-    container.border_radius = 6
+    container.border_radius = 4
     container.border = ft.Border(
         left=ft.BorderSide(3, COLOR_PRIMARY if active else ft.Colors.TRANSPARENT),
     )
     container.bgcolor = COLOR_SIDEBAR_ACCENT_BG if active else None
-    container.padding = ft.Padding.only(left=5 if active else 8, top=6, bottom=6, right=8)
+    container.padding = ft.Padding.only(left=5 if active else 8, top=3, bottom=3, right=8)
     tile = container.content
     if not isinstance(tile, ft.ListTile):
         return
@@ -100,14 +103,17 @@ def _nav_group(
     for nav_id, label, icon_name in items:
         item = ft.Container(
             key=f"nav-{nav_id}",
-            border_radius=6,
-            margin=ft.Margin.only(bottom=1),
-            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+            border_radius=4,
+            margin=ft.Margin.only(bottom=0),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=2),
             border=ft.Border(left=ft.BorderSide(3, ft.Colors.TRANSPARENT)),
+            data=MENU_COMPACT_ROW_MARKER,
             content=ft.ListTile(
-                leading=ft.Icon(icon_name, size=14),
-                title=ft.Text(label, size=13),
+                leading=ft.Icon(icon_name, size=13),
+                title=ft.Text(label, size=12),
                 dense=True,
+                visual_density=ft.VisualDensity.COMPACT,
+                content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
                 on_click=lambda _e, nid=nav_id: on_navigate(nid),
             ),
         )
@@ -115,7 +121,7 @@ def _nav_group(
         _wire_nav_hover(item, active=(nav_id == active_nav))
         nav_items[nav_id] = item
         nav_controls.append(item)
-    return ft.Column(nav_controls, spacing=0), nav_items
+    return ft.Column(nav_controls, spacing=0, tight=True), nav_items
 
 
 def _build_sidebar(
@@ -127,6 +133,35 @@ def _build_sidebar(
     admin_group, admin_items = _nav_group(ADMIN_NAV, active_nav=active_nav, on_navigate=on_navigate)
     nav_items = {**daily_items, **admin_items}
 
+    # Developer diagnosis is never primary — always collapsed/secondary.
+    # Remains in the tree so advanced access stays possible without looking like settings.
+    _ = is_track_b_dev_defaults_enabled  # reserved for future stricter gating
+    column_controls: list[ft.Control] = [
+        ft.Container(
+            padding=ft.Padding.symmetric(horizontal=8),
+            content=_nav_group_label(NAV_GROUP_WORKFLOW),
+        ),
+        ft.Container(height=2),
+        daily_group,
+        ft.Container(height=10),
+        make_expansion_tile(
+            title=ft.Text(
+                NAV_GROUP_ADVANCED,
+                size=10,
+                weight=ft.FontWeight.W_600,
+                color=COLOR_SIDEBAR_GROUP,
+            ),
+            initially_expanded=False,
+            controls=[
+                ft.Container(
+                    padding=ft.Padding.only(left=4, right=4, bottom=4),
+                    content=admin_group,
+                )
+            ],
+            data="nav_dev_diagnose_collapsed_secondary",
+        ),
+    ]
+
     sidebar = ft.Container(
         key="ui-v2-sidebar",
         width=NAV_WIDTH,
@@ -135,7 +170,7 @@ def _build_sidebar(
         content=ft.Column(
             [
                 ft.Container(
-                    padding=ft.Padding.all(16),
+                    padding=ft.Padding.all(14),
                     border=ft.Border(bottom=ft.BorderSide(1, COLOR_SIDEBAR_BORDER)),
                     content=ft.Text(
                         PRODUCT_DISPLAY_NAME,
@@ -146,29 +181,19 @@ def _build_sidebar(
                 ),
                 ft.Container(
                     expand=True,
-                    padding=ft.Padding.only(left=8, right=8, top=14, bottom=14),
+                    padding=ft.Padding.only(left=8, right=8, top=10, bottom=10),
                     content=ft.Column(
-                        [
-                            ft.Container(
-                                padding=ft.Padding.symmetric(horizontal=8),
-                                content=_nav_group_label(NAV_GROUP_WORKFLOW),
-                            ),
-                            ft.Container(height=3),
-                            daily_group,
-                            ft.Container(height=24),
-                            ft.Container(
-                                padding=ft.Padding.symmetric(horizontal=8),
-                                content=_nav_group_label(NAV_GROUP_ADVANCED),
-                            ),
-                            ft.Container(height=3),
-                            admin_group,
-                        ],
+                        column_controls,
                         scroll=ft.ScrollMode.AUTO,
+                        spacing=0,
+                        tight=True,
                     ),
                 ),
             ],
             expand=True,
+            spacing=0,
         ),
+        data=MENU_COMPACT_ROW_MARKER,
     )
     return sidebar, nav_items
 

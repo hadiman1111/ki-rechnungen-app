@@ -154,7 +154,12 @@ def test_03_settings_is_secondary() -> None:
 
 
 def test_04_workspace_section_order_profil_config_ordner_lauf() -> None:
-    assert WORKSPACE_IA_SECTION_ORDER == ("Profil", "Konfiguration", "Ordner", "Lauf")
+    assert WORKSPACE_IA_SECTION_ORDER == (
+        "Profil",
+        "Konfiguration",
+        "Ordner",
+        "Belege prüfen",
+    )
     src = WORKSPACE.read_text(encoding="utf-8")
     assert src.index("profile_card = _workspace_profile_card") < src.index(
         "configuration_card = _workspace_configuration_card"
@@ -168,7 +173,7 @@ def test_05_active_profile_card_at_top() -> None:
     assert "_workspace_profile_card" in src
     assert "workspace_profile_card" in src
     assert "ACTION_CHANGE_PROFILE" in src
-    assert ACTION_CHANGE_PROFILE == "Profil ändern"
+    assert ACTION_CHANGE_PROFILE == "Bearbeiten"
 
 
 def test_06_active_configuration_card_below_profile() -> None:
@@ -189,7 +194,7 @@ def test_08_konfigurationen_bearbeiten_navigates() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "_navigate_to_configurations" in src
     assert "ACTION_EDIT_CONFIGURATIONS" in src
-    assert ACTION_EDIT_CONFIGURATIONS == "Konfigurationen bearbeiten"
+    assert ACTION_EDIT_CONFIGURATIONS == "Bearbeiten"
 
 
 def test_09_input_folder_checkmark() -> None:
@@ -222,7 +227,7 @@ def test_13_start_action_directly_after_folders() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert src.index("folder_selection_panel") < src.index("run_start_panel")
     assert "MSG_START_HELPER" in src
-    assert MSG_START_HELPER.startswith("Es wird nichts final geschrieben")
+    assert MSG_START_HELPER.startswith("Nur Vorschau")
 
 
 def test_14_pilot_status_not_primary() -> None:

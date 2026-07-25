@@ -42,7 +42,7 @@ PRIVATE_MARKERS = (
 def test_settings_navigation_item_exists() -> None:
     labels = {label for _, label, _ in ALL_NAV_ITEMS}
     ids = {nav_id for nav_id, _, _ in ALL_NAV_ITEMS}
-    assert any("Einstellungen" in label for label in labels)
+    assert any("Diagnose" in label or "Entwickler" in label for label in labels)
     assert NAV_SETTINGS in ids
     assert NAV_SETTINGS == "einstellungen"
     # Settings must not appear as a primary workflow step between core pages.
@@ -53,7 +53,7 @@ def test_settings_navigation_item_exists() -> None:
 
 def test_settings_page_generic_sections() -> None:
     vm = build_settings_page_vm(UiV2State())
-    assert "Einstellungen" in vm.title
+    assert "Diagnose" in vm.title or "Entwickler" in vm.title
     section_titles = {section.title for section in vm.sections}
     assert section_titles == {
         "Allgemein",

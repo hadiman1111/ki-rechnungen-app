@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 import flet as ft
 
@@ -617,6 +617,56 @@ def compact_hint_block(*hints: str, title: str = "Hinweise") -> ft.Container:
     )
 
 
+def make_expansion_tile(
+    *,
+    title: ft.Control | str,
+    controls: list[ft.Control],
+    subtitle: ft.Control | str | None = None,
+    initially_expanded: bool = False,
+    dense: bool = True,
+    data: Any = None,
+) -> ft.Control:
+    """ExpansionTile compatible with Flet 0.85 (`expanded`) and newer (`initially_expanded`)."""
+
+    title_ctrl = (
+        title
+        if isinstance(title, ft.Control)
+        else ft.Text(str(title), size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED, weight=ft.FontWeight.W_600)
+    )
+    subtitle_ctrl = None
+    if subtitle is not None:
+        subtitle_ctrl = (
+            subtitle
+            if isinstance(subtitle, ft.Control)
+            else ft.Text(str(subtitle), size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED)
+        )
+    tile_kwargs: dict = {
+        "title": title_ctrl,
+        "controls": controls,
+        "dense": dense,
+        "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
+        "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
+    }
+    if subtitle_ctrl is not None:
+        tile_kwargs["subtitle"] = subtitle_ctrl
+    if data is not None:
+        tile_kwargs["data"] = data
+    try:
+        return ft.ExpansionTile(**tile_kwargs, initially_expanded=initially_expanded)
+    except TypeError:
+        tile_kwargs.pop("dense", None)
+        try:
+            return ft.ExpansionTile(**tile_kwargs, expanded=initially_expanded)
+        except TypeError:
+            return ft.ExpansionTile(
+                title=title_ctrl,
+                controls=controls,
+                subtitle=subtitle_ctrl,
+                expanded=initially_expanded,
+                data=data,
+            )
+
+
 def collapsible_details(
     *lines: str,
     title: str = "Details anzeigen",
@@ -635,20 +685,12 @@ def collapsible_details(
         spacing=2,
         tight=True,
     )
-    # Flet 0.85 uses `expanded`; newer Flet uses `initially_expanded`.
-    tile_kwargs: dict = {
-        "title": ft.Text(
-            title, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED, weight=ft.FontWeight.W_600
-        ),
-        "controls": [ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
-        "dense": True,
-        "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
-        "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
-    }
-    try:
-        return ft.ExpansionTile(**tile_kwargs, initially_expanded=initially_expanded)
-    except TypeError:
-        return ft.ExpansionTile(**tile_kwargs, expanded=initially_expanded)
+    return make_expansion_tile(
+        title=title,
+        controls=[ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
+        initially_expanded=initially_expanded,
+        dense=True,
+    )
 
 
 def compact_run_status_panel(

@@ -18,6 +18,7 @@ from invoice_tool.ui_v2.adapters.profile_write_adapter import (
     save_profile_changes,
 )
 from invoice_tool.ui_v2.components import (
+    make_expansion_tile,
     collapsible_details,
     compact_info_row,
     compact_list_item,
@@ -77,11 +78,15 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_EDIT_PROFILE_CONFIGS,
     ACTION_RENAME_PROFILE,
     IA_CLEANUP_LAYOUT_MARKER,
+    LABEL_ACTIVE_EXPLAIN,
     LABEL_ACTIVE_STATUS,
     LABEL_NEW_PROFILE_NAME,
     MSG_PROFILE_DRAFT_CURRENT,
     PROFILE_PAGE_EXPLANATION,
+    SECOND_UX_CLEANUP_MARKER,
     SECTION_ADVANCED_PROFILE,
+    SECTION_DEV_DIAGNOSE,
+    SECTION_IMPORT_EXPORT_ADVANCED,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS
 from invoice_tool.ui_v2.validation import validate_profile_name, validate_scan_model_id
@@ -345,10 +350,14 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
         ft.Text("Aktives Profil", size=12, color="#6B7280"),
         ft.Text(active_name or "—", size=22, weight=ft.FontWeight.W_700),
         ft.Text(LABEL_ACTIVE_STATUS, size=12, color="#15803D"),
+        ft.Text(LABEL_ACTIVE_EXPLAIN, size=11, color="#6B7280"),
         compact_info_row("Konfigurationen", str(profile.configuration_count)),
-        compact_info_row("Aktiv", str(profile.active_configuration_count)),
+        compact_info_row("Aktive Konfigurationen", str(profile.active_configuration_count)),
     )
-    active_summary.data = f"profiles_active_summary|{IA_CLEANUP_LAYOUT_MARKER}"
+    active_summary.data = (
+        f"profiles_active_summary|{IA_CLEANUP_LAYOUT_MARKER}|"
+        f"{SECOND_UX_CLEANUP_MARKER}|slim_summary_band"
+    )
     if missing_targets > 0:
         # Only show when meaningful; destination may be structured — keep soft.
         pass
@@ -358,23 +367,26 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             "Profile",
             subtitle=PROFILE_PAGE_EXPLANATION,
             trailing=action_button(
-                SAAS_SURFACE_UI_LABELS["new_profile"],
+                ACTION_CREATE_PROFILE,
                 on_click=lambda _e: _start_create(),
                 primary=True,
             ),
         ),
-        ft.Text(PROFILE_PAGE_EXPLANATION, size=13),
         active_summary,
         ft.Row(
             [
+                action_button(
+                    ACTION_CREATE_PROFILE,
+                    on_click=lambda _e: _start_create(),
+                    primary=True,
+                ),
                 action_button(
                     ACTION_RENAME_PROFILE,
                     on_click=lambda _e: _start_edit(active_id) if active_id else _start_create(),
                 ),
                 action_button(
-                    SAAS_SURFACE_UI_LABELS["new_profile"],
-                    on_click=lambda _e: _start_create(),
-                    primary=True,
+                    "Bearbeiten",
+                    on_click=lambda _e: _start_edit(active_id) if active_id else _start_create(),
                 ),
                 action_button(
                     ACTION_EDIT_PROFILE_CONFIGS,
@@ -385,7 +397,7 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             wrap=True,
         ),
         collapsible_details(
-            "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung.",
+            "Regeln ordnen Dokumente zu; unklare Dokumente bleiben zur Prüfung.",
             MSG_PROFILES_CONTAIN_RULES,
             MSG_PAYMENT_BUSINESS_PER_PROFILE,
             MSG_WITHOUT_EVIDENCE_REVIEW,
@@ -534,52 +546,66 @@ def build_profiles_page(state: UiV2State) -> ft.Control:
             )
         _refresh()
 
-    # Draft / import-export / persistence — advanced only (not primary profile UI).
+    # Draft / import-export / persistence — collapsed developer area only.
     selected_rename = ""
     for item in state.list_saas_drafts():
         if item.draft_id == state.saas_selected_draft_id:
             selected_rename = item.display_name
             break
     items.append(
-        collapsible_details(
-            MSG_PROFILE_DRAFT_CURRENT,
-            "Lokale Entwürfe, Import und Export gehören zur erweiterten Diagnose.",
-            title=SECTION_ADVANCED_PROFILE,
-        )
-    )
-    # Keep functionality available but visually secondary.
-    items.append(build_saas_persistence_status_panel(state.saas_persistence_status_vm()))
-    items.append(
-        build_saas_draft_list_panel(
-            state.saas_draft_list_vm(),
-            on_select=_select_saas_draft,
-            on_new=lambda: _create_saas_draft_local(),
-            on_load=lambda: _load_saas_draft_local(),
-            on_save=lambda: _save_saas_draft_local(),
-            on_rename=_rename_saas_draft_local,
-            on_delete=_delete_saas_draft_local,
-            on_export=_export_saas_draft_local,
-            on_import=_import_saas_draft_local,
-            rename_value=selected_rename,
-        )
-    )
-    items.append(
-        ft.Row(
-            [
-                action_button("Entwurf lokal speichern", on_click=_save_saas_draft_local),
-                action_button("Entwurf lokal laden", on_click=_load_saas_draft_local),
+        make_expansion_tile(
+            title=ft.Text(
+                SECTION_IMPORT_EXPORT_ADVANCED,
+                size=12,
+                weight=ft.FontWeight.W_600,
+            ),
+            subtitle=ft.Text(
+                f"{MSG_PROFILE_DRAFT_CURRENT} — {SECTION_DEV_DIAGNOSE}",
+                size=11,
+            ),
+            initially_expanded=False,
+            controls=[
+                ft.Container(
+                    padding=ft.Padding.only(left=4, right=4, bottom=8),
+                    content=ft.Column(
+                        [
+                            build_saas_persistence_status_panel(
+                                state.saas_persistence_status_vm()
+                            ),
+                            build_saas_draft_list_panel(
+                                state.saas_draft_list_vm(),
+                                on_select=_select_saas_draft,
+                                on_new=lambda: _create_saas_draft_local(),
+                                on_load=lambda: _load_saas_draft_local(),
+                                on_save=lambda: _save_saas_draft_local(),
+                                on_rename=_rename_saas_draft_local,
+                                on_delete=_delete_saas_draft_local,
+                                on_export=_export_saas_draft_local,
+                                on_import=_import_saas_draft_local,
+                                rename_value=selected_rename,
+                            ),
+                            ft.Row(
+                                [
+                                    action_button(
+                                        "Entwurf lokal speichern",
+                                        on_click=_save_saas_draft_local,
+                                    ),
+                                    action_button(
+                                        "Entwurf lokal laden",
+                                        on_click=_load_saas_draft_local,
+                                    ),
+                                ],
+                                spacing=SPACE_SM,
+                                wrap=True,
+                            ),
+                        ],
+                        spacing=8,
+                        tight=True,
+                    ),
+                    data=f"profiles_drafts_not_primary|{SECOND_UX_CLEANUP_MARKER}",
+                )
             ],
-            spacing=SPACE_SM,
-            wrap=True,
-        )
-    )
-
-    items.append(
-        kpi_strip(
-            ("Profile", str(len(profile.profiles)), False),
-            ("Aktives Profil", snapshot.profile.profile_name, False),
-            ("Konfigurationen", str(profile.configuration_count), False),
-            ("Aktive Regeln", str(profile.active_configuration_count), False),
+            data=f"{SECTION_ADVANCED_PROFILE}|not_primary|{SECOND_UX_CLEANUP_MARKER}",
         )
     )
 

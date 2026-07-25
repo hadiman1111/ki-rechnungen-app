@@ -26,11 +26,17 @@ REVIEW_ACCORDION_LAYOUT_MARKER = "track_b_review_accordion_layout_v1"
 REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
 REVIEW_CLARIFICATION_MARKER = "track_b_review_clarification_mode_v1"
 IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
+SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
+MENU_COMPACT_ROW_MARKER = "menu_compact_row_spacing_v2"
+WORKSPACE_SHARED_SUMMARY_MARKER = "workspace_profile_config_shared_summary_v2"
+WORKSPACE_FILE_PAIR_MARKER = "workspace_input_output_file_pairs_v2"
+WORKSPACE_CTA_PRIMARY_MARKER = "workspace_run_cta_primary_v2"
+REVIEW_DOCUMENT_PREVIEW_MARKER = "review_document_preview_open_non_mutating_v2"
 WORKSPACE_IA_SECTION_ORDER = (
     "Profil",
     "Konfiguration",
     "Ordner",
-    "Lauf",
+    "Belege prüfen",
 )
 REVIEW_CARD_COLLAPSED_SUMMARY_ONLY = "review_card_collapsed_summary_only"
 REVIEW_CARD_ACTIVE_HIGHLIGHT = "review_card_active_highlight"
@@ -43,21 +49,29 @@ FILENAME_EDIT_SECONDARY_MARKER = "filename_edit_secondary_not_primary"
 CLEAN_USER_FILENAME_MARKER = "clean_user_facing_filename_no_internal_prefix"
 
 # Workspace / IA user-facing actions
-ACTION_CHANGE_PROFILE = "Profil ändern"
-ACTION_EDIT_CONFIGURATIONS = "Konfigurationen bearbeiten"
+ACTION_WORKSPACE_EDIT = "Bearbeiten"
+ACTION_CHANGE_PROFILE = ACTION_WORKSPACE_EDIT
+ACTION_EDIT_CONFIGURATIONS = ACTION_WORKSPACE_EDIT
 ACTION_OPEN_REVIEW = "Zur Prüfung öffnen"
 ACTION_CREATE_PROFILE = "Profil erstellen"
 ACTION_CREATE_CONFIGURATION = "Konfiguration erstellen"
 ACTION_SAVE_CONFIGURATION = "Konfiguration speichern"
 ACTION_RENAME_PROFILE = "Profil umbenennen"
+ACTION_NEW_CONFIGURATION = "Neue Konfiguration erstellen"
+ACTION_SHOW_DOCUMENT = "Dokument anzeigen"
 LABEL_ACTIVE_STATUS = "Aktiv"
+LABEL_ACTIVE_EXPLAIN = "aktiv = wird bei der Prüfung verwendet"
 LABEL_WORKSPACE_PROFILE = "Profil"
 LABEL_WORKSPACE_CONFIGURATION = "Konfiguration"
 LABEL_INPUT_FOLDER = "Eingangsordner"
 LABEL_OUTPUT_FOLDER = "Ausgangsordner"
-MSG_START_HELPER = (
-    "Es wird nichts final geschrieben. Originale bleiben unverändert."
-)
+LABEL_INPUT_FILES = "Eingangsdateien"
+LABEL_PROPOSED_OUTPUT_FILES = "Vorgeschlagene Ausgabedateien"
+LABEL_ORIGINAL_FILE = "Originaldatei"
+LABEL_PROPOSED_FILENAME = "Vorgeschlagener Dateiname"
+LABEL_NO_PROPOSAL_YET = "Noch kein Vorschlag"
+MSG_NO_RESULT_YET = "Noch kein Ergebnis vorhanden."
+MSG_START_HELPER = "Nur Vorschau — Originale bleiben unverändert."
 MSG_RUN_ACTIVITY = "Prüfung läuft…"
 MSG_FILENAME_FOLLOWS_SCHEMA = (
     "Der Dateiname folgt einem festen Schema. Bitte ergänze fehlende Merkmale."
@@ -80,6 +94,11 @@ MSG_MISSING_TARGETS_FILTER = (
 )
 ACTION_EDIT_PROFILE_CONFIGS = "Konfigurationen dieses Profils bearbeiten"
 LABEL_NEW_PROFILE_NAME = "Name des neuen Profils"
+PICK_INPUT_FOLDER_CHOOSE = "Eingangsordner wählen"
+PICK_INPUT_FOLDER_CHANGE = "Eingangsordner ändern"
+PICK_OUTPUT_FOLDER_CHOOSE = "Ausgangsordner wählen"
+PICK_OUTPUT_FOLDER_CHANGE = "Ausgangsordner ändern"
+START_CTA_STRONG = "Belege jetzt prüfen"
 
 ACTION_DETAILS_OPEN = "Details öffnen"
 ACTION_DETAILS_CLOSE = "Details schließen"
@@ -94,9 +113,7 @@ ACTION_ADD_PAYMENT = "Zahlungsart ergänzen"
 ACTION_CREATE_CARD_RULE = "Kartenregel anlegen"
 SECTION_GUIDED_STATUS = "Status & Empfehlung"
 SECTION_TEST_TOOLS = "Test & Nachweis"
-MSG_GUIDED_SAFETY_LINE = (
-    "Nur Vorschau — es wird nichts final geschrieben. Originale bleiben unverändert."
-)
+MSG_GUIDED_SAFETY_LINE = "Nur Vorschau — Originale bleiben unverändert."
 MSG_GUIDED_STATUS_REVIEW = "Dieses Dokument bleibt zur Prüfung."
 MSG_GUIDED_REC_NOT_AMEX = "Nicht als American Express zuordnen."
 MSG_GUIDED_REC_STORNO = "Bitte Betrag, Datum und Zahlungsart prüfen."
@@ -134,11 +151,10 @@ LABEL_DATEINAME_BEARBEITEN = "Dateiname bearbeiten"
 ACTION_COPY_FILENAME = "Dateiname kopieren"
 # Marker proving the editable preview filename control is full-width / no-clip.
 FILENAME_FIELD_POLISH_MARKER = "track_b_preview_filename_full_width_no_clip_v1"
-MSG_NO_READY_CASES = "Noch keine Fälle bereit."
-MSG_NO_REVIEW_CASES = "Keine offenen Prüffälle."
-MSG_USER_REVIEW_SUBTITLE = (
-    "Einfache Prüfung: erkennen, entscheiden, Vorschau — ohne Technikjargon."
-)
+MSG_NO_READY_CASES = "Noch keine bereiten Dokumente."
+MSG_NO_REVIEW_CASES = "Keine Dokumente zur Prüfung."
+MSG_USER_REVIEW_SUBTITLE = "Dokumente prüfen und entscheiden."
+MSG_REVIEW_SAFETY_ONCE = "Nur Vorschau — Originale bleiben unverändert."
 
 # Simple user review questions (primary surface).
 SECTION_ERKANNT = "Was wurde erkannt?"
@@ -146,9 +162,12 @@ SECTION_UNKLAR = "Was ist unklar?"
 SECTION_DATEINAME = "Was schlägt die App vor?"
 SECTION_ENTSCHEIDEN = "Was muss ich entscheiden?"
 SECTION_FINAL_WRITE_Q = "Finalisierung / Vorschau-Sicherheit"
-SECTION_BEREIT = "Welche Fälle sind bereit?"
-SECTION_PRUEFUNG = "Welche Fälle bleiben zur Prüfung?"
+SECTION_BEREIT = "Bereite Dokumente"
+SECTION_PRUEFUNG = "Dokumente zur Prüfung"
 SECTION_TECHNISCHE = "Technische Details"
+FILTER_ALL_DOCS = "Alle"
+FILTER_REVIEW_DOCS = "Zur Prüfung"
+FILTER_READY_DOCS = "Bereit"
 
 # Compatibility aliases for declutter-era imports / tests.
 SECTION_KURZPRUEFUNG = SECTION_ERKANNT
@@ -241,6 +260,17 @@ def smart_path_display(raw: str, *, max_chars: int = 64) -> str:
     if len(text) <= max_chars:
         return text
     return "…" + text[-(max_chars - 1) :]
+
+
+def truncate_filename_display(name: str, *, max_chars: int = 48) -> str:
+    """Truncate long filenames visually at the end; keep full name for tooltip/data."""
+
+    text = str(name or "").strip()
+    if not text:
+        return "—"
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
 
 ACTION_PAYPAL_SAVE_RERUN = "PayPal-Regel speichern und Matching neu berechnen"
 ACTION_ACCEPT_SUGGESTION = "Vorschlag akzeptieren"
@@ -821,11 +851,14 @@ __all__ = (
     "ACTION_KEEP_IN_REVIEW_GUIDED",
     "ACTION_KEEP_UNCLEAR",
     "ACTION_KEEP_UNCLEAR_GUIDED",
+    "ACTION_NEW_CONFIGURATION",
     "ACTION_OPEN_REVIEW",
     "ACTION_OPEN_WORKSPACE",
     "ACTION_PAYPAL_SAVE_RERUN",
     "ACTION_RENAME_PROFILE",
     "ACTION_SAVE_CONFIGURATION",
+    "ACTION_SHOW_DOCUMENT",
+    "ACTION_WORKSPACE_EDIT",
     "BADGE_BLOCKED",
     "BADGE_MISSING_PAYMENT",
     "BADGE_NOT_AMEX",
@@ -848,11 +881,17 @@ __all__ = (
     "IA_CLEANUP_LAYOUT_MARKER",
     "INLINE_DETAIL_UNDER_SELECTED_CARD",
     "INTERNAL_FILENAME_PREFIXES",
+    "LABEL_ACTIVE_EXPLAIN",
     "LABEL_ACTIVE_STATUS",
     "LABEL_DATEINAME_BEARBEITEN",
+    "LABEL_INPUT_FILES",
     "LABEL_INPUT_FOLDER",
     "LABEL_NEW_PROFILE_NAME",
+    "LABEL_NO_PROPOSAL_YET",
+    "LABEL_ORIGINAL_FILE",
     "LABEL_OUTPUT_FOLDER",
+    "LABEL_PROPOSED_FILENAME",
+    "LABEL_PROPOSED_OUTPUT_FILES",
     "LABEL_REVIEW_AMOUNT",
     "LABEL_REVIEW_DATE",
     "LABEL_REVIEW_DOC_NAME",
@@ -860,6 +899,10 @@ __all__ = (
     "LABEL_VORSCHAU_DATEINAME",
     "LABEL_WORKSPACE_CONFIGURATION",
     "LABEL_WORKSPACE_PROFILE",
+    "MENU_COMPACT_ROW_MARKER",
+    "FILTER_ALL_DOCS",
+    "FILTER_READY_DOCS",
+    "FILTER_REVIEW_DOCS",
     "MSG_CLARIFICATION_STATUS",
     "MSG_ER_ER_NOTE",
     "MSG_FILENAME_FOLLOWS_SCHEMA",
@@ -871,15 +914,21 @@ __all__ = (
     "MSG_MISSING_TARGETS_CONFIG",
     "MSG_MISSING_TARGETS_FILTER",
     "MSG_NO_READY_CASES",
+    "MSG_NO_RESULT_YET",
     "MSG_NO_REVIEW_CASES",
     "MSG_ORACLE_AVAILABLE",
     "MSG_ORACLE_NO_AUTO_RUN",
     "MSG_PROFILE_DRAFT_CURRENT",
     "MSG_PROFILE_DRAFT_UNSAVED",
+    "MSG_REVIEW_SAFETY_ONCE",
     "MSG_RUN_ACTIVITY",
     "MSG_SAFETY_LINE_NO_FINAL",
     "MSG_START_HELPER",
     "MSG_USER_REVIEW_SUBTITLE",
+    "PICK_INPUT_FOLDER_CHANGE",
+    "PICK_INPUT_FOLDER_CHOOSE",
+    "PICK_OUTPUT_FOLDER_CHANGE",
+    "PICK_OUTPUT_FOLDER_CHOOSE",
     "MSG_WHY_GENERIC",
     "MSG_WHY_MISSING_CATEGORY",
     "MSG_WHY_MISSING_PAYMENT",
@@ -899,10 +948,16 @@ __all__ = (
     "REVIEW_CARD_COLLAPSED_SUMMARY_ONLY",
     "REVIEW_CLARIFICATION_MARKER",
     "REVIEW_DECLUTTER_LAYOUT_MARKER",
+    "REVIEW_DOCUMENT_PREVIEW_MARKER",
     "REVIEW_GUIDED_LAYOUT_MARKER",
     "REVIEW_SECTION_TITLES",
     "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
+    "SECOND_UX_CLEANUP_MARKER",
+    "START_CTA_STRONG",
+    "WORKSPACE_CTA_PRIMARY_MARKER",
+    "WORKSPACE_FILE_PAIR_MARKER",
+    "WORKSPACE_SHARED_SUMMARY_MARKER",
     "SECTION_ADVANCED_CONFIG",
     "SECTION_ADVANCED_HINTS",
     "SECTION_ADVANCED_PROFILE",
@@ -933,6 +988,7 @@ __all__ = (
     "case_summary_line",
     "clean_user_facing_filename",
     "copy_text_to_state_and_clipboard",
+    "truncate_filename_display",
     "derive_decision_prompt",
     "derive_guided_status_lines",
     "derive_primary_decision_action",

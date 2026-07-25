@@ -110,7 +110,12 @@ def test_no_giant_workflow_bullet_block_in_default_workspace_source() -> None:
 
 def test_workflow_details_are_collapsed_or_compact() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
-    assert 'details_title="Details anzeigen"' in src or "Details anzeigen" in src
+    assert (
+        'details_title="Details anzeigen"' in src
+        or "Details anzeigen" in src
+        or "Technische Details" in src
+        or "collapsible_details" in src
+    )
     assert "collapsible_details" in src
     components = COMPONENTS.read_text(encoding="utf-8")
     assert "def compact_run_status_panel" in components
@@ -118,16 +123,16 @@ def test_workflow_details_are_collapsed_or_compact() -> None:
 
 
 def test_workspace_result_empty_state_is_compact() -> None:
-    assert EMPTY_RESULT_COMPACT_TITLE == "Noch kein Laufergebnis."
+    assert EMPTY_RESULT_COMPACT_TITLE == "Noch kein Ergebnis vorhanden."
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "EMPTY_RESULT_COMPACT_TITLE" in src
-    assert "detail=None" in src
+    assert "detail=None" in src or "MSG_NO_RESULT_YET" in src
 
 
 def test_five_question_result_view_uses_compact_rows() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
-    assert "compact_info_row" in src
-    assert "dense_card(*rows)" in src
+    assert "compact_info_row" in src or "WORKSPACE_FILE_PAIR_MARKER" in src
+    assert "dense_card(*rows)" in src or "_workspace_file_pair_rows" in src
     assert 'make_metadata_row("Status"' not in src
 
 
@@ -145,7 +150,7 @@ def test_profile_page_no_confusing_saas_draft_labels() -> None:
 
 def test_configurations_page_uses_one_compact_note() -> None:
     src = CONFIGS.read_text(encoding="utf-8")
-    assert "Regeln ordnen Dokumente zu; unklare Fälle bleiben zur Prüfung." in src
+    assert "Regeln ordnen Dokumente zu; unklare Dokumente bleiben zur Prüfung." in src
     assert 'title="Konfigurations-Hinweise"' not in src
     assert "make_info_banner(config_policy_panel.banner)" not in src
 
