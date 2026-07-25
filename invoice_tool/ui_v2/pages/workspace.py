@@ -116,7 +116,10 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     SECOND_UX_CLEANUP_MARKER,
     SECTION_DEV_DIAGNOSE,
     SECTION_TEST_NACHWEIS_COLLAPSED,
+    START_CTA_HEIGHT_PX,
     START_CTA_STRONG,
+    WORKSPACE_CTA_BLACK_PRIMARY_MARKER,
+    WORKSPACE_CTA_DISABLED_MARKER,
     WORKSPACE_CTA_PRIMARY_MARKER,
     WORKSPACE_DOCUMENT_SHOW_MARKER,
     WORKSPACE_FILE_PAIR_MARKER,
@@ -132,9 +135,20 @@ from invoice_tool.ui_v2.workspace_input_listing import (
     refresh_workspace_input_listing_on_state,
 )
 from invoice_tool.ui_v2.workspace_file_pairs import (
+    EYE_ICON_HIT_SIZE,
+    EYE_ICON_LIGHT_MARKER,
+    EYE_ICON_SIZE,
     LIVE_FILE_PAIRS_MARKER,
     LIVE_PROPOSAL_UPDATE_MARKER,
     MSG_PAIR_STATUS_INTEGRATED,
+    PAIR_ROW_ALIGNED_MARKER,
+    PAIR_ROW_COLUMN_SPACING,
+    PAIR_ROW_DENSITY_MARKER,
+    PAIR_ROW_FONT_SIZE,
+    PAIR_ROW_HEIGHT,
+    PAIR_ROW_HEIGHT_MARKER,
+    PAIR_ROW_PADDING_H,
+    PAIR_ROW_PADDING_V,
     WorkspaceFilePairRow,
     WorkspaceLiveFilePairsVM,
     build_live_file_pairs_vm,
@@ -256,6 +270,11 @@ FOLDER_INPUT_BG = "#EEF6F1"
 FOLDER_OUTPUT_BG = "#EEF2F8"
 FOLDER_INPUT_BORDER = "#B7D7C4"
 FOLDER_OUTPUT_BORDER = "#B8C7E0"
+# Primary CTA — black/white when ready; muted gray when folders missing.
+CTA_PRIMARY_BG = "#111111"
+CTA_PRIMARY_FG = "#FFFFFF"
+CTA_DISABLED_BG = "#D1D5DB"
+CTA_DISABLED_FG = "#6B7280"
 
 # Preferred CTA feedback copy — always visible after click (no silent no-op).
 MSG_RUN_STATUS_READY = "Bereit"
@@ -606,6 +625,53 @@ class _WorkspaceEmbeddedFileLists:
     marker: str
 
 
+def _workspace_primary_cta_button(
+    label: str,
+    *,
+    on_click,
+    disabled: bool,
+) -> ft.Control:
+    """Strong primary CTA — black/white when active, muted when disabled."""
+
+    active = not disabled
+    bgcolor = CTA_PRIMARY_BG if active else CTA_DISABLED_BG
+    fg = CTA_PRIMARY_FG if active else CTA_DISABLED_FG
+    style_marker = (
+        f"{WORKSPACE_CTA_BLACK_PRIMARY_MARKER}|black_bg|white_text|height_{START_CTA_HEIGHT_PX}"
+        if active
+        else f"{WORKSPACE_CTA_DISABLED_MARKER}|muted_disabled|not_active_black"
+    )
+    return ft.FilledButton(
+        content=label,
+        on_click=on_click,
+        disabled=disabled,
+        height=START_CTA_HEIGHT_PX,
+        bgcolor=bgcolor,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=8),
+            padding=ft.Padding.symmetric(horizontal=18, vertical=12),
+            bgcolor={
+                ft.ControlState.DEFAULT: bgcolor,
+                ft.ControlState.DISABLED: CTA_DISABLED_BG,
+                ft.ControlState.HOVERED: bgcolor if active else CTA_DISABLED_BG,
+            },
+            color={
+                ft.ControlState.DEFAULT: fg,
+                ft.ControlState.DISABLED: CTA_DISABLED_FG,
+            },
+            text_style=ft.TextStyle(
+                size=14,
+                weight=ft.FontWeight.W_600,
+                color=fg,
+            ),
+        ),
+        data=(
+            f"{WORKSPACE_CTA_PRIMARY_MARKER}|primary_cta|stronger_than_secondary|"
+            f"{style_marker}|{START_CTA_STRONG}"
+        ),
+    )
+
+
 def _workspace_file_pair_rows(
     *,
     pairs: tuple[tuple[str, str], ...],
@@ -645,7 +711,12 @@ def _workspace_file_pair_rows(
         f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{LIVE_FILE_PAIRS_MARKER}|"
         f"{LIVE_PROPOSAL_UPDATE_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
         f"{IA_CLEANUP_LAYOUT_MARKER}|{WORKSPACE_FOLDER_EMBEDDED_FILES_MARKER}|"
+        f"{PAIR_ROW_ALIGNED_MARKER}|{PAIR_ROW_HEIGHT_MARKER}|{PAIR_ROW_DENSITY_MARKER}|"
         f"secondary_review_cta"
+    )
+    shared_row_style = (
+        f"{PAIR_ROW_ALIGNED_MARKER}|{PAIR_ROW_HEIGHT_MARKER}|{PAIR_ROW_DENSITY_MARKER}|"
+        f"row_height={PAIR_ROW_HEIGHT}|pad_v={PAIR_ROW_PADDING_V}|font={PAIR_ROW_FONT_SIZE}"
     )
 
     def _wrap_column(
@@ -655,9 +726,13 @@ def _workspace_file_pair_rows(
         empty: bool = False,
     ) -> ft.Control:
         return ft.Container(
-            content=ft.Column(controls, spacing=4, tight=True),
+            content=ft.Column(
+                controls,
+                spacing=PAIR_ROW_COLUMN_SPACING,
+                tight=True,
+            ),
             data=(
-                f"{pair_marker}|embedded|{side}"
+                f"{pair_marker}|embedded|{side}|density_match"
                 + ("|empty" if empty else "")
             ),
         )
@@ -749,37 +824,55 @@ def _workspace_file_pair_rows(
         row_border = (
             ft.Border(bottom=ft.BorderSide(1, COLOR_BORDER)) if index < total - 1 else None
         )
+        # Compact eye control (icon-only) — lighter / thinner than a heavy icon button.
+        eye_control = ft.Container(
+            content=ft.Icon(
+                ft.Icons.VISIBILITY_OUTLINED,
+                size=EYE_ICON_SIZE,
+                color=COLOR_TEXT_MUTED,
+            ),
+            width=EYE_ICON_HIT_SIZE,
+            height=EYE_ICON_HIT_SIZE,
+            alignment=ft.Alignment.CENTER,
+            on_click=_on_source_click,
+            ink=True,
+            tooltip=ACTION_SHOW_DOCUMENT,
+            data=(
+                f"file_pair_show_document|eye|icon_only|light|{EYE_ICON_LIGHT_MARKER}|"
+                f"size={EYE_ICON_SIZE}|{ACTION_SHOW_DOCUMENT}|"
+                f"{WORKSPACE_DOCUMENT_SHOW_MARKER}|non_mutating"
+            ),
+        )
         source_row = ft.Container(
             content=ft.Row(
                 [
                     ft.Text(
                         truncate_filename_display(source_full),
-                        size=13,
+                        size=PAIR_ROW_FONT_SIZE,
                         weight=ft.FontWeight.W_500,
                         tooltip=source_full,
                         expand=True,
+                        no_wrap=True,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
                         data=f"file_pair_source_full|{source_full}",
                     ),
-                    ft.IconButton(
-                        icon=ft.Icons.VISIBILITY_OUTLINED,
-                        icon_size=18,
-                        tooltip=ACTION_SHOW_DOCUMENT,
-                        on_click=_on_source_click,
-                        data=(
-                            f"file_pair_show_document|eye|{ACTION_SHOW_DOCUMENT}|"
-                            f"{WORKSPACE_DOCUMENT_SHOW_MARKER}|non_mutating"
-                        ),
-                    ),
+                    eye_control,
                 ],
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.Padding.symmetric(vertical=6, horizontal=2),
+            height=PAIR_ROW_HEIGHT,
+            padding=ft.Padding.symmetric(
+                vertical=PAIR_ROW_PADDING_V,
+                horizontal=PAIR_ROW_PADDING_H,
+            ),
+            alignment=ft.Alignment.CENTER_LEFT,
             border=row_border,
             data=(
                 f"workspace_file_pair_row|{index}|input|nav_review|"
                 f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
-                f"source={source_full}|same_row|stable_order"
+                f"{shared_row_style}|source={source_full}|same_row|stable_order"
             ),
         )
         # Single-line status/name keeps output rows aligned with input rows.
@@ -788,31 +881,46 @@ def _workspace_file_pair_rows(
             if has_proposal and status_label and status_label != target_full
             else target_full
         )
+        # Invisible spacer matches eye hit area so left/right geometry stays equal.
+        output_spacer = ft.Container(
+            width=EYE_ICON_HIT_SIZE,
+            height=EYE_ICON_HIT_SIZE,
+            data="pair_row_height_spacer|matches_eye_hit",
+        )
         target_row = ft.Container(
             content=ft.Row(
                 [
                     ft.Text(
                         truncate_filename_display(target_full),
-                        size=13,
+                        size=PAIR_ROW_FONT_SIZE,
                         tooltip=target_tooltip,
                         expand=True,
+                        no_wrap=True,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
                         data=(
                             f"file_pair_target_full|{target_full}|proposed={proposed}|"
                             f"file_pair_row_status|{status_label}"
                         ),
                     ),
+                    output_spacer,
                 ],
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
+            height=PAIR_ROW_HEIGHT,
+            padding=ft.Padding.symmetric(
+                vertical=PAIR_ROW_PADDING_V,
+                horizontal=PAIR_ROW_PADDING_H,
+            ),
+            alignment=ft.Alignment.CENTER_LEFT,
             on_click=_on_target_click,
             ink=True,
-            padding=ft.Padding.symmetric(vertical=6, horizontal=2),
             border=row_border,
             data=(
                 f"workspace_file_pair_row|{index}|output|nav_review|"
                 f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
-                f"source={source_full}|same_row|stable_order"
+                f"{shared_row_style}|source={source_full}|same_row|stable_order"
             ),
         )
         input_controls.append(source_row)
@@ -2498,11 +2606,13 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
             f"{WORKSPACE_FOLDER_EMBEDDED_FILES_MARKER}|{file_pair_panel.marker}"
         ),
     )
+    # Strong black primary CTA only when both folders are selected.
+    cta_disabled = (not input_selected) or (not output_selected) or bool(run_is_active)
     run_controls: list[ft.Control] = [
-        action_button(
+        _workspace_primary_cta_button(
             cta_label,
             on_click=start_processing,
-            primary=True,
+            disabled=cta_disabled,
         ),
         ft.Container(
             content=helper_text(MSG_START_HELPER),
@@ -2522,7 +2632,9 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
         data=(
             f"workspace_run_action|{RUN_ACTION_SECTION_LABEL}|"
             f"{IA_CLEANUP_LAYOUT_MARKER}|{WORKSPACE_CTA_PRIMARY_MARKER}|"
-            f"{SECOND_UX_CLEANUP_MARKER}|primary_cta|secondary_review_cta"
+            f"{WORKSPACE_CTA_BLACK_PRIMARY_MARKER}|{WORKSPACE_CTA_DISABLED_MARKER}|"
+            f"{SECOND_UX_CLEANUP_MARKER}|primary_cta|secondary_review_cta|"
+            f"stronger_than_secondary|height_{START_CTA_HEIGHT_PX}"
         ),
     )
 

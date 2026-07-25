@@ -27,18 +27,30 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     LABEL_INPUT_FILES,
     LABEL_PROPOSED_OUTPUT_FILES,
     MSG_START_HELPER,
+    START_CTA_HEIGHT_PX,
     START_CTA_STRONG,
+    WORKSPACE_CTA_BLACK_PRIMARY_MARKER,
+    WORKSPACE_CTA_DISABLED_MARKER,
+    WORKSPACE_CTA_PRIMARY_MARKER,
     WORKSPACE_DOCUMENT_SHOW_MARKER,
     WORKSPACE_FILE_PAIR_MARKER,
     WORKSPACE_LIVE_FILE_PAIRS_MARKER,
 )
 from invoice_tool.ui_v2.workspace_file_pairs import (
+    EYE_ICON_LIGHT_MARKER,
+    EYE_ICON_SIZE,
     JUST_IN_TIME_STATUS,
     LIVE_FILE_PAIRS_MARKER,
     MSG_NEED_OUTPUT_FOLDER,
     MSG_NOT_CHECKED,
     MSG_PROPOSAL_CREATED,
     MSG_ROW_CHECKING,
+    PAIR_ROW_ALIGNED_MARKER,
+    PAIR_ROW_DENSITY_MARKER,
+    PAIR_ROW_FONT_SIZE,
+    PAIR_ROW_HEIGHT,
+    PAIR_ROW_HEIGHT_MARKER,
+    PAIR_ROW_PADDING_V,
     build_live_file_pairs_vm,
     merge_input_names_with_proposal_sources,
 )
@@ -425,8 +437,17 @@ def test_24_document_show_action() -> None:
     src = _ws_src()
     assert "ACTION_SHOW_DOCUMENT" in src
     assert "file_pair_show_document" in src
-    assert "VISIBILITY_OUTLINED" in src or "IconButton" in src
+    assert "VISIBILITY_OUTLINED" in src
     assert "eye" in src
+    assert "icon_only" in src
+    assert "EYE_ICON_LIGHT_MARKER" in src
+    assert EYE_ICON_LIGHT_MARKER == "workspace_eye_icon_light_v1"
+    # Eye action is icon-only (tooltip may still use ACTION_SHOW_DOCUMENT).
+    pair_fn = src.split("def _workspace_file_pair_rows")[1].split(
+        "def _workspace_result_summary"
+    )[0]
+    assert "ft.TextButton" not in pair_fn
+    assert "ft.IconButton" not in pair_fn
 
 
 def test_25_document_preview_non_mutating(tmp_path: Path) -> None:
@@ -645,3 +666,96 @@ def test_45_output_folder_selection_does_not_clear_input(tmp_path: Path) -> None
     apply_workspace_output_folder_selection(state, str(out))
     assert state.workspace_input_filenames == ("x.pdf",)
     assert state.workspace_output_folder_override == str(out)
+
+
+# --- File-pair UI polish (alignment / density / eye / primary CTA) ---
+
+
+def test_46_shared_pair_row_height_and_alignment_markers() -> None:
+    src = _ws_src()
+    pairs = _pairs_src()
+    assert PAIR_ROW_HEIGHT_MARKER == "workspace_pair_row_height_shared_v1"
+    assert PAIR_ROW_ALIGNED_MARKER == "workspace_pair_row_aligned_v1"
+    assert PAIR_ROW_HEIGHT_MARKER in pairs
+    assert PAIR_ROW_ALIGNED_MARKER in pairs
+    assert "PAIR_ROW_HEIGHT_MARKER" in src
+    assert "PAIR_ROW_ALIGNED_MARKER" in src
+    assert "row_height=" in src
+    assert "PAIR_ROW_HEIGHT" in src
+    assert PAIR_ROW_HEIGHT >= 28
+    # Both sides reference the shared style marker via shared_row_style.
+    assert "shared_row_style" in src
+    assert src.count("workspace_file_pair_row|") >= 2
+
+
+def test_47_input_output_density_matched() -> None:
+    src = _ws_src()
+    pairs = _pairs_src()
+    assert PAIR_ROW_DENSITY_MARKER == "workspace_pair_row_density_compact_v1"
+    assert PAIR_ROW_DENSITY_MARKER in pairs
+    assert "PAIR_ROW_DENSITY_MARKER" in src
+    assert "density_match" in src
+    assert PAIR_ROW_PADDING_V <= 4
+    assert PAIR_ROW_FONT_SIZE == 13
+    # Left list must not use the older larger vertical padding.
+    pair_fn = src.split("def _workspace_file_pair_rows")[1].split(
+        "def _workspace_result_summary"
+    )[0]
+    assert "vertical=6" not in pair_fn
+    assert "PAIR_ROW_PADDING_V" in pair_fn
+
+
+def test_48_eye_icon_light_compact_style() -> None:
+    src = _ws_src()
+    assert "EYE_ICON_LIGHT_MARKER" in src
+    assert EYE_ICON_LIGHT_MARKER == "workspace_eye_icon_light_v1"
+    assert "VISIBILITY_OUTLINED" in src
+    assert "icon_only" in src
+    assert "light" in src
+    assert EYE_ICON_SIZE <= 16
+    assert "EYE_ICON_SIZE" in src
+    pair_fn = src.split("def _workspace_file_pair_rows")[1].split(
+        "def _workspace_result_summary"
+    )[0]
+    assert "ft.IconButton" not in pair_fn
+
+
+def test_49_primary_cta_black_white_strong() -> None:
+    src = _ws_src()
+    assert START_CTA_STRONG == "Belegnamen jetzt ändern"
+    assert START_CTA_HEIGHT_PX >= 44
+    assert "WORKSPACE_CTA_PRIMARY_MARKER" in src
+    assert "WORKSPACE_CTA_BLACK_PRIMARY_MARKER" in src
+    assert WORKSPACE_CTA_PRIMARY_MARKER.startswith("workspace_run_cta")
+    assert WORKSPACE_CTA_BLACK_PRIMARY_MARKER == "workspace_cta_black_primary_v1"
+    assert "CTA_PRIMARY_BG" in src
+    assert "CTA_PRIMARY_FG" in src
+    assert "#111111" in src or "black_bg" in src
+    assert "#FFFFFF" in src or "white_text" in src
+    assert "_workspace_primary_cta_button" in src
+    assert "stronger_than_secondary" in src
+    assert "START_CTA_HEIGHT_PX" in src
+
+
+def test_50_primary_cta_disabled_when_folders_missing() -> None:
+    src = _ws_src()
+    assert "WORKSPACE_CTA_DISABLED_MARKER" in src
+    assert WORKSPACE_CTA_DISABLED_MARKER == "workspace_cta_disabled_muted_v1"
+    assert "cta_disabled" in src
+    assert "not input_selected" in src or "not_active_black" in src
+    assert "CTA_DISABLED_BG" in src
+    assert MSG_START_HELPER == "Nur Vorschau — Originale bleiben unverändert."
+
+
+def test_51_terminology_not_regressed() -> None:
+    src = _ws_src()
+    assert MSG_NOT_CHECKED == "Noch nicht geändert"
+    assert "Belege prüfen" not in START_CTA_STRONG
+    assert "Noch nicht geprüft" not in MSG_NOT_CHECKED
+    # Workspace primary CTA context must not revive legacy labels.
+    cta_region = src.split("def _workspace_primary_cta_button")[1].split(
+        "def _workspace_file_pair_rows"
+    )[0]
+    assert "Belege prüfen" not in cta_region
+    assert "Sandbox Lauf" not in cta_region
+    assert "Noch nicht geprüft" not in src.split("MSG_NOT_CHECKED_YET")[0][-200:]

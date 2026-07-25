@@ -23,6 +23,19 @@ LIVE_FILE_PAIR_ROW_MARKER = "workspace_live_file_pair_row_v1"
 LIVE_PROPOSAL_UPDATE_MARKER = "workspace_live_proposal_update_v1"
 JUST_IN_TIME_STATUS = "PARTIAL"  # synchronous adapter: post-result / post-batch only
 
+# Shared input/output pair-row metrics — keep left/right columns table-aligned.
+PAIR_ROW_HEIGHT = 32
+PAIR_ROW_PADDING_V = 2
+PAIR_ROW_PADDING_H = 2
+PAIR_ROW_FONT_SIZE = 13
+PAIR_ROW_COLUMN_SPACING = 0
+PAIR_ROW_ALIGNED_MARKER = "workspace_pair_row_aligned_v1"
+PAIR_ROW_HEIGHT_MARKER = "workspace_pair_row_height_shared_v1"
+PAIR_ROW_DENSITY_MARKER = "workspace_pair_row_density_compact_v1"
+EYE_ICON_SIZE = 14
+EYE_ICON_HIT_SIZE = 24
+EYE_ICON_LIGHT_MARKER = "workspace_eye_icon_light_v1"
+
 MSG_NOT_CHECKED = MSG_NOT_CHECKED_YET  # "Noch nicht geändert"
 MSG_NO_PROPOSAL = LABEL_NO_PROPOSAL_YET  # "Noch kein Vorschlag"
 MSG_NEED_OUTPUT_FOLDER = MSG_NEED_OUTPUT_FOLDER_COPY
@@ -244,6 +257,9 @@ def merge_input_names_with_proposal_sources(
 
 
 __all__ = (
+    "EYE_ICON_HIT_SIZE",
+    "EYE_ICON_LIGHT_MARKER",
+    "EYE_ICON_SIZE",
     "JUST_IN_TIME_STATUS",
     "LIVE_FILE_PAIRS_MARKER",
     "LIVE_FILE_PAIR_ROW_MARKER",
@@ -256,6 +272,14 @@ __all__ = (
     "MSG_ROW_CHECKING",
     "MSG_ROW_ERROR",
     "MSG_ROW_REVIEW",
+    "PAIR_ROW_ALIGNED_MARKER",
+    "PAIR_ROW_COLUMN_SPACING",
+    "PAIR_ROW_DENSITY_MARKER",
+    "PAIR_ROW_FONT_SIZE",
+    "PAIR_ROW_HEIGHT",
+    "PAIR_ROW_HEIGHT_MARKER",
+    "PAIR_ROW_PADDING_H",
+    "PAIR_ROW_PADDING_V",
     "STATUS_CHECKING",
     "STATUS_ERROR",
     "STATUS_NEED_OUTPUT",

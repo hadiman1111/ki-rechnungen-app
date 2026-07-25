@@ -32,6 +32,8 @@ WORKSPACE_SHARED_SUMMARY_MARKER = "workspace_profile_config_shared_summary_v2"
 WORKSPACE_FILE_PAIR_MARKER = "workspace_input_output_file_pairs_v2"
 WORKSPACE_LIVE_FILE_PAIRS_MARKER = "workspace_live_file_pairs_v1"
 WORKSPACE_CTA_PRIMARY_MARKER = "workspace_run_cta_primary_v2"
+WORKSPACE_CTA_BLACK_PRIMARY_MARKER = "workspace_cta_black_primary_v1"
+WORKSPACE_CTA_DISABLED_MARKER = "workspace_cta_disabled_muted_v1"
 REVIEW_DOCUMENT_PREVIEW_MARKER = "review_document_preview_open_non_mutating_v2"
 WORKSPACE_DOCUMENT_SHOW_MARKER = "workspace_document_show_open_non_mutating_v1"
 WORKSPACE_IA_SECTION_ORDER = (
@@ -107,6 +109,7 @@ PICK_INPUT_FOLDER_CHANGE = "Eingangsordner ändern"
 PICK_OUTPUT_FOLDER_CHOOSE = "Ausgangsordner wählen"
 PICK_OUTPUT_FOLDER_CHANGE = "Ausgangsordner ändern"
 START_CTA_STRONG = "Belegnamen jetzt ändern"
+START_CTA_HEIGHT_PX = 44
 
 ACTION_DETAILS_OPEN = "Details öffnen"
 ACTION_DETAILS_CLOSE = "Details schließen"
@@ -970,7 +973,10 @@ __all__ = (
     "REVIEW_UI_POLISH_LAYOUT_MARKER",
     "REVIEW_USER_MODE_LAYOUT_MARKER",
     "SECOND_UX_CLEANUP_MARKER",
+    "START_CTA_HEIGHT_PX",
     "START_CTA_STRONG",
+    "WORKSPACE_CTA_BLACK_PRIMARY_MARKER",
+    "WORKSPACE_CTA_DISABLED_MARKER",
     "WORKSPACE_CTA_PRIMARY_MARKER",
     "WORKSPACE_FILE_PAIR_MARKER",
     "WORKSPACE_SHARED_SUMMARY_MARKER",

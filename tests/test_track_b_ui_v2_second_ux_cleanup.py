@@ -294,8 +294,11 @@ def test_19_cta_visually_primary() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "WORKSPACE_CTA_PRIMARY_MARKER" in src
     assert "primary_cta" in src
-    assert "primary=True" in src
+    assert "primary=True" in src or "_workspace_primary_cta_button" in src
     assert WORKSPACE_CTA_PRIMARY_MARKER.startswith("workspace_run_cta")
+    assert "WORKSPACE_CTA_BLACK_PRIMARY_MARKER" in src
+    assert "black_bg" in src or "CTA_PRIMARY_BG" in src
+    assert "stronger_than_secondary" in src
 
 
 def test_20_cta_directly_after_folder_cards() -> None:
