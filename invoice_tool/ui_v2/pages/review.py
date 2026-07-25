@@ -11,6 +11,7 @@ state only — never run_once, never final writes, never productive export.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -187,6 +188,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_COPY_CASE,
     ACTION_COPY_DIAGNOSIS,
     ACTION_COPY_FILENAME,
+    ACTION_CANCEL_FILENAME,
     ACTION_COPY_ORACLE,
     ACTION_CREATE_CARD_RULE,
     ACTION_DETAILS_CLOSE,
@@ -197,7 +199,10 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_KEEP_UNCLEAR,
     ACTION_KEEP_UNCLEAR_GUIDED,
     ACTION_OPEN_WORKSPACE,
+    ACTION_SAVE_FILENAME,
     ACTION_SHOW_DOCUMENT,
+    COMPACT_DETAIL_CARD_MARKER,
+    COMPACT_REVIEW_DETAIL_SECTION_TITLES,
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
     CLEAN_USER_FILENAME_MARKER,
@@ -210,6 +215,14 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     FILTER_REVIEW_DOCS,
     GUIDED_STATUS_PANEL_MARKER,
     INLINE_DETAIL_UNDER_SELECTED_CARD,
+    REVIEW_ACTIVE_SECTION_MARKER,
+    REVIEW_DETAIL_ANCHOR_MARKER,
+    REVIEW_DETAIL_VISIBILITY_MARKER,
+    REVIEW_ITEM_ANCHOR_PREFIX,
+    REVIEW_PAGE_SCROLL_KEY,
+    SECTION_EMPFEHLUNG,
+    SECTION_HEADER_MARKER,
+    SECTION_STATUS,
     LABEL_DATEINAME_BEARBEITEN,
     LABEL_NO_PROPOSAL_YET,
     LABEL_ORIGINAL_FILE,
@@ -274,8 +287,10 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     derive_primary_decision_action,
     derive_primary_list_action,
     derive_recognized_fields,
+    derive_recommendation_text,
     derive_secondary_decision_actions,
     derive_status_badges,
+    derive_status_text,
     derive_why_review_plain_german,
     filename_has_er_er,
     next_action_labels_for_detail,
@@ -289,6 +304,8 @@ _FILENAME_EDITOR_ACTIVE_ATTR = "filename_editor_active_keys"
 
 # Accordion open-state lives on the in-memory review_preview_ui bag (UI-only).
 _OPEN_REVIEW_ITEM_ATTR = "open_review_item_id"
+# Pending scroll target after opening a review item (UI-only visibility).
+_REVIEW_SCROLL_PENDING_ATTR = "review_scroll_to_anchor_key"
 
 # Legacy preview artifacts only — not the current Track-B filename pattern.
 MSG_LEGACY_ER_ER_NOTE = "Altes technisches Muster aus früherem Preview-Export."
@@ -317,6 +334,63 @@ def set_open_review_item_id(state: UiV2State, item_key: str | None) -> None:
         select_review_item(state, cleaned)
 
 
+def review_item_anchor_key(item_key: str) -> str:
+    """Stable Flet scroll key for a review list item + its inline detail."""
+
+    return f"{REVIEW_ITEM_ANCHOR_PREFIX}{(item_key or '').strip()}"
+
+
+def request_review_scroll_to_item(state: UiV2State, item_key: str | None) -> None:
+    """Remember which opened item should sit near the top of the viewport."""
+
+    key = (item_key or "").strip()
+    setattr(
+        state,
+        _REVIEW_SCROLL_PENDING_ATTR,
+        review_item_anchor_key(key) if key else None,
+    )
+
+
+def consume_review_scroll_pending(state: UiV2State) -> str | None:
+    raw = getattr(state, _REVIEW_SCROLL_PENDING_ATTR, None)
+    setattr(state, _REVIEW_SCROLL_PENDING_ATTR, None)
+    cleaned = str(raw or "").strip()
+    return cleaned or None
+
+
+def schedule_review_scroll_to_anchor(
+    state: UiV2State,
+    scroll_column: ft.Column | None,
+    anchor_key: str | None,
+) -> None:
+    """Best-effort scroll so the selected file starts near the top of the page.
+
+    Uses Flet ``Column.scroll_to(key=...)`` when a live page is available.
+    Falls back silently when scroll APIs are unavailable (tests / headless).
+    """
+
+    key = (anchor_key or "").strip()
+    if not key or scroll_column is None:
+        return
+    page = getattr(state, "page", None)
+    if page is None or not hasattr(scroll_column, "scroll_to"):
+        return
+
+    async def _scroll() -> None:
+        await asyncio.sleep(0.05)
+        try:
+            scroll_column.scroll_to(key=key, duration=250)
+        except Exception:
+            # Visibility still relies on inline detail under the selected card.
+            return
+
+    if hasattr(page, "run_task"):
+        try:
+            page.run_task(_scroll)
+        except Exception:
+            return
+
+
 def toggle_review_item_details(state: UiV2State, item_key: str) -> None:
     """Toggle details for one card; opening another closes the previous."""
 
@@ -326,8 +400,10 @@ def toggle_review_item_details(state: UiV2State, item_key: str) -> None:
     current = get_open_review_item_id(state)
     if current == key:
         set_open_review_item_id(state, None)
+        request_review_scroll_to_item(state, None)
     else:
         set_open_review_item_id(state, key)
+        request_review_scroll_to_item(state, key)
 
 
 def is_filename_editor_active(state: UiV2State, item_key: str) -> bool:
@@ -434,33 +510,41 @@ def review_section(
     content: ft.Control,
     *,
     subtitle: str | None = None,
+    compact: bool = True,
 ) -> ft.Container:
-    """Visually separated review detail section (card + spacing)."""
+    """Visually separated review detail section (compact card + clear header)."""
 
+    title_size = 13 if compact else FONT_SIZE_SECTION_TITLE
     header: list[ft.Control] = [
         ft.Text(
             title,
-            size=FONT_SIZE_SECTION_TITLE,
+            size=title_size,
             weight=ft.FontWeight.W_700,
             color=COLOR_TEXT_PRIMARY,
+            data=f"{SECTION_HEADER_MARKER}|{title}",
         )
     ]
     if subtitle:
         header.append(
             ft.Text(subtitle, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED)
         )
+    pad = SPACE_SM if compact else SPACE_LG
+    margin_top = SPACE_XS if compact else SPACE_MD
     return ft.Container(
-        margin=ft.Margin.only(top=SPACE_MD, bottom=SPACE_SM),
-        padding=SPACE_LG,
-        bgcolor=COLOR_SURFACE_ALT,
+        margin=ft.Margin.only(top=margin_top, bottom=SPACE_XS),
+        padding=ft.Padding.symmetric(horizontal=pad, vertical=SPACE_SM),
+        bgcolor=COLOR_SURFACE if compact else COLOR_SURFACE_ALT,
         border=ft.Border.all(1, COLOR_BORDER),
         border_radius=RADIUS_CARD,
         content=ft.Column(
             [*header, content],
-            spacing=SPACE_SM,
+            spacing=SPACE_XS if compact else SPACE_SM,
             tight=True,
         ),
-        data=REVIEW_UI_POLISH_LAYOUT_MARKER,
+        data=(
+            f"{REVIEW_UI_POLISH_LAYOUT_MARKER}|{COMPACT_DETAIL_CARD_MARKER}|"
+            f"{SECTION_HEADER_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}"
+        ),
     )
 
 
@@ -891,6 +975,10 @@ class ReviewPageVM:
     active_card_highlight_marker: str = REVIEW_CARD_ACTIVE_HIGHLIGHT
     inline_detail_marker: str = INLINE_DETAIL_UNDER_SELECTED_CARD
     detail_panel_background_marker: str = DETAIL_PANEL_DISTINCT_BACKGROUND
+    detail_visibility_marker: str = REVIEW_DETAIL_VISIBILITY_MARKER
+    detail_anchor_marker: str = REVIEW_DETAIL_ANCHOR_MARKER
+    active_section_marker: str = REVIEW_ACTIVE_SECTION_MARKER
+    compact_detail_card_marker: str = COMPACT_DETAIL_CARD_MARKER
     guided_layout_marker: str = REVIEW_GUIDED_LAYOUT_MARKER
     guided_status_marker: str = GUIDED_STATUS_PANEL_MARKER
     decision_first_marker: str = DECISION_FIRST_PANEL_MARKER
@@ -1819,6 +1907,10 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         active_card_highlight_marker=REVIEW_CARD_ACTIVE_HIGHLIGHT,
         inline_detail_marker=INLINE_DETAIL_UNDER_SELECTED_CARD,
         detail_panel_background_marker=DETAIL_PANEL_DISTINCT_BACKGROUND,
+        detail_visibility_marker=REVIEW_DETAIL_VISIBILITY_MARKER,
+        detail_anchor_marker=REVIEW_DETAIL_ANCHOR_MARKER,
+        active_section_marker=REVIEW_ACTIVE_SECTION_MARKER,
+        compact_detail_card_marker=COMPACT_DETAIL_CARD_MARKER,
         guided_layout_marker=REVIEW_GUIDED_LAYOUT_MARKER,
         guided_status_marker=GUIDED_STATUS_PANEL_MARKER,
         decision_first_marker=DECISION_FIRST_PANEL_MARKER,
@@ -2315,14 +2407,10 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
     return ft.Column(
         [
             ft.Text(detail.decision_prompt, size=13, weight=ft.FontWeight.W_600),
-            ft.Text(
-                "Wenn Sie hier klicken, ändert sich nur die Vorschau-Entscheidung. "
-                + MSG_GUIDED_SAFETY_LINE,
-                size=11,
-            ),
+            ft.Text(MSG_GUIDED_SAFETY_LINE, size=11, color=COLOR_TEXT_MUTED),
             ft.Row([primary, *secondary_buttons], spacing=8, wrap=True),
         ],
-        spacing=8,
+        spacing=SPACE_XS,
         tight=True,
         data=DECISION_FIRST_PANEL_MARKER,
     )
@@ -2668,30 +2756,49 @@ def render_review_inline_detail(
 
     sections = _selected_detail_section_controls(state, vm, detail)
     return ft.Container(
-        content=ft.Column(sections, spacing=SPACE_SM, tight=True),
-        margin=ft.Margin.only(top=SPACE_XS, bottom=SPACE_MD, left=SPACE_SM),
-        padding=SPACE_LG,
+        content=ft.Column(sections, spacing=SPACE_XS, tight=True),
+        margin=ft.Margin.only(top=SPACE_XS, bottom=SPACE_SM, left=SPACE_XS),
+        padding=SPACE_SM,
         bgcolor=COLOR_SURFACE_ALT,
         border=ft.Border.all(1, COLOR_BORDER_STRONG),
         border_radius=RADIUS_CARD,
-        data=f"{INLINE_DETAIL_UNDER_SELECTED_CARD}|{DETAIL_PANEL_DISTINCT_BACKGROUND}",
+        data=(
+            f"{INLINE_DETAIL_UNDER_SELECTED_CARD}|{DETAIL_PANEL_DISTINCT_BACKGROUND}|"
+            f"{REVIEW_DETAIL_VISIBILITY_MARKER}|visible_under_selected"
+        ),
     )
 
 
 def _guided_status_panel(detail: ReviewSelectedDetailVM) -> ft.Control:
-    lines = detail.guided_status_lines or derive_guided_status_lines(detail)
-    body = ft.Column(
-        [
-            ft.Text(line, size=13 if idx == 0 else 12, weight=ft.FontWeight.W_700 if idx == 0 else None)
-            for idx, line in enumerate(lines)
-        ]
-        or [ft.Text(MSG_GUIDED_STATUS_REVIEW, size=13, weight=ft.FontWeight.W_700)],
-        spacing=6,
-        tight=True,
+    """Compact Status + Empfehlung cards at the top of the inline detail."""
+
+    status_text = derive_status_text(detail)
+    recommendation = derive_recommendation_text(detail)
+    # Keep guided lines available for VM/tests; panels stay user-facing only.
+    _ = detail.guided_status_lines or derive_guided_status_lines(detail)
+    status_panel = review_section(
+        SECTION_STATUS,
+        ft.Text(status_text, size=13),
+        compact=True,
     )
-    panel = review_section(SECTION_GUIDED_STATUS, body)
-    panel.data = f"{GUIDED_STATUS_PANEL_MARKER}|{REVIEW_GUIDED_LAYOUT_MARKER}"
-    return panel
+    status_panel.data = (
+        f"{GUIDED_STATUS_PANEL_MARKER}|{SECTION_HEADER_MARKER}|{SECTION_STATUS}|"
+        f"{REVIEW_GUIDED_LAYOUT_MARKER}|{COMPACT_DETAIL_CARD_MARKER}"
+    )
+    recommendation_panel = review_section(
+        SECTION_EMPFEHLUNG,
+        ft.Text(recommendation, size=13),
+        compact=True,
+    )
+    recommendation_panel.data = (
+        f"{SECTION_HEADER_MARKER}|{SECTION_EMPFEHLUNG}|{COMPACT_DETAIL_CARD_MARKER}"
+    )
+    return ft.Column(
+        [status_panel, recommendation_panel],
+        spacing=SPACE_XS,
+        tight=True,
+        data=f"{GUIDED_STATUS_PANEL_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}",
+    )
 
 
 def _filename_preview_panel(
@@ -2736,6 +2843,26 @@ def _filename_preview_panel(
         if not decision_bag.edit_filename_draft_by_key.get(detail.item_key):
             set_edit_filename_draft(state, detail.item_key, str(filename or ""))
         set_filename_editor_active(state, detail.item_key, active=True)
+        request_review_scroll_to_item(state, detail.item_key)
+        if state.refresh is not None:
+            state.refresh()
+
+    def _cancel_filename_edit(_e: ft.ControlEvent) -> None:
+        set_edit_filename_draft(state, detail.item_key, str(filename or ""))
+        set_filename_editor_active(state, detail.item_key, active=False)
+        if state.refresh is not None:
+            state.refresh()
+
+    def _save_filename_edit(_e: ft.ControlEvent) -> None:
+        create_edit_suggestion_decision(
+            state,
+            item_key=detail.item_key,
+            decided_by_user=True,
+            edited_filename=decision_bag.edit_filename_draft_by_key.get(
+                detail.item_key, str(filename or "")
+            ),
+        )
+        set_filename_editor_active(state, detail.item_key, active=False)
         if state.refresh is not None:
             state.refresh()
 
@@ -2747,7 +2874,7 @@ def _filename_preview_panel(
     controls: list[ft.Control] = [
         ft.Text(
             MSG_CLARIFICATION_STATUS,
-            size=12,
+            size=11,
             weight=ft.FontWeight.W_600,
             color=COLOR_TEXT_MUTED,
             data=f"review_status_separate|{REVIEW_CLARIFICATION_MARKER}",
@@ -2762,11 +2889,11 @@ def _filename_preview_panel(
             on_change=_on_filename_change,
             multiline=True,
             min_lines=2,
-            max_lines=4,
+            max_lines=3,
             expand=True,
             text_size=FONT_SIZE_MONO,
             border_color=COLOR_BORDER,
-            dense=False,
+            dense=True,
             autofocus=True,
             data=(
                 f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
@@ -2804,6 +2931,27 @@ def _filename_preview_panel(
                 ),
             )
         )
+        # Speichern / Abbrechen stay next to the field — no distant panel.
+        controls.append(
+            ft.Row(
+                [
+                    primary_button(
+                        ACTION_SAVE_FILENAME,
+                        on_click=_save_filename_edit,
+                    ),
+                    secondary_button(
+                        ACTION_CANCEL_FILENAME,
+                        on_click=_cancel_filename_edit,
+                    ),
+                ],
+                spacing=SPACE_SM,
+                wrap=True,
+                data=(
+                    f"{FILENAME_EDIT_FOCUS_MARKER}|save_cancel_visible|"
+                    f"same_detail_section|no_layout_collapse"
+                ),
+            )
+        )
     else:
         controls.append(
             ft.Text(
@@ -2817,11 +2965,8 @@ def _filename_preview_panel(
                 ),
             )
         )
-    controls.extend(
-        [
-            ft.Text(MSG_FILENAME_FOLLOWS_SCHEMA, size=11, color=COLOR_TEXT_MUTED),
-            ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED),
-        ]
+    controls.append(
+        ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED)
     )
     if detail.er_er_note:
         controls.append(ft.Text(detail.er_er_note, size=11))
@@ -2829,30 +2974,31 @@ def _filename_preview_panel(
         controls.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
 
     # Filename edit is secondary — not the primary decision path.
-    action_row = [
-        secondary_button(
-            ACTION_EDIT_FILENAME,
-            on_click=_start_filename_edit,
-        ),
-        secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename),
-    ]
-    controls.append(
-        ft.Row(
-            action_row,
-            spacing=SPACE_SM,
-            wrap=True,
-            data=FILENAME_EDIT_SECONDARY_MARKER,
+    if not edit_active:
+        controls.append(
+            ft.Row(
+                [
+                    secondary_button(
+                        ACTION_EDIT_FILENAME,
+                        on_click=_start_filename_edit,
+                    ),
+                    secondary_button(ACTION_COPY_FILENAME, on_click=_copy_filename),
+                ],
+                spacing=SPACE_SM,
+                wrap=True,
+                data=FILENAME_EDIT_SECONDARY_MARKER,
+            )
         )
-    )
 
     return review_section(
         SECTION_DATEINAME,
         ft.Column(
             controls,
-            spacing=SPACE_SM,
+            spacing=SPACE_XS,
             tight=True,
             data=f"{FILENAME_EDIT_FOCUS_MARKER}|section_stable|{SECTION_DATEINAME}",
         ),
+        compact=True,
     )
 
 
@@ -2918,24 +3064,31 @@ def _selected_detail_section_controls(
     vm: ReviewPageVM,
     detail: ReviewSelectedDetailVM,
 ) -> list[ft.Control]:
-    """Guided review flow: status → decision → facts → filename → safety → tools."""
+    """Guided review: Status → Empfehlung → Entscheiden → Erkannt → Dateiname."""
 
     out: list[ft.Control] = [
         _guided_status_panel(detail),
         review_section(
             SECTION_ENTSCHEIDEN,
             _next_action_row(state, detail),
-            subtitle="Was passiert beim Klick — und was nicht",
+            compact=True,
         ),
         review_section(
             SECTION_ERKANNT,
             _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
+            compact=True,
         ),
         _filename_preview_panel(state, detail),
-        ft.Text(MSG_GUIDED_SAFETY_LINE, size=12, weight=ft.FontWeight.W_600),
-        ft.Text(MSG_SAFETY_LINE_NO_FINAL, size=11, color=COLOR_TEXT_MUTED),
+        ft.Text(
+            MSG_GUIDED_SAFETY_LINE,
+            size=11,
+            color=COLOR_TEXT_MUTED,
+            data=f"review_safety_compact|{REVIEW_DETAIL_VISIBILITY_MARKER}",
+        ),
         _test_tools_collapsed(state, vm, detail),
     ]
+    # Markers for tests — compact section order without technical dumps.
+    _ = COMPACT_REVIEW_DETAIL_SECTION_TITLES
     return out
 
 
@@ -3040,7 +3193,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 wrap=True,
             )
         )
-        return page_scaffold(*items)
+        return page_scaffold(*items, column_key=REVIEW_PAGE_SCROLL_KEY)
 
     # Counts only — no duplicate short text lists of the same documents.
     items.append(
@@ -3065,7 +3218,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
     )
     items.append(
         ft.Text(
-            REVIEW_ACCORDION_LAYOUT_MARKER,
+            f"{REVIEW_ACCORDION_LAYOUT_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}",
             size=1,
             color=COLOR_SURFACE,
             selectable=False,
@@ -3081,6 +3234,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
         key = row.item_key
         is_open = bool(open_key and key == open_key)
         source_name = row.source_filename or review_summary_display_name(row)
+        anchor = review_item_anchor_key(key)
 
         def _toggle(_e: ft.ControlEvent, item_key: str = key) -> None:
             toggle_review_item_details(state, item_key)
@@ -3105,14 +3259,23 @@ def build_review_page(state: UiV2State) -> ft.Control:
                     render_review_inline_detail(state, vm, vm.selected_detail)
                 )
         accordion_blocks.append(
-            ft.Column(block_controls, spacing=SPACE_XS, tight=True)
+            ft.Container(
+                content=ft.Column(block_controls, spacing=SPACE_XS, tight=True),
+                key=anchor,
+                data=(
+                    f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_ACTIVE_SECTION_MARKER}|"
+                    f"selected={is_open}|inline_detail_under_card|{anchor}"
+                    if is_open
+                    else f"{REVIEW_DETAIL_ANCHOR_MARKER}|collapsed|{anchor}"
+                ),
+            )
         )
 
     items.append(
         section_block(
             f"{SECTION_PRUEFUNG}: {vm.review_count} Dokument(e)",
             stacked_list(*accordion_blocks),
-            subtitle="Originaldatei und vorgeschlagener Dateiname nebeneinander — Details darunter",
+            subtitle="Datei anklicken — Detailfeld öffnet sich direkt darunter",
         )
     )
 
@@ -3129,4 +3292,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
             initially_expanded=False,
         )
     )
-    return page_scaffold(*items)
+    scaffold = page_scaffold(*items, column_key=REVIEW_PAGE_SCROLL_KEY)
+    scroll_column = scaffold.content if isinstance(scaffold.content, ft.Column) else None
+    pending_anchor = consume_review_scroll_pending(state)
+    if pending_anchor:
+        schedule_review_scroll_to_anchor(state, scroll_column, pending_anchor)
+    return scaffold

@@ -25,6 +25,11 @@ REVIEW_UI_POLISH_LAYOUT_MARKER = "track_b_simple_user_review_ui_polish_v1"
 REVIEW_ACCORDION_LAYOUT_MARKER = "track_b_review_accordion_layout_v1"
 REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
 REVIEW_CLARIFICATION_MARKER = "track_b_review_clarification_mode_v1"
+REVIEW_DETAIL_VISIBILITY_MARKER = "track_b_review_detail_visibility_and_cards_v1"
+REVIEW_DETAIL_ANCHOR_MARKER = "review_detail_anchor_selected_top"
+REVIEW_ACTIVE_SECTION_MARKER = "review_active_section_selected"
+COMPACT_DETAIL_CARD_MARKER = "review_compact_detail_card_v1"
+SECTION_HEADER_MARKER = "review_section_header_compact"
 IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
 SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
 PRODUCT_UX_CLEANUP_MARKER = "track_b_ui_v2_product_ux_audit_workspace_cleanup_v1"
@@ -127,12 +132,19 @@ LABEL_REVIEW_DATE = "Datum"
 LABEL_REVIEW_AMOUNT = "Betrag"
 LABEL_SUGGESTED_FILENAME = "Vorgeschlagener Dateiname"
 ACTION_EDIT_FILENAME = "Dateiname bearbeiten"
+ACTION_SAVE_FILENAME = "Speichern"
+ACTION_CANCEL_FILENAME = "Abbrechen"
 ACTION_KEEP_UNCLEAR_GUIDED = "Als unklar lassen"
 ACTION_KEEP_IN_REVIEW_GUIDED = "Zur Prüfung lassen"
 ACTION_ADD_PAYMENT = "Zahlungsart ergänzen"
 ACTION_CREATE_CARD_RULE = "Kartenregel anlegen"
+SECTION_STATUS = "Status"
+SECTION_EMPFEHLUNG = "Empfehlung"
 SECTION_GUIDED_STATUS = "Status & Empfehlung"
 SECTION_TEST_TOOLS = "Test & Nachweis"
+# Scroll/anchor keys for inline review detail visibility (Flet Column.scroll_to).
+REVIEW_PAGE_SCROLL_KEY = "review_page_scroll_column"
+REVIEW_ITEM_ANCHOR_PREFIX = "review-detail-anchor-"
 MSG_GUIDED_SAFETY_LINE = "Nur Vorschau — Originale bleiben unverändert."
 MSG_GUIDED_STATUS_REVIEW = "Dieses Dokument bleibt zur Prüfung."
 MSG_GUIDED_REC_NOT_AMEX = "Nicht als American Express zuordnen."
@@ -197,6 +209,8 @@ SECTION_NAECHSTE = SECTION_ENTSCHEIDEN
 SECTION_FINALISIERUNG = SECTION_FINAL_WRITE_Q
 
 REVIEW_SECTION_TITLES = (
+    SECTION_STATUS,
+    SECTION_EMPFEHLUNG,
     SECTION_ERKANNT,
     SECTION_UNKLAR,
     SECTION_DATEINAME,
@@ -207,6 +221,13 @@ REVIEW_SECTION_TITLES = (
     SECTION_TECHNISCHE,
 )
 USER_REVIEW_SECTION_TITLES = REVIEW_SECTION_TITLES
+COMPACT_REVIEW_DETAIL_SECTION_TITLES = (
+    SECTION_STATUS,
+    SECTION_EMPFEHLUNG,
+    SECTION_ENTSCHEIDEN,
+    SECTION_ERKANNT,
+    SECTION_DATEINAME,
+)
 
 BADGE_PAYPAL = "PayPal"
 BADGE_UNKLAR = "Unklar"
@@ -231,6 +252,12 @@ MSG_WHY_NOT_AMEX = MSG_WHY_CARD_AMEX_SHORT
 MSG_WHY_STORNO = "Storno erkannt."
 MSG_WHY_GENERIC = "Der Beleg ist unklar und muss geprüft werden."
 MSG_WHY_PAYPAL_DETECTED = "PayPal erkannt."
+MSG_REC_MISSING_PAYMENT_PLAIN = (
+    "Zahlungsart fehlt. Bitte wählen Sie, ob die Zahlung über PayPal, "
+    "Karte oder ein anderes Konto lief."
+)
+MSG_REC_GENERIC = "Bitte prüfen und eine Entscheidung treffen."
+MSG_REC_PAYPAL_DECIDE = "PayPal-Regel prüfen oder Vorschlag entscheiden."
 
 # Internal export prefixes — must never appear in user-facing filename display.
 # Include single-underscore variants (some resolvers collapse "__" → "_").
@@ -485,6 +512,45 @@ def derive_why_review_plain_german(detail: Any) -> tuple[str, ...]:
     return (MSG_WHY_GENERIC,)
 
 
+def derive_status_text(detail: Any) -> str:
+    """Plain-German status line for the compact Status card."""
+
+    kind = review_case_kind(detail)
+    if kind == CASE_STORNO:
+        return MSG_WHY_STORNO
+    if kind == CASE_PAYPAL:
+        if paypal_rule_present(detail) and not paypal_action_relevant(detail):
+            return f"{MSG_WHY_PAYPAL_DETECTED} {MSG_WHY_PAYPAL_APPLIED}"
+        if paypal_action_relevant(detail):
+            return f"{MSG_WHY_PAYPAL_DETECTED} {MSG_WHY_PAYPAL_MISSING}"
+        return MSG_WHY_PAYPAL_DETECTED
+    if kind == CASE_CARD_NOT_AMEX:
+        return f"{MSG_GUIDED_STATUS_REVIEW} {MSG_WHY_NOT_AMEX}"
+    if kind == CASE_MISSING_PAYMENT:
+        return MSG_WHY_MISSING_PAYMENT
+    why = derive_why_review_plain_german(detail)
+    return " ".join((MSG_GUIDED_STATUS_REVIEW, *why)).strip()
+
+
+def derive_recommendation_text(detail: Any) -> str:
+    """Plain-German recommendation for the compact Empfehlung card."""
+
+    kind = review_case_kind(detail)
+    if kind == CASE_STORNO:
+        return MSG_GUIDED_REC_STORNO
+    if kind == CASE_PAYPAL:
+        if paypal_rule_present(detail) and not paypal_action_relevant(detail):
+            return MSG_GUIDED_PAYPAL_OK
+        if paypal_action_relevant(detail):
+            return MSG_REC_PAYPAL_DECIDE
+        return MSG_GUIDED_PAYPAL_OK
+    if kind == CASE_CARD_NOT_AMEX:
+        return MSG_GUIDED_REC_NOT_AMEX
+    if kind == CASE_MISSING_PAYMENT:
+        return MSG_REC_MISSING_PAYMENT_PLAIN
+    return MSG_REC_GENERIC
+
+
 def derive_guided_status_lines(detail: Any) -> tuple[str, ...]:
     """Top guided panel: status, reason, recommendation — document-specific."""
 
@@ -502,7 +568,7 @@ def derive_guided_status_lines(detail: Any) -> tuple[str, ...]:
             return (
                 MSG_WHY_PAYPAL_DETECTED,
                 MSG_WHY_PAYPAL_MISSING,
-                "PayPal-Regel prüfen oder Vorschlag entscheiden.",
+                MSG_REC_PAYPAL_DECIDE,
             )
         return (MSG_WHY_PAYPAL_DETECTED, MSG_GUIDED_PAYPAL_OK)
     if kind == CASE_CARD_NOT_AMEX:
@@ -512,7 +578,7 @@ def derive_guided_status_lines(detail: Any) -> tuple[str, ...]:
             f"Empfehlung: {MSG_GUIDED_REC_NOT_AMEX}",
         )
     if kind == CASE_MISSING_PAYMENT:
-        return (MSG_WHY_MISSING_PAYMENT, MSG_GUIDED_REC_MISSING_PAYMENT)
+        return (MSG_WHY_MISSING_PAYMENT, MSG_REC_MISSING_PAYMENT_PLAIN)
     why = derive_why_review_plain_german(detail)
     return (MSG_GUIDED_STATUS_REVIEW, *why)
 
@@ -857,6 +923,7 @@ __all__ = (
     "ACTION_COPY_CASE",
     "ACTION_COPY_DIAGNOSIS",
     "ACTION_COPY_FILENAME",
+    "ACTION_CANCEL_FILENAME",
     "ACTION_COPY_ORACLE",
     "ACTION_CREATE_CARD_RULE",
     "ACTION_CREATE_CONFIGURATION",
@@ -877,10 +944,13 @@ __all__ = (
     "ACTION_PAYPAL_SAVE_RERUN",
     "ACTION_RENAME_PROFILE",
     "ACTION_SAVE_CONFIGURATION",
+    "ACTION_SAVE_FILENAME",
     "ACTION_SHOW_DOCUMENT",
     "ACTION_SHOW_OUTPUT_FILE",
     "ACTION_VIEW_PROPOSAL",
     "ACTION_WORKSPACE_EDIT",
+    "COMPACT_DETAIL_CARD_MARKER",
+    "COMPACT_REVIEW_DETAIL_SECTION_TITLES",
     "BADGE_BLOCKED",
     "BADGE_MISSING_PAYMENT",
     "BADGE_NOT_AMEX",
@@ -904,6 +974,14 @@ __all__ = (
     "IA_CLEANUP_LAYOUT_MARKER",
     "INLINE_DETAIL_UNDER_SELECTED_CARD",
     "INTERNAL_FILENAME_PREFIXES",
+    "REVIEW_ACTIVE_SECTION_MARKER",
+    "REVIEW_DETAIL_ANCHOR_MARKER",
+    "REVIEW_DETAIL_VISIBILITY_MARKER",
+    "REVIEW_ITEM_ANCHOR_PREFIX",
+    "REVIEW_PAGE_SCROLL_KEY",
+    "SECTION_HEADER_MARKER",
+    "SECTION_EMPFEHLUNG",
+    "SECTION_STATUS",
     "LABEL_ACTIVE_EXPLAIN",
     "LABEL_ACTIVE_STATUS",
     "LABEL_DATEINAME_BEARBEITEN",
@@ -1034,9 +1112,14 @@ __all__ = (
     "derive_primary_decision_action",
     "derive_primary_list_action",
     "derive_recognized_fields",
+    "derive_recommendation_text",
     "derive_secondary_decision_actions",
     "derive_status_badges",
+    "derive_status_text",
     "derive_why_review_plain_german",
+    "MSG_REC_GENERIC",
+    "MSG_REC_MISSING_PAYMENT_PLAIN",
+    "MSG_REC_PAYPAL_DECIDE",
     "document_art_display_label",
     "er_er_note_for_filename",
     "filename_has_er_er",

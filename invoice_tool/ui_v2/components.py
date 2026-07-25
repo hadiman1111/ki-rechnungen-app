@@ -125,6 +125,7 @@ def page_scaffold(
     scroll: bool = True,
     expand_last: bool = False,
     dense: bool = True,
+    column_key: str | None = None,
 ) -> ft.Container:
     """Canvas-backed page area — white surfaces come from individual panels."""
     items: list[ft.Control] = []
@@ -135,17 +136,24 @@ def page_scaffold(
             items.append(control)
     pad = SPACE_LG if dense else PAGE_PADDING
     gap = SPACE_MD if dense else SPACE_XXL
+    column_kwargs: dict = {
+        "controls": items,
+        "spacing": gap,
+        "expand": expand_last,
+        "scroll": (
+            ft.ScrollMode.AUTO
+            if expand_last
+            else (ft.ScrollMode.ALWAYS if scroll else ft.ScrollMode.HIDDEN)
+        ),
+    }
+    if column_key:
+        column_kwargs["key"] = column_key
     return ft.Container(
         expand=True,
         bgcolor=COLOR_CANVAS,
         padding=ft.Padding.only(left=pad, top=pad, bottom=pad, right=max(pad - 4, SPACE_SM)),
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
-        content=ft.Column(
-            items,
-            spacing=gap,
-            expand=expand_last,
-            scroll=ft.ScrollMode.AUTO if expand_last else (ft.ScrollMode.ALWAYS if scroll else ft.ScrollMode.HIDDEN),
-        ),
+        content=ft.Column(**column_kwargs),
     )
 
 
