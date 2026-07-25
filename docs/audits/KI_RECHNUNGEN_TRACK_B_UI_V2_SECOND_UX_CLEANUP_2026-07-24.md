@@ -2,7 +2,7 @@
 
 1. **Task ID:** TRACK_B_UI_V2_SECOND_UX_CLEANUP_2026-07-24
 2. **HEAD before:** `570d1d025feb7f5cca3221b878251e6ab7eb10e3`
-3. **HEAD after:** *(filled at commit)*
+3. **HEAD after:** `b7adec2f5a6e2a198e0e042b9c870de2d9c74eb8`
 4. **Files changed (intended):**
    - `invoice_tool/ui_v2/navigation.py`
    - `invoice_tool/ui_v2/shell.py`
