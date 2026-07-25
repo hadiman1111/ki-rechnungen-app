@@ -120,7 +120,11 @@ def _state_with_adapter(**kwargs) -> UiV2State:
 
 def test_start_cta_label_is_sandbox_honest() -> None:
     # User-facing CTA is preview-honest (no primary "Sandbox Lauf starten").
-    assert "Vorschau" in START_CTA_LABEL or "prüfen" in START_CTA_LABEL.lower()
+    assert (
+        "Vorschau" in START_CTA_LABEL
+        or "prüfen" in START_CTA_LABEL.lower()
+        or "ändern" in START_CTA_LABEL.lower()
+    )
     assert "Sandbox Lauf starten" not in START_CTA_LABEL
     assert START_CTA_LABEL.strip()
 

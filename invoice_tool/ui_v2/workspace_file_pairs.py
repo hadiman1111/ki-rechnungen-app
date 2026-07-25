@@ -10,6 +10,10 @@ from typing import Mapping, Sequence
 
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     LABEL_NO_PROPOSAL_YET,
+    MSG_NEED_OUTPUT_FOLDER as MSG_NEED_OUTPUT_FOLDER_COPY,
+    MSG_NOT_CHECKED_YET,
+    MSG_PROPOSAL_CREATED as MSG_PROPOSAL_CREATED_COPY,
+    MSG_ROW_CHECKING as MSG_ROW_CHECKING_COPY,
     clean_user_facing_filename,
 )
 from invoice_tool.ui_v2.workspace_input_listing import MSG_FILES_FOUND, MSG_NO_FILES_IN_INPUT
@@ -19,11 +23,11 @@ LIVE_FILE_PAIR_ROW_MARKER = "workspace_live_file_pair_row_v1"
 LIVE_PROPOSAL_UPDATE_MARKER = "workspace_live_proposal_update_v1"
 JUST_IN_TIME_STATUS = "PARTIAL"  # synchronous adapter: post-result / post-batch only
 
-MSG_NOT_CHECKED = "Noch nicht geprüft"
+MSG_NOT_CHECKED = MSG_NOT_CHECKED_YET  # "Noch nicht geändert"
 MSG_NO_PROPOSAL = LABEL_NO_PROPOSAL_YET  # "Noch kein Vorschlag"
-MSG_NEED_OUTPUT_FOLDER = "Bitte Ausgangsordner wählen."
-MSG_ROW_CHECKING = "Wird geprüft …"
-MSG_PROPOSAL_CREATED = "Vorschlag erstellt"
+MSG_NEED_OUTPUT_FOLDER = MSG_NEED_OUTPUT_FOLDER_COPY
+MSG_ROW_CHECKING = MSG_ROW_CHECKING_COPY
+MSG_PROPOSAL_CREATED = MSG_PROPOSAL_CREATED_COPY
 MSG_ROW_REVIEW = "Zur Prüfung"
 MSG_ROW_ERROR = "Fehler / nicht lesbar"
 MSG_PAIR_STATUS_INTEGRATED = "file_pair_integrated_status_v1"

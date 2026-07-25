@@ -216,7 +216,7 @@ def test_10_placeholder_wording() -> None:
         output_folder_selected=True,
     )
     assert vm.rows[0].output_display in {MSG_NOT_CHECKED, "Noch kein Vorschlag"}
-    assert "Noch nicht geprüft" in {MSG_NOT_CHECKED, vm.rows[0].output_display}
+    assert "Noch nicht geändert" in {MSG_NOT_CHECKED, vm.rows[0].output_display}
 
 
 def test_11_missing_output_folder_message() -> None:
@@ -412,6 +412,9 @@ def test_23_headings() -> None:
     assert "WORKSPACE_LIVE_FILE_PAIRS_MARKER" in src
     assert "LIVE_FILE_PAIRS_MARKER" in src
     assert WORKSPACE_LIVE_FILE_PAIRS_MARKER == LIVE_FILE_PAIRS_MARKER
+    assert "WORKSPACE_FOLDER_EMBEDDED_FILES_MARKER" in src
+    assert "file_list=input_file_list" in src
+    assert "file_list=output_file_list" in src
 
 
 # --- Row interaction ---
@@ -422,6 +425,8 @@ def test_24_document_show_action() -> None:
     src = _ws_src()
     assert "ACTION_SHOW_DOCUMENT" in src
     assert "file_pair_show_document" in src
+    assert "VISIBILITY_OUTLINED" in src or "IconButton" in src
+    assert "eye" in src
 
 
 def test_25_document_preview_non_mutating(tmp_path: Path) -> None:
@@ -485,7 +490,7 @@ def test_29_no_auto_run() -> None:
     assert state.processing_run_state.status == "idle"
     src = _ws_src()
     assert "apply_start_processing" in src
-    assert START_CTA_STRONG == "Belege jetzt prüfen"
+    assert START_CTA_STRONG == "Belegnamen jetzt ändern"
 
 
 def test_30_no_run_once() -> None:
@@ -550,8 +555,8 @@ def test_36_release_tags_unchanged_markers() -> None:
 
 
 def test_37_cta_label() -> None:
-    assert START_CTA_STRONG == "Belege jetzt prüfen"
-    assert "Belege jetzt prüfen" in _ws_src() or "START_CTA_STRONG" in _ws_src()
+    assert START_CTA_STRONG == "Belegnamen jetzt ändern"
+    assert "Belegnamen jetzt ändern" in _ws_src() or "START_CTA_STRONG" in _ws_src()
 
 
 def test_38_just_in_time_status_documented() -> None:

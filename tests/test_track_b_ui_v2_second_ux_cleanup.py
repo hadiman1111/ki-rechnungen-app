@@ -282,7 +282,7 @@ def test_16_full_path_accessible() -> None:
 
 
 def test_17_cta_strong_label() -> None:
-    assert START_CTA_LABEL == START_CTA_STRONG == "Belege jetzt prüfen"
+    assert START_CTA_LABEL == START_CTA_STRONG == "Belegnamen jetzt ändern"
 
 
 def test_18_safety_helper_nur_vorschau() -> None:
@@ -301,7 +301,11 @@ def test_19_cta_visually_primary() -> None:
 def test_20_cta_directly_after_folder_cards() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert src.index("folder_selection_panel") < src.index("run_start_panel")
-    assert src.index("run_start_panel") < src.index("file_pair_panel")
+    assert "WORKSPACE_FOLDER_EMBEDDED_FILES_MARKER" in src
+    assert "file_list=input_file_list" in src
+    assert "file_list=output_file_list" in src
+    # File lists are embedded in folder cards; no separate primary file box after CTA.
+    assert "file_pair_panel," not in src.split("items: list[ft.Control] = [")[1].split("]")[0]
 
 
 def test_21_running_state_activity() -> None:

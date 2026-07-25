@@ -38,7 +38,7 @@ WORKSPACE_IA_SECTION_ORDER = (
     "Profil",
     "Konfiguration",
     "Ordner",
-    "Belege prüfen",
+    "Belegnamen ändern",
 )
 REVIEW_CARD_COLLAPSED_SUMMARY_ONLY = "review_card_collapsed_summary_only"
 REVIEW_CARD_ACTIVE_HIGHLIGHT = "review_card_active_highlight"
@@ -72,7 +72,7 @@ LABEL_PROPOSED_OUTPUT_FILES = "Vorgeschlagene Ausgabedateien"
 LABEL_ORIGINAL_FILE = "Originaldatei"
 LABEL_PROPOSED_FILENAME = "Vorgeschlagener Dateiname"
 LABEL_NO_PROPOSAL_YET = "Noch kein Vorschlag"
-MSG_NOT_CHECKED_YET = "Noch nicht geprüft"
+MSG_NOT_CHECKED_YET = "Noch nicht geändert"
 MSG_NO_RESULT_YET = "Noch kein Ergebnis vorhanden."
 MSG_NEED_OUTPUT_FOLDER = "Bitte Ausgangsordner wählen."
 MSG_NO_FILES_IN_INPUT = "Keine Belege im Eingangsordner gefunden."
@@ -106,7 +106,7 @@ PICK_INPUT_FOLDER_CHOOSE = "Eingangsordner wählen"
 PICK_INPUT_FOLDER_CHANGE = "Eingangsordner ändern"
 PICK_OUTPUT_FOLDER_CHOOSE = "Ausgangsordner wählen"
 PICK_OUTPUT_FOLDER_CHANGE = "Ausgangsordner ändern"
-START_CTA_STRONG = "Belege jetzt prüfen"
+START_CTA_STRONG = "Belegnamen jetzt ändern"
 
 ACTION_DETAILS_OPEN = "Details öffnen"
 ACTION_DETAILS_CLOSE = "Details schließen"

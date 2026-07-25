@@ -158,7 +158,7 @@ def test_04_workspace_section_order_profil_config_ordner_lauf() -> None:
         "Profil",
         "Konfiguration",
         "Ordner",
-        "Belege prüfen",
+        "Belegnamen ändern",
     )
     src = WORKSPACE.read_text(encoding="utf-8")
     assert src.index("profile_card = _workspace_profile_card") < src.index(
@@ -220,7 +220,11 @@ def test_11_input_output_visually_distinct() -> None:
 def test_12_start_action_user_friendly() -> None:
     assert START_CTA_LABEL != "Sandbox-Lauf starten"
     assert "Sandbox Lauf starten" not in START_CTA_LABEL
-    assert "Vorschau" in START_CTA_LABEL or "prüfen" in START_CTA_LABEL.lower()
+    assert (
+        "Vorschau" in START_CTA_LABEL
+        or "prüfen" in START_CTA_LABEL.lower()
+        or "ändern" in START_CTA_LABEL.lower()
+    )
 
 
 def test_13_start_action_directly_after_folders() -> None:
