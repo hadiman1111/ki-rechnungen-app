@@ -8,13 +8,13 @@ from typing import Callable
 import flet as ft
 
 from invoice_tool.ui_v2.components import make_expansion_tile
-from invoice_tool.ui_v2.dev_defaults import is_track_b_dev_defaults_enabled
 from invoice_tool.ui_v2.navigation import (
     ADMIN_NAV,
     DAILY_NAV,
     NAV_GROUP_ADVANCED,
     NAV_GROUP_WORKFLOW,
 )
+from invoice_tool.ui_v2.state import is_track_b_show_dev_surfaces_enabled
 from invoice_tool.ui_v2.theme import (
     COLOR_CANVAS,
     COLOR_PRIMARY,
@@ -132,8 +132,8 @@ def _build_sidebar(
     daily_group, daily_items = _nav_group(DAILY_NAV, active_nav=active_nav, on_navigate=on_navigate)
     admin_group, admin_items = _nav_group(ADMIN_NAV, active_nav=active_nav, on_navigate=on_navigate)
     # Normal product menu: only DAILY_NAV. Entwickler / Diagnose is never a
-    # primary menu item — shown only when Track-B dev defaults are active.
-    show_dev_nav = bool(is_track_b_dev_defaults_enabled())
+    # primary menu item — requires explicit SHOW_DEV_SURFACES (not DEV_DEFAULTS).
+    show_dev_nav = bool(is_track_b_show_dev_surfaces_enabled())
     nav_items = {**daily_items, **(admin_items if show_dev_nav else {})}
 
     column_controls: list[ft.Control] = [
@@ -165,7 +165,8 @@ def _build_sidebar(
                     data=(
                         "nav_dev_diagnose_collapsed_secondary|"
                         "not_erweiterte_einstellungen|dev_advanced_only|"
-                        "dev_defaults_only|hidden_from_normal_menu"
+                        "show_dev_surfaces_only|hidden_from_normal_menu|"
+                        "dev_defaults_do_not_enable_surfaces"
                     ),
                 ),
             ]

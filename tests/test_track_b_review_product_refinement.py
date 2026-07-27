@@ -220,20 +220,20 @@ def test_05_normal_menu_hides_entwickler_diagnose() -> None:
     assert ADMIN_NAV[0][1] == "Entwickler / Diagnose"
     shell = SHELL.read_text(encoding="utf-8")
     assert "show_dev_nav" in shell
-    assert "is_track_b_dev_defaults_enabled" in shell
-    assert "hidden_from_normal_menu" in shell or "dev_defaults_only" in shell
+    assert "is_track_b_show_dev_surfaces_enabled" in shell
+    assert "hidden_from_normal_menu" in shell or "show_dev_surfaces_only" in shell
     # Normal menu assembly: admin group only inside show_dev_nav branch.
     assert "if show_dev_nav:" in shell
 
 
 def test_06_normal_review_hides_test_nachweis() -> None:
     detail_fn = _detail_controls_src()
-    assert "is_track_b_dev_defaults_enabled()" in detail_fn
+    assert "is_track_b_show_dev_surfaces_enabled()" in detail_fn
     assert "_test_tools_collapsed" in detail_fn
-    # Appended only inside the dev-defaults branch.
-    gated = detail_fn.split("if is_track_b_dev_defaults_enabled():")[1]
+    # Appended only inside the SHOW_DEV_SURFACES branch.
+    gated = detail_fn.split("if is_track_b_show_dev_surfaces_enabled():")[1]
     assert "_test_tools_collapsed" in gated
-    primary = detail_fn.split("if is_track_b_dev_defaults_enabled():")[0]
+    primary = detail_fn.split("if is_track_b_show_dev_surfaces_enabled():")[0]
     assert "_test_tools_collapsed" not in primary
     assert SECTION_TEST_TOOLS == "Test & Nachweis"
 
@@ -248,7 +248,7 @@ def test_07_normal_review_no_oracle_copy_buttons() -> None:
 def test_08_normal_detail_no_dry_run_sandbox_oracle_terms() -> None:
     # Primary (non-dev) branch of detail assembly must stay free of evidence terms.
     detail_fn = _detail_controls_src()
-    primary = detail_fn.split("if is_track_b_dev_defaults_enabled():")[0]
+    primary = detail_fn.split("if is_track_b_show_dev_surfaces_enabled():")[0]
     for token in ("Dry Run", "Dry-Run", "Sandbox", "Oracle", "Entwicklernachweis"):
         assert token not in primary
 
@@ -257,7 +257,7 @@ def test_09_dev_surfaces_remain_available() -> None:
     src = _review_src()
     assert "def _test_tools_collapsed" in src
     assert "SECTION_TEST_TOOLS" in src
-    assert "is_track_b_dev_defaults_enabled" in src
+    assert "is_track_b_show_dev_surfaces_enabled" in src
     assert ADMIN_NAV  # routing/page still exists
 
 
@@ -277,7 +277,7 @@ def test_11_detail_section_dateiname() -> None:
     panel = _filename_panel_src()
     assert "SECTION_DATEINAME" in panel
     assert "ACTION_EDIT_FILENAME" in panel
-    assert ACTION_EDIT_FILENAME == "Dateiname bearbeiten"
+    assert ACTION_EDIT_FILENAME == "Dateiname anpassen"
 
 
 def test_12_no_was_schlaegt_die_app_vor_section() -> None:
@@ -422,7 +422,7 @@ def test_25_no_technical_terms_in_normal_detail() -> None:
     )
     for token in TECHNICAL_LEAKS:
         assert token not in user_blob
-    primary = _detail_controls_src().split("if is_track_b_dev_defaults_enabled():")[0]
+    primary = _detail_controls_src().split("if is_track_b_show_dev_surfaces_enabled():")[0]
     for token in TECHNICAL_LEAKS:
         assert token not in primary
 

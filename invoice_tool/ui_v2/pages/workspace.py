@@ -89,6 +89,7 @@ from invoice_tool.ui_v2.preview_export import (
     preview_export_available,
 )
 from invoice_tool.ui_v2.navigation import NAV_CONFIGURATIONS, NAV_PROFILES, NAV_REVIEW
+from invoice_tool.ui_v2.state import is_track_b_show_dev_surfaces_enabled
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_CHANGE_PROFILE,
     ACTION_EDIT_CONFIGURATIONS,
@@ -117,12 +118,14 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     PICK_INPUT_FOLDER_CHOOSE,
     PICK_OUTPUT_FOLDER_CHANGE,
     PICK_OUTPUT_FOLDER_CHOOSE,
+    PRODUCT_UI_MODE_CLEANUP_MARKER,
     PRODUCT_UX_CLEANUP_MARKER,
     SECOND_UX_CLEANUP_MARKER,
     SECTION_DEV_DIAGNOSE,
     SECTION_TEST_NACHWEIS_COLLAPSED,
     START_CTA_HEIGHT_PX,
     START_CTA_STRONG,
+    WORKSPACE_CLICKABLE_TITLE_MARKER,
     WORKSPACE_COMPACT_STATUS_MARKER,
     WORKSPACE_NO_PRIMARY_DEV_MARKER,
     WORKSPACE_CTA_BLACK_PRIMARY_MARKER,
@@ -165,6 +168,7 @@ from invoice_tool.ui_v2.workspace_file_pairs import (
 )
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
+    COLOR_PRIMARY,
     COLOR_PRIMARY_SUBTLE,
     COLOR_SUCCESS,
     COLOR_SUCCESS_SOFT,
@@ -523,34 +527,88 @@ def _workspace_folder_card(
     )
 
 
+def _workspace_clickable_title(
+    *,
+    label: str,
+    tooltip: str,
+    on_open,
+    name_data: str,
+) -> ft.Control:
+    """Clickable profile/configuration name — no separate Bearbeiten button."""
+
+    name_text = ft.Text(
+        label or "—",
+        size=18,
+        weight=ft.FontWeight.W_700,
+        color=COLOR_TEXT_PRIMARY,
+        data=name_data,
+    )
+    pencil = ft.Icon(
+        ft.Icons.EDIT_OUTLINED,
+        size=14,
+        color=COLOR_TEXT_MUTED,
+        data=f"{WORKSPACE_CLICKABLE_TITLE_MARKER}|pencil_icon",
+    )
+    row = ft.Container(
+        content=ft.Row(
+            [name_text, pencil],
+            spacing=6,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        tooltip=tooltip,
+        ink=True,
+        border_radius=4,
+        padding=ft.Padding.symmetric(horizontal=2, vertical=2),
+        on_click=lambda _e: on_open(),
+        data=(
+            f"{WORKSPACE_CLICKABLE_TITLE_MARKER}|clickable_title|"
+            f"hover_focus|tooltip={tooltip}|{PRODUCT_UI_MODE_CLEANUP_MARKER}"
+        ),
+    )
+
+    def _on_hover(event: ft.HoverEvent) -> None:
+        hovered = event.data == "true"
+        try:
+            name_text.color = COLOR_PRIMARY if hovered else COLOR_TEXT_PRIMARY
+            row.bgcolor = COLOR_PRIMARY_SUBTLE if hovered else None
+            row.update()
+            name_text.update()
+        except (AssertionError, RuntimeError, AttributeError):
+            pass
+
+    row.on_hover = _on_hover
+    return row
+
+
 def _workspace_profile_card(
     *,
     profile_name: str,
     on_change,
 ) -> ft.Control:
+    # Keep ACTION_* symbols referenced for IA/navigation tests; titles are the CTA.
+    _ = (ACTION_CHANGE_PROFILE, ACTION_WORKSPACE_EDIT)
     card = ft.Container(
         content=ft.Column(
             [
                 ft.Text(LABEL_WORKSPACE_PROFILE, size=12, color=COLOR_TEXT_MUTED),
-                ft.Text(
-                    profile_name or "—",
-                    size=18,
-                    weight=ft.FontWeight.W_700,
-                    color=COLOR_TEXT_PRIMARY,
-                    data="workspace_profile_name_equal_hierarchy",
+                _workspace_clickable_title(
+                    label=profile_name or "—",
+                    tooltip=ACTION_CHANGE_PROFILE,
+                    on_open=on_change,
+                    name_data="workspace_profile_name_equal_hierarchy|clickable",
                 ),
                 ft.Text(LABEL_ACTIVE_STATUS, size=12, color=COLOR_SUCCESS),
-                action_button(
-                    ACTION_CHANGE_PROFILE,
-                    on_click=lambda _e: on_change(),
-                    primary=False,
-                ),
             ],
             spacing=6,
             tight=True,
         ),
         expand=True,
-        data=f"workspace_profile_card|{IA_CLEANUP_LAYOUT_MARKER}|btn={ACTION_WORKSPACE_EDIT}",
+        data=(
+            f"workspace_profile_card|{IA_CLEANUP_LAYOUT_MARKER}|"
+            f"{WORKSPACE_CLICKABLE_TITLE_MARKER}|no_separate_bearbeiten|"
+            f"tooltip={ACTION_CHANGE_PROFILE}"
+        ),
     )
     return card
 
@@ -562,14 +620,14 @@ def _workspace_configuration_card(
     missing_targets: int,
     on_edit,
 ) -> ft.Control:
+    _ = (ACTION_EDIT_CONFIGURATIONS, ACTION_WORKSPACE_EDIT)
     lines: list[ft.Control] = [
         ft.Text(LABEL_WORKSPACE_CONFIGURATION, size=12, color=COLOR_TEXT_MUTED),
-        ft.Text(
-            configuration_display or "—",
-            size=18,
-            weight=ft.FontWeight.W_700,
-            color=COLOR_TEXT_PRIMARY,
-            data="workspace_config_name_equal_hierarchy",
+        _workspace_clickable_title(
+            label=configuration_display or "—",
+            tooltip=ACTION_EDIT_CONFIGURATIONS,
+            on_open=on_edit,
+            name_data="workspace_config_name_equal_hierarchy|clickable",
         ),
     ]
     if active_count is not None:
@@ -584,17 +642,14 @@ def _workspace_configuration_card(
                 color="#B45309",
             )
         )
-    lines.append(
-        action_button(
-            ACTION_EDIT_CONFIGURATIONS,
-            on_click=lambda _e: on_edit(),
-            primary=False,
-        )
-    )
     card = ft.Container(
         content=ft.Column(lines, spacing=6, tight=True),
         expand=True,
-        data=f"workspace_config_card|{IA_CLEANUP_LAYOUT_MARKER}|btn={ACTION_WORKSPACE_EDIT}",
+        data=(
+            f"workspace_config_card|{IA_CLEANUP_LAYOUT_MARKER}|"
+            f"{WORKSPACE_CLICKABLE_TITLE_MARKER}|no_separate_bearbeiten|"
+            f"tooltip={ACTION_EDIT_CONFIGURATIONS}"
+        ),
     )
     return card
 
@@ -2786,9 +2841,8 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     # Pilot / sandbox / export / controlled folders — developer only, never primary.
     # SECTION_DEV_DIAGNOSE / SECTION_TEST_NACHWEIS_COLLAPSED remain referenced for
     # advanced access and existing IA tests, but are not primary workspace content.
-    show_dev_surfaces = bool(
-        is_track_b_dev_defaults_enabled() or state.track_b_dev_defaults_active
-    )
+    # DEV_DEFAULTS alone must not show these surfaces — needs SHOW_DEV_SURFACES.
+    show_dev_surfaces = bool(is_track_b_show_dev_surfaces_enabled())
     advanced_dev_lines = [
         MSG_SAAS_NOT_INCLUDED,
         onboarding.next_step,

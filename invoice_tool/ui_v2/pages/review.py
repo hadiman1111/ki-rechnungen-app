@@ -21,6 +21,7 @@ from invoice_tool.ui_v2.components import (
     collapsible_details,
     compact_entry_row,
     empty_state,
+    make_expansion_tile,
     page_header,
     page_scaffold,
     primary_button,
@@ -55,6 +56,7 @@ from invoice_tool.ui_v2.dev_defaults import (
     is_track_b_dev_defaults_enabled,
 )
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
+from invoice_tool.ui_v2.state import is_track_b_show_dev_surfaces_enabled
 from invoice_tool.ui_v2.export_reporting import (
     MSG_EXPORT_PREVIEW_TITLE,
     MSG_NO_FINAL_FILES_WRITTEN,
@@ -201,7 +203,12 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     ACTION_OPEN_WORKSPACE,
     ACTION_SAVE_FILENAME,
     ACTION_SHOW_DOCUMENT,
+    COLLAPSIBLE_CHEVRON_MARKER,
     COMPACT_DETAIL_CARD_MARKER,
+    FILENAME_SECTION_EDITING_ACTIVE_MARKER,
+    MSG_DECISION_CHOOSE_NEXT,
+    PRODUCT_UI_MODE_CLEANUP_MARKER,
+    REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER,
     COMPACT_REVIEW_DETAIL_SECTION_TITLES,
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
@@ -306,6 +313,12 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     review_case_kind,
     split_ready_and_review_cases,
 )
+
+# Preserve product decision labels before review_decision rebinds shared names.
+PRODUCT_ACTION_ACCEPT = ACTION_ACCEPT_SUGGESTION
+PRODUCT_ACTION_IGNORE_EXPORT = ACTION_IGNORE_EXPORT
+PRODUCT_ACTION_KEEP_UNCLEAR = ACTION_KEEP_UNCLEAR
+PRODUCT_ACTION_EDIT_FILENAME = ACTION_EDIT_FILENAME
 
 _FILENAME_EDITOR_ACTIVE_ATTR = "filename_editor_active_keys"
 
@@ -567,7 +580,9 @@ def review_section(
     marker = (
         f"{REVIEW_UI_POLISH_LAYOUT_MARKER}|{COMPACT_DETAIL_CARD_MARKER}|"
         f"{SECTION_HEADER_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}|"
-        f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}"
+        f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}|"
+        f"{REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER}|full_available_width|"
+        f"{PRODUCT_UI_MODE_CLEANUP_MARKER}"
     )
     if data:
         marker = f"{marker}|{data}"
@@ -577,10 +592,14 @@ def review_section(
         "bgcolor": COLOR_SURFACE if compact else COLOR_SURFACE_ALT,
         "border": ft.Border.all(1, COLOR_BORDER),
         "border_radius": RADIUS_CARD,
+        "expand": True,
+        "width": None,
+        "alignment": ft.Alignment.TOP_LEFT,
         "content": ft.Column(
             [*header, content],
             spacing=SPACE_XS if compact else SPACE_SM,
             tight=True,
+            expand=True,
         ),
         "data": marker,
     }
@@ -2412,25 +2431,31 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
         _refresh()
 
     def _handler_for(label: str):
-        if label in {ACTION_ACCEPT_SUGGESTION, f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"}:
+        if label in {
+            PRODUCT_ACTION_ACCEPT,
+            f"{PRODUCT_ACTION_ACCEPT} (bestätigen)",
+            "Vorschlag akzeptieren",
+            "Vorschlag akzeptieren (bestätigen)",
+        }:
             return _on_accept
         if label in {
             ACTION_KEEP_UNCLEAR_GUIDED,
             ACTION_KEEP_IN_REVIEW_GUIDED,
+            PRODUCT_ACTION_KEEP_UNCLEAR,
             ACTION_KEEP_UNCLEAR,
         }:
             return _on_keep_unclear
-        if label == ACTION_IGNORE_EXPORT:
+        if label in {PRODUCT_ACTION_IGNORE_EXPORT, ACTION_IGNORE_EXPORT}:
             return _on_ignore
         if label in {ACTION_CREATE_CARD_RULE, ACTION_ADD_PAYMENT}:
             return _on_needs_config
         return _on_keep_unclear
 
-    accept_label = ACTION_ACCEPT_SUGGESTION
+    accept_label = PRODUCT_ACTION_ACCEPT
     selected = get_review_preview_ui(state).selected_item_key
     if selected and decision_bag.pending_accept_confirm_key == selected:
-        accept_label = f"{ACTION_ACCEPT_SUGGESTION} (bestätigen)"
-    if primary_label == ACTION_ACCEPT_SUGGESTION:
+        accept_label = f"{PRODUCT_ACTION_ACCEPT} (bestätigen)"
+    if primary_label == PRODUCT_ACTION_ACCEPT:
         primary_label = accept_label
 
     primary = primary_button(
@@ -2447,7 +2472,7 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
     ]
     open_points = derive_open_decision_points(detail)
     prompt = (open_points[0] if open_points else detail.decision_prompt) or (
-        "Bitte prüfen und eine Entscheidung treffen."
+        MSG_DECISION_CHOOSE_NEXT
     )
     return ft.Column(
         [
@@ -2457,7 +2482,10 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
         ],
         spacing=SPACE_XS,
         tight=True,
-        data=f"{DECISION_FIRST_PANEL_MARKER}|open_uncertain_points_only",
+        data=(
+            f"{DECISION_FIRST_PANEL_MARKER}|open_uncertain_points_only|"
+            f"no_zur_pruefung_zulassen|{PRODUCT_UI_MODE_CLEANUP_MARKER}"
+        ),
     )
 
 
@@ -3038,7 +3066,7 @@ def _filename_preview_panel(
         )
 
     filename_anchor = review_filename_section_anchor_key(detail.item_key)
-    return review_section(
+    section = review_section(
         SECTION_DATEINAME,
         ft.Column(
             controls,
@@ -3053,9 +3081,18 @@ def _filename_preview_panel(
         key=filename_anchor,
         data=(
             f"{REVIEW_FILENAME_SCROLL_TARGET_MARKER}|{SECTION_DATEINAME}|"
-            f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}|{filename_anchor}"
+            f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}|{filename_anchor}|"
+            f"{FILENAME_SECTION_EDITING_ACTIVE_MARKER if edit_active else 'filename_section_idle'}"
         ),
     )
+    if edit_active:
+        section.border = ft.Border.all(2, COLOR_PRIMARY)
+        section.bgcolor = COLOR_PRIMARY_SUBTLE
+        section.data = (
+            f"{section.data}|{FILENAME_SECTION_EDITING_ACTIVE_MARKER}|"
+            f"editing_active|visual_focus|scroll_target_filename_section"
+        )
+    return section
 
 
 def _test_tools_collapsed(
@@ -3092,27 +3129,26 @@ def _test_tools_collapsed(
     advanced.append(_developer_tools_collapsed(state, vm, detail))
 
     body = ft.Column(advanced, spacing=10, tight=True)
-    tile_kwargs: dict = {
-        "title": ft.Text(
+    return make_expansion_tile(
+        title=ft.Text(
             SECTION_TEST_TOOLS,
             size=FONT_SIZE_HELPER,
             color=COLOR_TEXT_MUTED,
             weight=ft.FontWeight.W_600,
         ),
-        "subtitle": ft.Text(
+        subtitle=ft.Text(
             "Dry-Run, Sandbox und Entwickler-Nachweise — nicht für die normale Prüfung",
             size=11,
             color=COLOR_TEXT_MUTED,
         ),
-        "controls": [ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
-        "dense": True,
-        "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
-        "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
-    }
-    try:
-        return ft.ExpansionTile(**tile_kwargs, initially_expanded=False)
-    except TypeError:
-        return ft.ExpansionTile(**tile_kwargs, expanded=False)
+        controls=[ft.Container(padding=ft.Padding.only(left=4, bottom=4), content=body)],
+        initially_expanded=False,
+        dense=True,
+        data=(
+            f"test_tools_dev_only|{COLLAPSIBLE_CHEVRON_MARKER}|"
+            f"show_dev_surfaces_only|{PRODUCT_UI_MODE_CLEANUP_MARKER}"
+        ),
+    )
 
 
 def _selected_detail_section_controls(
@@ -3145,7 +3181,8 @@ def _selected_detail_section_controls(
         ),
     ]
     # Developer evidence panels — never in the normal product flow.
-    if is_track_b_dev_defaults_enabled():
+    # DEV_DEFAULTS alone must not show Test & Nachweis or diagnosis tools.
+    if is_track_b_show_dev_surfaces_enabled():
         out.append(_test_tools_collapsed(state, vm, detail))
     # Markers for tests — compact section order without technical dumps.
     _ = (
@@ -3156,6 +3193,8 @@ def _selected_detail_section_controls(
         MSG_FILENAME_PREVIEW_HELPER,
         MSG_PLANNED_FILENAME_HELPER,
         MSG_FILENAME_FOLLOWS_SCHEMA,
+        is_track_b_dev_defaults_enabled,
+        PRODUCT_ACTION_EDIT_FILENAME,
     )
     return out
 
@@ -3231,7 +3270,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
             items.append(
                 ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
             )
-        # Safety notes stay; Oracle / Diagnose only in Track-B dev defaults.
+        # Safety notes stay; Oracle / Diagnose only with SHOW_DEV_SURFACES.
         items.append(
             collapsible_details(
                 MSG_REVIEW_FROM_REAL_RUN,
@@ -3243,7 +3282,7 @@ def build_review_page(state: UiV2State) -> ft.Control:
                 initially_expanded=False,
             )
         )
-        if is_track_b_dev_defaults_enabled():
+        if is_track_b_show_dev_surfaces_enabled():
             items.append(
                 collapsible_details(
                     MSG_ORACLE_AVAILABLE,

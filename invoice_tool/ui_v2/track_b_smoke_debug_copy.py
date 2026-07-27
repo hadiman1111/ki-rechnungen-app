@@ -36,6 +36,11 @@ SECTION_HEADER_MARKER = "review_section_header_compact"
 IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
 SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
 PRODUCT_UX_CLEANUP_MARKER = "track_b_ui_v2_product_ux_audit_workspace_cleanup_v1"
+PRODUCT_UI_MODE_CLEANUP_MARKER = "track_b_product_ui_mode_cleanup_v1"
+WORKSPACE_CLICKABLE_TITLE_MARKER = "workspace_clickable_profile_config_title_v1"
+COLLAPSIBLE_CHEVRON_MARKER = "ui_v2_collapsible_chevron_right_down_v1"
+REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER = "review_detail_card_full_width_v1"
+FILENAME_SECTION_EDITING_ACTIVE_MARKER = "review_filename_section_editing_active_v1"
 WORKSPACE_COMPACT_STATUS_MARKER = "workspace_compact_status_line_v1"
 WORKSPACE_NO_PRIMARY_DEV_MARKER = "workspace_no_primary_dev_test_evidence_v1"
 OUTPUT_ROW_ACTIONABLE_MARKER = "workspace_output_row_actionable_v1"
@@ -68,9 +73,10 @@ FILENAME_EDIT_FOCUS_MARKER = "review_filename_edit_focus_in_place_v1"
 CLEAN_USER_FILENAME_MARKER = "clean_user_facing_filename_no_internal_prefix"
 
 # Workspace / IA user-facing actions
+# Legacy constant kept for older IA tests; normal workspace uses clickable titles.
 ACTION_WORKSPACE_EDIT = "Bearbeiten"
-ACTION_CHANGE_PROFILE = ACTION_WORKSPACE_EDIT
-ACTION_EDIT_CONFIGURATIONS = ACTION_WORKSPACE_EDIT
+ACTION_CHANGE_PROFILE = "Profil bearbeiten"
+ACTION_EDIT_CONFIGURATIONS = "Konfiguration bearbeiten"
 ACTION_OPEN_REVIEW = "Prüfung öffnen"
 ACTION_CREATE_PROFILE = "Profil erstellen"
 ACTION_CREATE_CONFIGURATION = "Konfiguration erstellen"
@@ -137,13 +143,16 @@ LABEL_REVIEW_DOC_NAME = "Dokumentname"
 LABEL_REVIEW_DATE = "Datum"
 LABEL_REVIEW_AMOUNT = "Betrag"
 LABEL_SUGGESTED_FILENAME = "Geplanter Dateiname"
-ACTION_EDIT_FILENAME = "Dateiname bearbeiten"
+ACTION_EDIT_FILENAME = "Dateiname anpassen"
 ACTION_SAVE_FILENAME = "Speichern"
 ACTION_CANCEL_FILENAME = "Abbrechen"
-ACTION_KEEP_UNCLEAR_GUIDED = "Als unklar lassen"
-ACTION_KEEP_IN_REVIEW_GUIDED = "Zur Prüfung lassen"
+ACTION_KEEP_UNCLEAR_GUIDED = "Weiter manuell prüfen"
+ACTION_KEEP_IN_REVIEW_GUIDED = "Weiter manuell prüfen"
 ACTION_ADD_PAYMENT = "Zahlungsart ergänzen"
 ACTION_CREATE_CARD_RULE = "Kartenregel anlegen"
+MSG_DECISION_CHOOSE_NEXT = (
+    "Bitte wählen Sie, wie mit dieser Datei fortgefahren werden soll."
+)
 SECTION_STATUS = "Status"
 SECTION_EMPFEHLUNG = "Empfehlung"
 SECTION_GUIDED_STATUS = "Status & Empfehlung"
@@ -189,7 +198,7 @@ MSG_FILENAME_PREVIEW_HELPER = (
     "Nur Vorschau — noch keine finale Datei geschrieben."
 )
 LABEL_VORSCHAU_DATEINAME = "Vorschau-Dateiname"
-LABEL_DATEINAME_BEARBEITEN = "Dateiname bearbeiten"
+LABEL_DATEINAME_BEARBEITEN = "Dateiname anpassen"
 ACTION_COPY_FILENAME = "Dateiname kopieren"
 # Marker proving the editable preview filename control is full-width / no-clip.
 FILENAME_FIELD_POLISH_MARKER = "track_b_preview_filename_full_width_no_clip_v1"
@@ -330,10 +339,10 @@ def truncate_filename_display(name: str, *, max_chars: int = 48) -> str:
     return text[: max_chars - 1] + "…"
 
 ACTION_PAYPAL_SAVE_RERUN = "PayPal-Regel speichern und Matching neu berechnen"
-ACTION_ACCEPT_SUGGESTION = "Vorschlag akzeptieren"
-ACTION_KEEP_UNCLEAR = "als Unklar belassen"
+ACTION_ACCEPT_SUGGESTION = "Vorschlag übernehmen"
+ACTION_KEEP_UNCLEAR = "Weiter manuell prüfen"
 ACTION_DEFER = "zurückstellen"
-ACTION_IGNORE_EXPORT = "ignorieren / nicht exportieren"
+ACTION_IGNORE_EXPORT = "Nicht exportieren"
 
 CASE_STORNO = "storno"
 CASE_PAYPAL = "paypal"
@@ -769,12 +778,14 @@ def derive_decision_prompt(detail: Any) -> str:
         return MSG_REC_MISSING_PAYMENT_PLAIN
     if kind == CASE_CARD_NOT_AMEX:
         return (
-            "Kartenzahlung ohne belegte AMEX — als unklar lassen "
+            "Kartenzahlung ohne belegte AMEX — weiter manuell prüfen "
             "oder eine Kartenregel anlegen?"
         )
     if kind == CASE_STORNO:
-        return "Storno prüfen: zur Prüfung lassen oder Vorschlag akzeptieren?"
-    return "Was möchten Sie als Nächstes entscheiden?"
+        return (
+            "Storno prüfen: Vorschlag übernehmen oder weiter manuell prüfen?"
+        )
+    return MSG_DECISION_CHOOSE_NEXT
 
 
 def case_summary_line(detail: Any) -> str:
@@ -1123,6 +1134,12 @@ __all__ = (
     "OUTPUT_ROW_ACTIONABLE_MARKER",
     "OUTPUT_ROW_PLACEHOLDER_MARKER",
     "PRODUCT_UX_CLEANUP_MARKER",
+    "PRODUCT_UI_MODE_CLEANUP_MARKER",
+    "WORKSPACE_CLICKABLE_TITLE_MARKER",
+    "COLLAPSIBLE_CHEVRON_MARKER",
+    "REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER",
+    "FILENAME_SECTION_EDITING_ACTIVE_MARKER",
+    "MSG_DECISION_CHOOSE_NEXT",
     "SECOND_UX_CLEANUP_MARKER",
     "START_CTA_HEIGHT_PX",
     "START_CTA_STRONG",

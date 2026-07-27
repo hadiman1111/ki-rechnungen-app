@@ -173,7 +173,7 @@ def test_05_active_profile_card_at_top() -> None:
     assert "_workspace_profile_card" in src
     assert "workspace_profile_card" in src
     assert "ACTION_CHANGE_PROFILE" in src
-    assert ACTION_CHANGE_PROFILE == "Bearbeiten"
+    assert ACTION_CHANGE_PROFILE == "Profil bearbeiten"
 
 
 def test_06_active_configuration_card_below_profile() -> None:
@@ -194,7 +194,7 @@ def test_08_konfigurationen_bearbeiten_navigates() -> None:
     src = WORKSPACE.read_text(encoding="utf-8")
     assert "_navigate_to_configurations" in src
     assert "ACTION_EDIT_CONFIGURATIONS" in src
-    assert ACTION_EDIT_CONFIGURATIONS == "Bearbeiten"
+    assert ACTION_EDIT_CONFIGURATIONS == "Konfiguration bearbeiten"
 
 
 def test_09_input_folder_checkmark() -> None:

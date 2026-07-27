@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from invoice_tool.ui_v2.configuration_rule_draft import ConfigurationRuleDraft
 from invoice_tool.ui_v2.draft_models import ConfigurationDraftVM, DeleteConfirmationVM, EditMode, ProfileDraftVM
@@ -46,6 +47,24 @@ from invoice_tool.ui_v2.finalization_preview_batch import FinalizationPreviewBat
 from invoice_tool.ui_v2.review_decision import ReviewDecisionBag
 from invoice_tool.ui_v2.review_preview_state import ReviewPreviewUiState
 from invoice_tool.ui_v2.view_models import FoundationSnapshot, UiV2ReadOnlySnapshot
+
+# Separate from KI_RECHNUNGEN_UI_V2_DEV_DEFAULTS (folders/profile smoke only).
+# Developer diagnosis / Test & Nachweis / Oracle surfaces require this flag.
+ENV_SHOW_DEV_SURFACES = "KI_RECHNUNGEN_UI_V2_SHOW_DEV_SURFACES"
+
+
+def is_track_b_show_dev_surfaces_enabled(
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """True only when developer/diagnosis surfaces are explicitly enabled.
+
+    ``KI_RECHNUNGEN_UI_V2_DEV_DEFAULTS=1`` alone must NOT enable this.
+    """
+
+    environ = env if env is not None else os.environ
+    raw = str(environ.get(ENV_SHOW_DEV_SURFACES, "")).strip().casefold()
+    return raw in {"1", "true", "yes", "on"}
 
 
 @dataclass

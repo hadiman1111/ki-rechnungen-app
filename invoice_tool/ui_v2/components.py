@@ -634,7 +634,9 @@ def make_expansion_tile(
     dense: bool = True,
     data: Any = None,
 ) -> ft.Control:
-    """ExpansionTile compatible with Flet 0.85 (`expanded`) and newer (`initially_expanded`)."""
+    """Shared collapsible: closed = chevron right, open = chevron down."""
+
+    from invoice_tool.ui_v2.track_b_smoke_debug_copy import COLLAPSIBLE_CHEVRON_MARKER
 
     title_ctrl = (
         title
@@ -648,17 +650,30 @@ def make_expansion_tile(
             if isinstance(subtitle, ft.Control)
             else ft.Text(str(subtitle), size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED)
         )
+    # Closed → right; open → down. Prefer leading so headers stay non-primary.
+    chevron = ft.Icon(
+        ft.Icons.KEYBOARD_ARROW_DOWN if initially_expanded else ft.Icons.KEYBOARD_ARROW_RIGHT,
+        size=16,
+        color=COLOR_TEXT_MUTED,
+        data=f"{COLLAPSIBLE_CHEVRON_MARKER}|closed_right|open_down",
+    )
+    marker = (
+        f"{COLLAPSIBLE_CHEVRON_MARKER}|closed_chevron_right|open_chevron_down|"
+        f"shared_collapsible_header"
+    )
+    if data is not None:
+        marker = f"{marker}|{data}"
     tile_kwargs: dict = {
         "title": title_ctrl,
         "controls": controls,
         "dense": dense,
+        "leading": chevron,
         "controls_padding": ft.Padding.symmetric(horizontal=8, vertical=2),
         "tile_padding": ft.Padding.symmetric(horizontal=8, vertical=0),
+        "data": marker,
     }
     if subtitle_ctrl is not None:
         tile_kwargs["subtitle"] = subtitle_ctrl
-    if data is not None:
-        tile_kwargs["data"] = data
     try:
         return ft.ExpansionTile(**tile_kwargs, initially_expanded=initially_expanded)
     except TypeError:
@@ -666,12 +681,13 @@ def make_expansion_tile(
         try:
             return ft.ExpansionTile(**tile_kwargs, expanded=initially_expanded)
         except TypeError:
+            tile_kwargs.pop("leading", None)
             return ft.ExpansionTile(
                 title=title_ctrl,
                 controls=controls,
                 subtitle=subtitle_ctrl,
                 expanded=initially_expanded,
-                data=data,
+                data=marker,
             )
 
 

@@ -4,7 +4,8 @@ Workflow order (primary):
   Arbeitsbereich → Profile → Konfigurationen → Prüfung
 
 Developer / diagnosis (not a user settings page):
-  Entwickler / Diagnose — secondary, hidden unless Track-B dev defaults.
+  Entwickler / Diagnose — secondary, hidden unless
+  KI_RECHNUNGEN_UI_V2_SHOW_DEV_SURFACES=1 (not DEV_DEFAULTS alone).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ DAILY_NAV = (
     (NAV_REVIEW, "Prüfung", ft.Icons.FACT_CHECK_OUTLINED),
 )
 
-# Not a normal user settings page — developer/diagnose only (dev-defaults).
+# Not a normal user settings page — developer/diagnose only (SHOW_DEV_SURFACES).
 ADMIN_NAV = (
     (NAV_SETTINGS, "Entwickler / Diagnose", ft.Icons.BUG_REPORT_OUTLINED),
 )

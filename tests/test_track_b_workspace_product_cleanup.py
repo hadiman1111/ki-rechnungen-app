@@ -394,10 +394,10 @@ def test_21_developer_diagnosis_dev_advanced_only() -> None:
     assert NAV_SETTINGS not in {i for i, _, _ in DAILY_NAV}
     shell = SHELL.read_text(encoding="utf-8")
     assert "show_dev_nav" in shell
-    assert "is_track_b_dev_defaults_enabled" in shell
+    assert "is_track_b_show_dev_surfaces_enabled" in shell
     assert "if show_dev_nav:" in shell
     assert "dev_advanced_only" in shell or "not_erweiterte_einstellungen" in shell
-    assert "hidden_from_normal_menu" in shell or "dev_defaults_only" in shell
+    assert "hidden_from_normal_menu" in shell or "show_dev_surfaces_only" in shell
     nav = NAV.read_text(encoding="utf-8")
     assert "Entwickler / Diagnose" in nav
     # Not in the normal daily menu.
