@@ -55,6 +55,8 @@ from invoice_tool.ui_v2.components import (
 )
 from invoice_tool.ui_v2.configuration_model import (
     CONFIGURATION_PRODUCT_RESTRUCTURE_MARKER,
+    CONFIG_CREATE_ACTION_ROW_MARKER,
+    CONFIG_EQUAL_HEIGHT_SPLIT_MARKER,
     CONFIG_PREVIEW_SUMMARY_MARKER,
     CREATE_NEAR_LIST_MARKER,
     DOCUMENT_TYPE_DROPDOWN_MARKER,
@@ -130,6 +132,8 @@ from invoice_tool.ui_v2.theme import (
     INPUT_CONTROL_HEIGHT,
 )
 from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    ACTION_CONFIG_REORDER_DOWN,
+    ACTION_CONFIG_REORDER_UP,
     ACTION_CREATE_CONFIGURATION,
     ACTION_NEW_CONFIGURATION,
     ACTION_SAVE_CONFIGURATION,
@@ -624,15 +628,20 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         on_click=_open_profiles,
         data=f"{FULL_WIDTH_PROFILE_SUMMARY_MARKER}|clickable_profile_name",
     )
+    config_count_label = (
+        f"{page_vm.total_count} Konfiguration"
+        if int(page_vm.total_count or 0) == 1
+        else f"{page_vm.total_count} Konfigurationen"
+    )
     top_summary = ft.Container(
         expand=True,
-        width=None,
         content=dense_card(
             ft.Text("Aktives Profil", size=12, color="#6B7280"),
             profile_title,
             ft.Text(
-                f"{page_vm.total_count} Konfigurationen · {page_vm.active_count} aktiv",
+                config_count_label,
                 size=13,
+                data=f"active_profile_config_count|{config_count_label}|no_5A_artifact",
             ),
             ft.Text(LABEL_ACTIVE_EXPLAIN, size=11, color="#6B7280"),
         ),
@@ -640,7 +649,7 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             f"configurations_top_summary|{IA_CLEANUP_LAYOUT_MARKER}|"
             f"{SECOND_UX_CLEANUP_MARKER}|slim_summary_band|mirrors_profile|"
             f"{FULL_WIDTH_PROFILE_SUMMARY_MARKER}|full_width|"
-            f"{CONFIGURATION_PRODUCT_RESTRUCTURE_MARKER}"
+            f"{CONFIGURATION_PRODUCT_RESTRUCTURE_MARKER}|span_main_width"
         ),
     )
     summary_extras: list[ft.Control] = [top_summary]
@@ -1320,13 +1329,13 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
             )
             view_actions.append(
                 action_button(
-                    "Nach oben",
+                    ACTION_CONFIG_REORDER_UP,
                     on_click=lambda _e, cid=config.configuration_id: _reorder(cid, direction=-1),
                 )
             )
             view_actions.append(
                 action_button(
-                    "Nach unten",
+                    ACTION_CONFIG_REORDER_DOWN,
                     on_click=lambda _e, cid=config.configuration_id: _reorder(cid, direction=1),
                 )
             )
@@ -1369,47 +1378,48 @@ def build_configurations_page(state: UiV2State) -> ft.Control:
         body_padding=edit_body_padding if is_editing else view_body_padding,
     )
 
-    create_near_list = ft.Container(
-        content=action_button(
-            ACTION_NEW_CONFIGURATION,
-            on_click=lambda _e: _start_create(),
-            primary=True,
+    create_action_row = ft.Container(
+        content=ft.Row(
+            [
+                action_button(
+                    ACTION_NEW_CONFIGURATION,
+                    on_click=lambda _e: _start_create(),
+                    primary=True,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.END,
         ),
         padding=ft.Padding.only(bottom=8),
-        data=f"{CREATE_NEAR_LIST_MARKER}|near_configuration_list",
+        data=(
+            f"{CREATE_NEAR_LIST_MARKER}|{CONFIG_CREATE_ACTION_ROW_MARKER}|"
+            f"near_configuration_list|own_row_right|not_beside_page_title"
+        ),
     )
-    list_region = ft.Column(
-        [
-            create_near_list,
-            list_panel("Konfigurationen", list_body, height=panel_height),
-        ],
-        spacing=0,
-        tight=True,
-        data=f"{CREATE_NEAR_LIST_MARKER}|list_and_create_together",
+    list_card = list_panel("Konfigurationen", list_body, height=panel_height)
+    # Same top edge + same base height for list and detail (calm two-column layout).
+    equal_split = ft.Container(
+        content=list_detail_split(
+            list_card,
+            detail_panel_ctrl,
+        ),
+        data=(
+            f"{CONFIG_EQUAL_HEIGHT_SPLIT_MARKER}|same_top|same_base_height|"
+            f"height={panel_height}|list_and_detail_aligned"
+        ),
     )
 
     if is_editing:
         items.append(make_section_label("Konfiguration bearbeiten"))
         items.append(detail_panel_ctrl)
+        items.append(create_action_row)
         items.append(
-            ft.Column(
-                [
-                    create_near_list,
-                    list_panel(
-                        "Konfigurationen", list_body, height=min(panel_height, 280)
-                    ),
-                ],
-                spacing=0,
-                tight=True,
+            list_panel(
+                "Konfigurationen", list_body, height=min(panel_height, 280)
             )
         )
     else:
-        items.append(
-            list_detail_split(
-                list_region,
-                detail_panel_ctrl,
-            )
-        )
+        items.append(create_action_row)
+        items.append(equal_split)
 
     for warning in page_vm.warnings:
         items.append(inline_warning(warning))

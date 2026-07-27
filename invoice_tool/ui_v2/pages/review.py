@@ -216,8 +216,11 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     COMPACT_DETAIL_CARD_MARKER,
     FILENAME_SECTION_EDITING_ACTIVE_MARKER,
     DOCUMENT_STATUS_NEEDS_REVIEW_MARKER,
+    DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER,
     MSG_ALL_CHECKS_SUCCESSFUL,
+    MSG_CARD_OPTIONS_HINT,
     MSG_DECISION_CHOOSE_NEXT,
+    MSG_FILES_NEED_REVIEW_HINT,
     PRODUCT_UI_MODE_CLEANUP_MARKER,
     REVIEW_DECISION_LIST_FILTER_MARKER,
     REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER,
@@ -233,7 +236,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     FILENAME_PREVIEW_ONLY_MARKER,
     FILTER_ALL_DOCS,
     FILTER_READY_DOCS,
-    FILTER_REVIEW_DOCS,
+    FILTER_REVIEW_DOCS,  # kept for tests / advanced counts; not primary header
     GUIDED_STATUS_PANEL_MARKER,
     INLINE_DETAIL_UNDER_SELECTED_CARD,
     REVIEW_ACTIVE_SECTION_MARKER,
@@ -325,6 +328,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     payment_display_label,
     paypal_action_relevant,
     review_case_kind,
+    review_header_status_text,
     review_item_needs_open_decision,
     split_ready_and_review_cases,
 )
@@ -375,6 +379,12 @@ def review_card_anchor_key(item_key: str) -> str:
     return f"{REVIEW_CARD_ANCHOR_PREFIX}{(item_key or '').strip()}"
 
 
+def review_top_focus_anchor_key(item_key: str) -> str:
+    """Scroll key for the top-focus block (selected file + detail at page top)."""
+
+    return f"review-top-focus-{(item_key or '').strip()}"
+
+
 def review_filename_section_anchor_key(item_key: str) -> str:
     """Stable Flet scroll key for the Dateiname section (edit-filename target)."""
 
@@ -388,14 +398,18 @@ def review_item_anchor_key(item_key: str) -> str:
 
 
 def request_review_scroll_to_item(state: UiV2State, item_key: str | None) -> None:
-    """Scroll target after file-card click: full file card near the top."""
+    """Scroll target after file-card click: selected card inside top-focus."""
 
     key = (item_key or "").strip()
+    # Card lives inside the top-focus block (page top) — prefer card key for
+    # compatibility; also keep top-focus key available for callers/tests.
     setattr(
         state,
         _REVIEW_SCROLL_PENDING_ATTR,
         review_card_anchor_key(key) if key else None,
     )
+    if key:
+        setattr(state, "_review_top_focus_pending", review_top_focus_anchor_key(key))
 
 
 def request_review_scroll_to_filename_section(
@@ -2848,7 +2862,6 @@ def render_review_summary_card(
         [
             ft.Row(
                 [
-                    document_status_marker("needs_review", size=18),
                     ft.Text(
                         truncate_filename_display(source_full),
                         size=14,
@@ -2860,9 +2873,14 @@ def render_review_summary_card(
                             f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}"
                         ),
                     ),
+                    document_status_marker("needs_review", size=18),
                 ],
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                data=(
+                    f"{DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER}|status_marker_right|"
+                    f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}"
+                ),
             ),
             mapping,
             ft.Text(
@@ -3417,6 +3435,7 @@ def _selected_detail_section_controls(
         MSG_FILENAME_PREVIEW_HELPER,
         MSG_PLANNED_FILENAME_HELPER,
         MSG_FILENAME_FOLLOWS_SCHEMA,
+        MSG_CARD_OPTIONS_HINT,
         is_track_b_dev_defaults_enabled,
         PRODUCT_ACTION_EDIT_FILENAME,
     )
@@ -3573,27 +3592,65 @@ def build_review_page(state: UiV2State) -> ft.Control:
             )
         return page_scaffold(*items, column_key=REVIEW_PAGE_SCROLL_KEY)
 
-    # Counts only — no duplicate short text lists of the same documents.
+    open_count = int(vm.primary_decision_item_count or len(vm.list_items) or 0)
+    processed_count = int(
+        (vm.cases_review_count or 0) + (vm.cases_ready_count or 0)
+        or open_count
+    )
+    ok_count = max(0, processed_count - open_count)
+    header_line = review_header_status_text(
+        open_count=open_count,
+        processed_count=processed_count if processed_count > 0 else None,
+        ok_count=ok_count if processed_count > 0 else None,
+    )
+    # Plain-German header — no legacy filter-counter phrase.
     items.append(
-        ft.Text(
-            f"{FILTER_ALL_DOCS} · {FILTER_REVIEW_DOCS}: {vm.cases_review_count} · "
-            f"{FILTER_READY_DOCS}: {vm.cases_ready_count}",
-            size=12,
-            color=COLOR_TEXT_MUTED,
-            data=f"review_doc_filters|{SECOND_UX_CLEANUP_MARKER}|no_duplicate_summary_list",
+        ft.Column(
+            [
+                ft.Text(
+                    header_line,
+                    size=14,
+                    weight=ft.FontWeight.W_600,
+                    color=COLOR_TEXT_PRIMARY,
+                    data=(
+                        f"review_plain_header|{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|"
+                        f"no_bereit_counter|no_alle_pruefung_phrase"
+                    ),
+                ),
+                ft.Text(
+                    MSG_FILES_NEED_REVIEW_HINT if open_count > 0 else "",
+                    size=12,
+                    color=COLOR_TEXT_MUTED,
+                    visible=open_count > 0,
+                ),
+            ],
+            spacing=2,
+            tight=True,
+            data=f"review_doc_filters|{SECOND_UX_CLEANUP_MARKER}|plain_language_counts",
         )
     )
-    # Keep section title constants accessible for VMs/tests; panels not primary.
-    items.append(
-        collapsible_details(
-            f"{SECTION_BEREIT}: {vm.cases_ready_count}",
-            f"{SECTION_PRUEFUNG}: {vm.cases_review_count}",
-            MSG_NO_READY_CASES if not vm.ready_case_summaries else "—",
-            MSG_NO_REVIEW_CASES if not vm.review_case_summaries else "—",
-            title="Dokumentanzahl (erweitert)",
-            initially_expanded=False,
-        )
+    # Keep constants reachable for tests; do not surface „Bereit: 0“ in normal UI.
+    _ = (
+        FILTER_ALL_DOCS,
+        FILTER_READY_DOCS,
+        FILTER_REVIEW_DOCS,
+        SECTION_BEREIT,
+        MSG_NO_READY_CASES,
+        MSG_NO_REVIEW_CASES,
+        f"{SECTION_BEREIT}: {vm.cases_ready_count}",
+        f"{SECTION_PRUEFUNG}: {vm.cases_review_count}",
     )
+    if is_track_b_show_dev_surfaces_enabled():
+        items.append(
+            collapsible_details(
+                f"{SECTION_BEREIT}: {vm.cases_ready_count}",
+                f"{SECTION_PRUEFUNG}: {vm.cases_review_count}",
+                MSG_NO_READY_CASES if not vm.ready_case_summaries else "—",
+                MSG_NO_REVIEW_CASES if not vm.review_case_summaries else "—",
+                title="Dokumentanzahl (erweitert)",
+                initially_expanded=False,
+            )
+        )
     items.append(
         ft.Text(
             f"{REVIEW_ACCORDION_LAYOUT_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}",

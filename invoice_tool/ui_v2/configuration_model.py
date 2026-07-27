@@ -19,6 +19,8 @@ REVIEW_BEHAVIOR_CHOICE_MARKER = "config_review_behavior_choice_v1"
 CONFIG_PREVIEW_SUMMARY_MARKER = "config_plain_language_preview_summary_v1"
 FULL_WIDTH_PROFILE_SUMMARY_MARKER = "config_active_profile_full_width_v1"
 CREATE_NEAR_LIST_MARKER = "config_create_button_near_list_v1"
+CONFIG_EQUAL_HEIGHT_SPLIT_MARKER = "config_list_detail_equal_height_v1"
+CONFIG_CREATE_ACTION_ROW_MARKER = "config_create_button_own_row_right_v1"
 TARGET_PATH_FULL_VISIBLE_MARKER = "config_target_path_full_visible_v1"
 
 LABEL_CONFIG_NAME = "Name der Konfiguration"

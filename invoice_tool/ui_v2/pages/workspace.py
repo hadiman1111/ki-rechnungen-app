@@ -948,7 +948,6 @@ def _workspace_file_pair_rows(
         source_row = ft.Container(
             content=ft.Row(
                 [
-                    status_marker,
                     ft.Text(
                         truncate_filename_display(source_full),
                         size=PAIR_ROW_FONT_SIZE,
@@ -962,6 +961,7 @@ def _workspace_file_pair_rows(
                         data=f"file_pair_source_full|{source_full}|status={status_kind}",
                     ),
                     eye_control,
+                    status_marker,
                 ],
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -978,6 +978,7 @@ def _workspace_file_pair_rows(
                 f"workspace_file_pair_row|{index}|input|nav_review|"
                 f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
                 f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
+                f"status_marker_right|"
                 f"{DOCUMENT_STATUS_OK_MARKER if status_kind == STATUS_UI_OK else ''}"
                 f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER if status_kind == STATUS_UI_NEEDS_REVIEW else ''}"
                 f"|{shared_row_style}|source={source_full}|same_row|stable_order"
@@ -1026,7 +1027,6 @@ def _workspace_file_pair_rows(
             target_row = ft.Container(
                 content=ft.Row(
                     [
-                        document_status_marker(status_kind, size=16),
                         ft.Text(
                             truncate_filename_display(target_full),
                             size=PAIR_ROW_FONT_SIZE,
@@ -1043,6 +1043,7 @@ def _workspace_file_pair_rows(
                             ),
                         ),
                         output_action,
+                        document_status_marker(status_kind, size=16),
                     ],
                     spacing=4,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1064,6 +1065,7 @@ def _workspace_file_pair_rows(
                     f"{OUTPUT_ROW_ACTIONABLE_MARKER}|{OUTPUT_ACTION_ICON_MARKER}|"
                     f"{PRODUCT_UX_CLEANUP_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
                     f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
+                    f"status_marker_right|"
                     f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{shared_row_style}|"
                     f"source={source_full}|same_row|stable_order|hover_bg"
                 ),
@@ -1078,7 +1080,6 @@ def _workspace_file_pair_rows(
             target_row = ft.Container(
                 content=ft.Row(
                     [
-                        document_status_marker(status_kind, size=16),
                         ft.Text(
                             truncate_filename_display(target_full),
                             size=PAIR_ROW_FONT_SIZE,
@@ -1095,6 +1096,7 @@ def _workspace_file_pair_rows(
                             ),
                         ),
                         output_spacer,
+                        document_status_marker(status_kind, size=16),
                     ],
                     spacing=4,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1113,6 +1115,7 @@ def _workspace_file_pair_rows(
                     f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
                     f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
                     f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
+                    f"status_marker_right|"
                     f"{shared_row_style}|source={source_full}|same_row|stable_order|"
                     f"no_dead_end|{MSG_NOT_CHECKED_YET}"
                 ),

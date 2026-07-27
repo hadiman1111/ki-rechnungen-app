@@ -33,6 +33,11 @@ from invoice_tool.ui_v2.filename_pattern import (
     supported_block_catalog,
     validate_pattern_product_rules,
 )
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    FILENAME_BLOCK_REORDER_MARKER,
+    TOOLTIP_FILENAME_BLOCK_EARLIER,
+    TOOLTIP_FILENAME_BLOCK_LATER,
+)
 from invoice_tool.ui_v2.theme import (
     COLOR_ACCENT_FAINT,
     COLOR_BORDER,
@@ -80,6 +85,20 @@ def _remove_component_simple(pattern: FilenamePattern, index: int) -> FilenamePa
     if not (0 <= index < len(features)):
         return pattern
     features.pop(index)
+    features.append(FilenameComponent(type="system", key="extension", label="Dateityp"))
+    updated.components = features
+    return updated
+
+
+def _move_component(pattern: FilenamePattern, index: int, *, delta: int) -> FilenamePattern:
+    """Reorder a filename block earlier (−1) or later (+1) in the filename."""
+
+    updated = copy_filename_pattern(pattern)
+    features = _feature_components(updated)
+    target = index + delta
+    if not (0 <= index < len(features) and 0 <= target < len(features)):
+        return pattern
+    features[index], features[target] = features[target], features[index]
     features.append(FilenameComponent(type="system", key="extension", label="Dateityp"))
     updated.components = features
     return updated
@@ -187,11 +206,41 @@ def build_filename_pattern_editor(
                         padding=ft.Padding.only(left=9, right=4, top=3, bottom=3),
                         content=ft.Row(
                             [
+                                ft.IconButton(
+                                    icon=ft.Icons.ARROW_BACK,
+                                    icon_size=12,
+                                    icon_color=COLOR_PRIMARY,
+                                    tooltip=TOOLTIP_FILENAME_BLOCK_EARLIER,
+                                    style=ft.ButtonStyle(padding=0),
+                                    disabled=index == 0,
+                                    on_click=lambda _e, idx=index: _emit(
+                                        _move_component(current, idx, delta=-1)
+                                    ),
+                                    data=(
+                                        f"{FILENAME_BLOCK_REORDER_MARKER}|"
+                                        f"earlier|{TOOLTIP_FILENAME_BLOCK_EARLIER}"
+                                    ),
+                                ),
                                 ft.Text(
                                     label,
                                     size=11,
                                     color=COLOR_PRIMARY,
                                     weight=ft.FontWeight.W_600,
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.ARROW_FORWARD,
+                                    icon_size=12,
+                                    icon_color=COLOR_PRIMARY,
+                                    tooltip=TOOLTIP_FILENAME_BLOCK_LATER,
+                                    style=ft.ButtonStyle(padding=0),
+                                    disabled=index >= len(components) - 1,
+                                    on_click=lambda _e, idx=index: _emit(
+                                        _move_component(current, idx, delta=1)
+                                    ),
+                                    data=(
+                                        f"{FILENAME_BLOCK_REORDER_MARKER}|"
+                                        f"later|{TOOLTIP_FILENAME_BLOCK_LATER}"
+                                    ),
                                 ),
                                 ft.IconButton(
                                     icon=ft.Icons.CLOSE,
@@ -206,7 +255,10 @@ def build_filename_pattern_editor(
                             spacing=2,
                             tight=True,
                         ),
-                        data=f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|segment|{component.key}",
+                        data=(
+                            f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|segment|{component.key}|"
+                            f"{FILENAME_BLOCK_REORDER_MARKER}|no_nach_oben_unten"
+                        ),
                     )
                 )
             composition_host.controls.append(

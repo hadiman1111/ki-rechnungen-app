@@ -31,8 +31,8 @@ HANDLER_CONTRACTS: tuple[HandlerContract, ...] = (
     HandlerContract("Aktivieren", "Konfigurationen", "set_configuration_active_true", "configuration.activate", test_id="config_activate"),
     HandlerContract("Deaktivieren", "Konfigurationen", "set_configuration_active_false", "configuration.deactivate", test_id="config_deactivate"),
     HandlerContract("Zielordner auswählen", "Konfigurationen", "pick_folder_to_draft", "configuration.folder_picker_draft", test_id="config_folder_picker"),
-    HandlerContract("Nach oben", "Konfigurationen", "reorder_configuration_up", "configuration.reorder", test_id="config_reorder_up"),
-    HandlerContract("Nach unten", "Konfigurationen", "reorder_configuration_down", "configuration.reorder", test_id="config_reorder_down"),
+    HandlerContract("In Liste nach oben", "Konfigurationen", "reorder_configuration_up", "configuration.reorder", test_id="config_reorder_up"),
+    HandlerContract("In Liste nach unten", "Konfigurationen", "reorder_configuration_down", "configuration.reorder", test_id="config_reorder_down"),
     HandlerContract("Löschen", "Konfigurationen", "delete_configuration_confirmed", "configuration.delete", requires_confirmation=True, test_id="config_delete"),
 )
 

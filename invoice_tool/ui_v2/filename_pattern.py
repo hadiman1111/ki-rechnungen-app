@@ -18,7 +18,8 @@ from invoice_tool.scan_models import ScanModel
 
 FILENAME_PATTERN_SAFE_EDIT_MARKER = "track_b_filename_pattern_builder_safe_editing_v1"
 MSG_ER_ER_DUPLICATION = (
-    "Dokumentart ergibt bereits ‚er‘. Der zusätzliche Text ‚er‘ würde den Dateinamen doppeln."
+    "Dokumentart ist bereits im Muster enthalten. "
+    "Der zusätzliche Text ‚er‘ würde den Dateinamen doppeln."
 )
 MSG_EMPTY_CUSTOM = "Eigener Text darf nicht leer sein."
 MSG_UNSAFE_CUSTOM = "Eigener Text enthält ungültige Zeichen."
@@ -59,8 +60,7 @@ def pattern_has_er_custom_with_document_art(pattern: FilenamePattern) -> bool:
         c.type == "feature" and c.key in DOCUMENT_ART_KEYS for c in pattern.components
     )
     has_er_custom = any(
-        c.type == "system"
-        and c.key == "custom_text"
+        c.key == "custom_text"
         and normalize_filename_part(c.custom_text or "") == "er"
         for c in pattern.components
     )
@@ -256,8 +256,7 @@ def strip_er_custom_when_art_present(pattern: FilenamePattern) -> FilenamePatter
         c
         for c in updated.components
         if not (
-            c.type == "system"
-            and c.key == "custom_text"
+            c.key == "custom_text"
             and normalize_filename_part(c.custom_text or "") == "er"
         )
     ]

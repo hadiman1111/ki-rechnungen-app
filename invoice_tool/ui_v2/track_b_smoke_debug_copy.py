@@ -44,10 +44,26 @@ DOCUMENT_STATUS_OK_MARKER = "document_status_ok_green_check_v1"
 DOCUMENT_STATUS_NEEDS_REVIEW_MARKER = "document_status_needs_review_red_v1"
 DOCUMENT_STATUS_NEUTRAL_MARKER = "document_status_neutral_v1"
 DOCUMENT_STATUS_NON_INTERACTIVE_MARKER = "document_status_non_interactive_no_checkbox_v1"
+DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER = "document_status_marker_right_aligned_v1"
+STARTUP_NO_BLANK_MARKER = "track_b_startup_no_blank_loading_surface_v1"
+STARTUP_WINDOW_SIZE_MARKER = "track_b_startup_sensible_window_size_v1"
+CONFIG_EQUAL_HEIGHT_SPLIT_MARKER = "config_list_detail_equal_height_v1"
+CONFIG_CREATE_ACTION_ROW_MARKER = "config_create_button_own_row_right_v1"
+FILENAME_BLOCK_REORDER_MARKER = "filename_block_reorder_earlier_later_v1"
 MSG_ALL_CHECKS_SUCCESSFUL = "Alle Prüfungen erfolgreich."
+MSG_STARTUP_LOADING = "Belegerfassung wird geladen …"
+MSG_FILES_NEED_REVIEW = "{count} Dateien brauchen Prüfung."
+MSG_FILES_NEED_REVIEW_HINT = "Diese Dateien benötigen noch eine Entscheidung."
+MSG_REVIEW_COUNTS_SUMMARY = (
+    "{processed} verarbeitet · {need_review} brauchen Prüfung · {ok} erfolgreich"
+)
 STATUS_UI_OK = "ok"
 STATUS_UI_NEEDS_REVIEW = "needs_review"
 STATUS_UI_NEUTRAL = "neutral"
+ACTION_CONFIG_REORDER_UP = "In Liste nach oben"
+ACTION_CONFIG_REORDER_DOWN = "In Liste nach unten"
+TOOLTIP_FILENAME_BLOCK_EARLIER = "Baustein früher im Dateinamen"
+TOOLTIP_FILENAME_BLOCK_LATER = "Baustein später im Dateinamen"
 WORKSPACE_CLICKABLE_TITLE_MARKER = "workspace_clickable_profile_config_title_v1"
 COLLAPSIBLE_CHEVRON_MARKER = "ui_v2_collapsible_chevron_right_down_v1"
 REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER = "review_detail_card_full_width_v1"
@@ -181,13 +197,22 @@ REVIEW_FILENAME_SECTION_ANCHOR_PREFIX = "review-filename-section-anchor-"
 REVIEW_ITEM_ANCHOR_PREFIX = REVIEW_CARD_ANCHOR_PREFIX
 MSG_GUIDED_SAFETY_LINE = "Nur Vorschau — Originale bleiben unverändert."
 MSG_GUIDED_STATUS_REVIEW = "Dieses Dokument bleibt zur Prüfung."
-MSG_GUIDED_REC_NOT_AMEX = "Nicht als American Express zuordnen."
 MSG_GUIDED_REC_STORNO = "Bitte Betrag, Datum und Zahlungsart prüfen."
 MSG_GUIDED_REC_MISSING_PAYMENT = (
     "Bitte Zahlungsart ergänzen oder zur Prüfung lassen."
 )
 MSG_GUIDED_PAYPAL_OK = "Vorschlag kann geprüft werden."
-MSG_WHY_CARD_AMEX_SHORT = "Kartenzahlung erkannt, aber AMEX ist nicht belegt."
+MSG_WHY_CARD_AMEX_SHORT = (
+    "Kartenzahlung erkannt, aber die verwendete Karte ist unklar."
+)
+MSG_WHY_CARD_UNCLEAR = MSG_WHY_CARD_AMEX_SHORT
+MSG_CARD_CHOOSE_PROMPT = (
+    "Zahlungsart Karte erkannt. Bitte wählen Sie die verwendete Karte."
+)
+MSG_CARD_OPTIONS_HINT = (
+    "Mögliche Auswahl: American Express · Kreditkarte / Karte · "
+    "anderes Konto · unbekannt / später prüfen"
+)
 
 MSG_SAFETY_LINE_NO_FINAL = "Vorschau — keine finalen Dateien geschrieben"
 MSG_FINAL_WRITE_USER_ANSWER = (
@@ -282,7 +307,7 @@ MSG_WHY_PAYPAL_MISSING = (
     "PayPal erkannt, aber keine passende PayPal-Regel vorhanden."
 )
 MSG_WHY_PAYPAL_APPLIED = "PayPal-Regel ist vorhanden."
-MSG_WHY_NOT_AMEX = MSG_WHY_CARD_AMEX_SHORT
+MSG_WHY_NOT_AMEX = MSG_WHY_CARD_UNCLEAR
 MSG_WHY_STORNO = "Storno erkannt."
 MSG_WHY_GENERIC = "Der Beleg ist unklar und muss geprüft werden."
 MSG_WHY_PAYPAL_DETECTED = "PayPal erkannt."
@@ -292,6 +317,7 @@ MSG_REC_MISSING_PAYMENT_PLAIN = (
 )
 MSG_REC_GENERIC = "Bitte prüfen und eine Entscheidung treffen."
 MSG_REC_PAYPAL_DECIDE = "PayPal-Regel prüfen oder Vorschlag entscheiden."
+MSG_GUIDED_REC_NOT_AMEX = MSG_CARD_CHOOSE_PROMPT
 
 # Internal export prefixes — must never appear in user-facing filename display.
 # Include single-underscore variants (some resolvers collapse "__" → "_").
@@ -610,6 +636,7 @@ def derive_guided_status_lines(detail: Any) -> tuple[str, ...]:
             MSG_GUIDED_STATUS_REVIEW,
             f"Grund: {MSG_WHY_NOT_AMEX}",
             f"Empfehlung: {MSG_GUIDED_REC_NOT_AMEX}",
+            MSG_CARD_OPTIONS_HINT,
         )
     if kind == CASE_MISSING_PAYMENT:
         return (MSG_WHY_MISSING_PAYMENT, MSG_REC_MISSING_PAYMENT_PLAIN)
@@ -873,6 +900,98 @@ def map_output_status_to_ui_kind(output_status: str | None) -> str:
     return STATUS_UI_NEUTRAL
 
 
+def document_has_open_review_need(detail: Any) -> bool:
+    """True when a file still needs a fachliche Entscheidung.
+
+    A successful planned filename alone does **not** mean fully reviewed.
+    Card/payment/account uncertainty keeps the document in review (red).
+    """
+
+    if detail is None:
+        return False
+    kind = review_case_kind(detail)
+    if kind == CASE_CARD_NOT_AMEX:
+        return True
+    if kind == CASE_MISSING_PAYMENT:
+        return True
+    if kind == CASE_STORNO:
+        return True
+    if kind == CASE_PAYPAL:
+        return paypal_action_relevant(detail) or not paypal_rule_present(detail)
+    payment = _document_payment(detail)
+    missing_type = _norm(_g(detail, "missing_configuration_type"))
+    coverage = _norm(_g(detail, "configuration_coverage_status"))
+    guidance = _norm(_g(detail, "user_guidance"))
+    matched = _norm(_g(detail, "matched_configuration_name"))
+    if missing_type in {
+        "payment field",
+        "payment_field",
+        "generic card",
+        "generic_card",
+        "paypal",
+        "missing payment field",
+    }:
+        return True
+    if any(
+        token in coverage
+        for token in (
+            "missing",
+            "review",
+            "unklar",
+            "no_safe",
+            "needs_review",
+        )
+    ):
+        return True
+    if any(token in guidance for token in ("prüfung", "unklar", "fehlt", "nicht belegt")):
+        return True
+    if matched in {"", "unklar", "unmatched", "fallback"} and (
+        payment or missing_type or "fehl" in coverage
+    ):
+        return True
+    if _is_card_payment(payment) and _is_card_not_amex(detail, payment):
+        return True
+    return kind == CASE_GENERIC and bool(
+        missing_type or "review" in coverage or "unklar" in matched
+    )
+
+
+def resolve_document_ui_status(
+    *,
+    output_status: str | None = None,
+    detail: Any | None = None,
+) -> str:
+    """Shared workspace/review UI status — planned filename ≠ Prüfung OK."""
+
+    if detail is not None and document_has_open_review_need(detail):
+        return STATUS_UI_NEEDS_REVIEW
+    return map_output_status_to_ui_kind(output_status)
+
+
+def review_header_status_text(
+    *,
+    open_count: int,
+    processed_count: int | None = None,
+    ok_count: int | None = None,
+) -> str:
+    """Plain-German Prüfung header — no „bereit 0“ / „Alle Prüfung“ phrases."""
+
+    open_n = max(0, int(open_count or 0))
+    if open_n <= 0:
+        return MSG_ALL_CHECKS_SUCCESSFUL
+    line = MSG_FILES_NEED_REVIEW.format(count=open_n)
+    processed = processed_count
+    ok = ok_count
+    if processed is not None and ok is not None and int(processed) >= open_n:
+        summary = MSG_REVIEW_COUNTS_SUMMARY.format(
+            processed=int(processed),
+            need_review=open_n,
+            ok=int(ok),
+        )
+        return f"{line} {summary}"
+    return line
+
+
 def review_item_needs_open_decision(
     *,
     checked_preview: bool = False,
@@ -1065,6 +1184,8 @@ __all__ = (
     "ACTION_KEEP_IN_REVIEW_GUIDED",
     "ACTION_KEEP_UNCLEAR",
     "ACTION_KEEP_UNCLEAR_GUIDED",
+    "ACTION_CONFIG_REORDER_DOWN",
+    "ACTION_CONFIG_REORDER_UP",
     "ACTION_NEW_CONFIGURATION",
     "ACTION_OPEN_REVIEW",
     "ACTION_OPEN_WORKSPACE",
@@ -1207,17 +1328,37 @@ __all__ = (
     "DOCUMENT_STATUS_NEEDS_REVIEW_MARKER",
     "DOCUMENT_STATUS_NEUTRAL_MARKER",
     "DOCUMENT_STATUS_NON_INTERACTIVE_MARKER",
+    "DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER",
+    "STARTUP_NO_BLANK_MARKER",
+    "STARTUP_WINDOW_SIZE_MARKER",
+    "CONFIG_EQUAL_HEIGHT_SPLIT_MARKER",
+    "CONFIG_CREATE_ACTION_ROW_MARKER",
+    "FILENAME_BLOCK_REORDER_MARKER",
     "MSG_ALL_CHECKS_SUCCESSFUL",
+    "MSG_STARTUP_LOADING",
+    "MSG_FILES_NEED_REVIEW",
+    "MSG_FILES_NEED_REVIEW_HINT",
+    "MSG_REVIEW_COUNTS_SUMMARY",
+    "MSG_WHY_CARD_AMEX_SHORT",
+    "MSG_WHY_CARD_UNCLEAR",
+    "MSG_CARD_CHOOSE_PROMPT",
+    "MSG_CARD_OPTIONS_HINT",
+    "MSG_GUIDED_REC_NOT_AMEX",
     "STATUS_UI_OK",
     "STATUS_UI_NEEDS_REVIEW",
     "STATUS_UI_NEUTRAL",
+    "TOOLTIP_FILENAME_BLOCK_EARLIER",
+    "TOOLTIP_FILENAME_BLOCK_LATER",
     "WORKSPACE_CLICKABLE_TITLE_MARKER",
     "COLLAPSIBLE_CHEVRON_MARKER",
     "REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER",
     "FILENAME_SECTION_EDITING_ACTIVE_MARKER",
     "MSG_DECISION_CHOOSE_NEXT",
     "SECOND_UX_CLEANUP_MARKER",
+    "document_has_open_review_need",
     "map_output_status_to_ui_kind",
+    "resolve_document_ui_status",
+    "review_header_status_text",
     "review_item_needs_open_decision",
     "START_CTA_HEIGHT_PX",
     "START_CTA_STRONG",

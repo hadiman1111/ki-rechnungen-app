@@ -182,6 +182,7 @@ def test_02_ok_marker_is_green_check_not_checkbox() -> None:
     assert "ft.Checkbox" not in marker_fn
     assert "Icons.CHECK" in marker_fn
     assert "green_check" in marker_fn
+    assert "status_right" in marker_fn
     assert DOCUMENT_STATUS_OK_MARKER in COPY_MOD.read_text(encoding="utf-8")
     assert DOCUMENT_STATUS_NON_INTERACTIVE_MARKER in COPY_MOD.read_text(
         encoding="utf-8"
@@ -197,6 +198,7 @@ def test_03_workspace_uses_shared_status_markers() -> None:
     assert "REVIEW_FOCUS_AND_STATUS_COLORS_MARKER" in src
     assert "COLOR_ERROR_SOFT" in src
     assert "MSG_ALL_CHECKS_SUCCESSFUL" in src
+    assert "status_marker_right" in src
     assert MSG_ALL_CHECKS_SUCCESSFUL == "Alle Prüfungen erfolgreich."
 
 
@@ -256,6 +258,7 @@ def test_06_top_focus_on_selected_file() -> None:
     page = _page_fn_src()
     assert "REVIEW_TOP_FOCUS_MARKER" in page
     assert "top_focus_not_list_position" in page
+    assert "review_top_focus_anchor_key" in _review_src()
     assert page.index("REVIEW_TOP_FOCUS_MARKER") < page.index("accordion_blocks.append")
     assert "render_review_inline_detail" in page
     assert page.index("render_review_inline_detail") < page.index(
@@ -264,6 +267,12 @@ def test_06_top_focus_on_selected_file() -> None:
     # Selected file is omitted from the lower list to avoid duplication.
     assert "if is_open:" in page
     assert "continue" in page
+    assert "Weitere Dateien zur Prüfung" in page
+    assert "review_plain_header" in page
+    assert "no_bereit_counter" in page
+    assert "review_header_status_text" in page
+    # Old primary counter line removed from normal UI path.
+    assert 'f"{FILTER_ALL_DOCS} · {FILTER_REVIEW_DOCS}' not in page
 
 
 def test_07_filename_edit_stays_in_top_focus() -> None:

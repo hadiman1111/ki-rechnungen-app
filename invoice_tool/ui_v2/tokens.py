@@ -88,7 +88,11 @@ RADIUS_PANEL = 12
 
 # --- Layout widths (px) ---
 NAV_WIDTH = 240
-APP_MIN_WIDTH = 1280
+# Desktop startup: sensible default + floor so Arbeitsbereich stays usable.
+APP_WINDOW_WIDTH = 1360
+APP_WINDOW_HEIGHT = 900
+APP_MIN_WIDTH = 1200
+APP_MIN_HEIGHT = 780
 PRODUCT_DISPLAY_NAME = "NAME.IT PRO"
 CONTENT_MAX_WIDTH = 1200
 FORM_MAX_WIDTH = 640

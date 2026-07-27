@@ -1380,6 +1380,7 @@ def document_status_marker(
         DOCUMENT_STATUS_NEUTRAL_MARKER,
         DOCUMENT_STATUS_NON_INTERACTIVE_MARKER,
         DOCUMENT_STATUS_OK_MARKER,
+        DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER,
         REVIEW_FOCUS_AND_STATUS_COLORS_MARKER,
         STATUS_UI_NEEDS_REVIEW,
         STATUS_UI_NEUTRAL,
@@ -1402,7 +1403,9 @@ def document_status_marker(
             content=ft.Icon(ft.Icons.CHECK, size=icon_size, color=COLOR_SUCCESS),
             data=(
                 f"{DOCUMENT_STATUS_OK_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
-                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|green_check"
+                f"{DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER}|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|green_check|"
+                f"status_right"
             ),
         )
     if ui_kind == STATUS_UI_NEEDS_REVIEW:
@@ -1421,7 +1424,9 @@ def document_status_marker(
             content=ft.Icon(review_icon, size=icon_size, color=COLOR_ERROR),
             data=(
                 f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
-                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|red_marker"
+                f"{DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER}|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|red_marker|"
+                f"status_right"
             ),
         )
     return ft.Container(
@@ -1434,7 +1439,8 @@ def document_status_marker(
         content=ft.Icon(ft.Icons.REMOVE, size=icon_size, color=COLOR_TEXT_MUTED),
         data=(
             f"{DOCUMENT_STATUS_NEUTRAL_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
-            f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|neutral"
+            f"{DOCUMENT_STATUS_RIGHT_ALIGNED_MARKER}|"
+            f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|neutral|status_right"
         ),
     )
 
@@ -1521,13 +1527,14 @@ def make_ergebnis_row(
         ink=bool(failed and on_toggle),
         content=ft.Row(
             [
-                status_icon,
                 filename_control,
                 trailing,
+                status_icon,
             ],
             spacing=10,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
+        data="ergebnis_row_status_marker_right|no_leading_check",
     )
     sections: list[ft.Control] = [header]
     if failed and expanded and suggestion:

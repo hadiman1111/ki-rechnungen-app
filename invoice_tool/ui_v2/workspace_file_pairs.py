@@ -21,6 +21,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     OUTPUT_ROW_ACTIONABLE_MARKER,
     OUTPUT_ROW_PLACEHOLDER_MARKER,
     clean_user_facing_filename,
+    document_has_open_review_need,
 )
 from invoice_tool.ui_v2.workspace_input_listing import MSG_FILES_FOUND, MSG_NO_FILES_IN_INPUT
 
@@ -130,6 +131,9 @@ def _proposal_map_from_planned(
         status_hint = STATUS_PROPOSED
         if "fehl" in coverage or "error" in coverage or "nicht lesbar" in guidance:
             status_hint = STATUS_ERROR
+        elif document_has_open_review_need(item):
+            # Planned filename success ≠ fully reviewed (e.g. unclear card).
+            status_hint = STATUS_REVIEW
         elif "review" in coverage or "unklar" in coverage or "prüfung" in guidance:
             status_hint = STATUS_REVIEW
         out[source] = (suggested, status_hint)

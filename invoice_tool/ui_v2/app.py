@@ -27,7 +27,20 @@ from invoice_tool.ui_v2.processing_contract import make_local_processing_adapter
 from invoice_tool.ui_v2.control_tree import collect_labels
 from invoice_tool.ui_v2.shell import ShellHandles, build_shell, replace_content, set_active_nav
 from invoice_tool.ui_v2.state import UiV2State, is_track_b_show_dev_surfaces_enabled
-from invoice_tool.ui_v2.theme import APP_MIN_WIDTH, COLOR_PAGE_BG
+from invoice_tool.ui_v2.theme import (
+    APP_MIN_HEIGHT,
+    APP_MIN_WIDTH,
+    APP_WINDOW_HEIGHT,
+    APP_WINDOW_WIDTH,
+    COLOR_PAGE_BG,
+    COLOR_TEXT_MUTED,
+    COLOR_TEXT_PRIMARY,
+)
+from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+    MSG_STARTUP_LOADING,
+    STARTUP_NO_BLANK_MARKER,
+    STARTUP_WINDOW_SIZE_MARKER,
+)
 
 # Labels that must be present after a successful product-shell mount.
 _REQUIRED_PRODUCT_NAV_LABELS = frozenset(
@@ -93,15 +106,67 @@ def _render_page(state: UiV2State, nav_id: str) -> ft.Control:
     return builder(state)
 
 
+def _mount_startup_loading_surface(page: ft.Page) -> None:
+    """Show a deliberate loading surface immediately — never a blank root."""
+
+    loading = ft.Container(
+        expand=True,
+        bgcolor=COLOR_PAGE_BG,
+        alignment=ft.Alignment.CENTER,
+        content=ft.Column(
+            [
+                ft.Text(
+                    "NAME.IT PRO",
+                    size=22,
+                    weight=ft.FontWeight.W_700,
+                    color=COLOR_TEXT_PRIMARY,
+                ),
+                ft.Text(
+                    MSG_STARTUP_LOADING,
+                    size=14,
+                    color=COLOR_TEXT_MUTED,
+                ),
+            ],
+            spacing=10,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        data=f"{STARTUP_NO_BLANK_MARKER}|loading_surface|no_blank_root",
+    )
+    try:
+        if hasattr(page, "controls"):
+            page.controls.clear()
+    except Exception:
+        pass
+    page.add(loading)
+    try:
+        page.update()
+    except Exception:
+        pass
+
+
+def _apply_startup_window_geometry(page: ft.Page) -> None:
+    """Sensible desktop size for Flet 0.85.3 — Arbeitsbereich usable after start."""
+
+    page.window.width = APP_WINDOW_WIDTH
+    page.window.height = APP_WINDOW_HEIGHT
+    page.window.min_width = APP_MIN_WIDTH
+    page.window.min_height = APP_MIN_HEIGHT
+    # Marker for startup/window tests (not a visible control).
+    page.data = (
+        f"{STARTUP_WINDOW_SIZE_MARKER}|w={APP_WINDOW_WIDTH}|h={APP_WINDOW_HEIGHT}|"
+        f"min_w={APP_MIN_WIDTH}|min_h={APP_MIN_HEIGHT}"
+    )
+
+
 def build_ui_v2(page: ft.Page) -> None:
     page.title = "NAME.IT PRO"
-    page.window.width = APP_MIN_WIDTH
-    page.window.min_width = APP_MIN_WIDTH
-    page.window.height = 800
-    page.window.min_height = 720
     page.padding = 0
     page.bgcolor = COLOR_PAGE_BG
     page.theme_mode = ft.ThemeMode.LIGHT
+    _apply_startup_window_geometry(page)
+    # First paint: loading surface (avoids empty/blank blue flash while shell builds).
+    _mount_startup_loading_surface(page)
 
     ensure_profile_storage_layout()
 
@@ -199,13 +264,24 @@ def build_ui_v2(page: ft.Page) -> None:
         state.snapshot = None
         state.warnings = ["Grunddaten konnten nicht vollständig geladen werden."]
 
-    initial_content = _render_page(state, state.active_nav_id)
-    shell = build_shell(
-        active_nav=state.active_nav_id,
-        content=initial_content,
-        on_navigate=navigate,
-    )
-    handles[0] = shell
-    page.add(shell.root)
-    page.update()
-    _assert_visible_product_shell(page, shell)
+    try:
+        initial_content = _render_page(state, state.active_nav_id)
+        shell = build_shell(
+            active_nav=state.active_nav_id,
+            content=initial_content,
+            on_navigate=navigate,
+        )
+        handles[0] = shell
+        try:
+            if hasattr(page, "controls"):
+                page.controls.clear()
+            elif hasattr(page, "clean") and callable(page.clean):
+                page.clean()
+        except Exception:
+            pass
+        page.add(shell.root)
+        page.update()
+        _assert_visible_product_shell(page, shell)
+    except Exception:
+        # Visible error instead of blank root — start_ui_v2 also catches this.
+        raise
