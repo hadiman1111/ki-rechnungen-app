@@ -107,7 +107,7 @@ from invoice_tool.ui_v2.edit_components import (
     outlined_field_kwargs,
     unsaved_changes_dialog,
 )
-from invoice_tool.ui_v2.filename_editor import build_filename_pattern_editor
+from invoice_tool.ui_v2.filename_builder import build_filename_pattern_editor
 from invoice_tool.ui_v2.navigation import NAV_PROFILES
 from invoice_tool.ui_v2.saas_profile_draft_list_view import (
     build_saas_draft_list_panel,

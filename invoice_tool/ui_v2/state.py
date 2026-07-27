@@ -89,6 +89,10 @@ class UiV2State:
     config_field_errors: dict[str, str] = field(default_factory=dict)
     # Product recognition group logic (UI-v2 only; flattens to MatchingRule).
     config_recognition_logic: str = "any"
+    # Structured planned-filename field drafts in Prüfung (item_key → fields).
+    review_structured_filename_drafts: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )
 
     # In-memory generic SaaS drafts (no cloud persistence; no private defaults).
     saas_draft_store: SaasProfileStateStore = field(default_factory=new_saas_profile_state_store)

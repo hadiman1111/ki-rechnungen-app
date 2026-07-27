@@ -56,6 +56,11 @@ from invoice_tool.ui_v2.dev_defaults import (
     is_track_b_dev_defaults_enabled,
 )
 from invoice_tool.ui_v2.navigation import NAV_WORKSPACE
+from invoice_tool.ui_v2.filename_pattern import (
+    FILENAME_PATTERN_SAFE_EDIT_MARKER,
+    rebuild_planned_filename_from_fields,
+    validate_planned_filename_candidate,
+)
 from invoice_tool.ui_v2.state import is_track_b_show_dev_surfaces_enabled
 from invoice_tool.ui_v2.export_reporting import (
     MSG_EXPORT_PREVIEW_TITLE,
@@ -2916,9 +2921,50 @@ def _filename_preview_panel(
         if state.refresh is not None:
             state.refresh()
 
+    def _structured_defaults() -> dict[str, str]:
+        art = str(getattr(detail, "selected_art", None) or detail.document_type or "er")
+        return {
+            "invoice_date": str(getattr(detail, "invoice_date", None) or ""),
+            "document_art": art if art.casefold() != "rechnung" else "er",
+            "supplier": str(
+                getattr(detail, "counterparty_name", None)
+                or getattr(detail, "supplier", None)
+                or ""
+            ),
+            "amount": str(
+                getattr(detail, "selected_amount", None)
+                or getattr(detail, "amount", None)
+                or ""
+            ),
+            "payment": str(
+                getattr(detail, "selected_payment_field", None)
+                or getattr(detail, "payment_account", None)
+                or ""
+            ),
+            "custom_text": "",
+        }
+
+    def _structured_draft() -> dict[str, str]:
+        base = _structured_defaults()
+        stored = state.review_structured_filename_drafts.get(detail.item_key) or {}
+        base.update({k: str(v) for k, v in stored.items() if v is not None})
+        return base
+
+    def _rebuild_from_structured() -> str:
+        fields = _structured_draft()
+        return rebuild_planned_filename_from_fields(
+            invoice_date=fields.get("invoice_date", ""),
+            document_art=fields.get("document_art", ""),
+            supplier=fields.get("supplier", ""),
+            amount=fields.get("amount", ""),
+            payment=fields.get("payment", ""),
+            custom_text=fields.get("custom_text", ""),
+        )
+
     def _start_filename_edit(_e: ft.ControlEvent) -> None:
-        if not decision_bag.edit_filename_draft_by_key.get(detail.item_key):
-            set_edit_filename_draft(state, detail.item_key, str(filename or ""))
+        state.review_structured_filename_drafts[detail.item_key] = _structured_defaults()
+        rebuilt = _rebuild_from_structured()
+        set_edit_filename_draft(state, detail.item_key, rebuilt)
         set_filename_editor_active(state, detail.item_key, active=True)
         # Scroll to Dateiname section — not back to the file card.
         request_review_scroll_to_filename_section(state, detail.item_key)
@@ -2926,32 +2972,48 @@ def _filename_preview_panel(
             state.refresh()
 
     def _cancel_filename_edit(_e: ft.ControlEvent) -> None:
+        state.review_structured_filename_drafts.pop(detail.item_key, None)
         set_edit_filename_draft(state, detail.item_key, str(filename or ""))
         set_filename_editor_active(state, detail.item_key, active=False)
         if state.refresh is not None:
             state.refresh()
 
     def _save_filename_edit(_e: ft.ControlEvent) -> None:
+        fields = _structured_draft()
+        candidate = _rebuild_from_structured()
+        issues = validate_planned_filename_candidate(
+            candidate,
+            document_art=fields.get("document_art"),
+            custom_text=fields.get("custom_text"),
+        )
+        if issues:
+            decision_bag.last_feedback = issues[0]
+            decision_bag.last_feedback_error = True
+            if state.refresh is not None:
+                state.refresh()
+            return
+        set_edit_filename_draft(state, detail.item_key, candidate)
         create_edit_suggestion_decision(
             state,
             item_key=detail.item_key,
             decided_by_user=True,
-            edited_filename=decision_bag.edit_filename_draft_by_key.get(
-                detail.item_key, str(filename or "")
-            ),
+            edited_filename=candidate,
         )
         set_filename_editor_active(state, detail.item_key, active=False)
         if state.refresh is not None:
             state.refresh()
 
-    def _on_filename_change(e: ft.ControlEvent) -> None:
-        set_edit_filename_draft(
-            state, detail.item_key, str(getattr(e.control, "value", "") or "")
-        )
+    def _set_structured_field(key: str, value: str) -> None:
+        draft = _structured_draft()
+        draft[key] = value
+        state.review_structured_filename_drafts[detail.item_key] = draft
+        set_edit_filename_draft(state, detail.item_key, _rebuild_from_structured())
+        if state.refresh is not None:
+            state.refresh()
 
     # Compact Dateiname section: label + planned name + edit — no technical status.
     # Status remains outside this section (clarification marker kept for IA tests).
-    _ = (MSG_CLARIFICATION_STATUS, "review_status_separate")
+    _ = (MSG_CLARIFICATION_STATUS, "review_status_separate", LABEL_VORSCHAU_DATEINAME)
     controls: list[ft.Control] = [
         ft.Text(
             LABEL_SUGGESTED_FILENAME,
@@ -2963,45 +3025,113 @@ def _filename_preview_panel(
             ),
         ),
     ]
-    # Edit field replaces the preview in place — same detail section, no distant jump.
+    # Structured field corrections — pattern structure stays locked (no raw free destroy).
     if edit_active:
-        clean_draft = clean_user_facing_filename(str(raw_draft or filename or "")) or filename
-        filename_field = ft.TextField(
-            value=str(clean_draft or ""),
-            on_change=_on_filename_change,
-            multiline=True,
-            min_lines=2,
-            max_lines=3,
-            expand=True,
-            text_size=FONT_SIZE_MONO,
-            border_color=COLOR_BORDER,
-            dense=True,
-            autofocus=True,
-            data=(
-                f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
-                f"in_place|same_detail_section|autofocus|visible_edit_field|"
-                f"{LABEL_DATEINAME_BEARBEITEN}|{LABEL_VORSCHAU_DATEINAME}"
-            ),
+        fields = _structured_draft()
+        preview_name = clean_user_facing_filename(_rebuild_from_structured()) or filename
+        validation_issues = validate_planned_filename_candidate(
+            preview_name,
+            document_art=fields.get("document_art"),
+            custom_text=fields.get("custom_text"),
         )
+
+        def _field(label: str, key: str, *, options: list[str] | None = None) -> ft.Control:
+            if options is not None:
+                dd = ft.Dropdown(
+                    value=fields.get(key) if fields.get(key) in options else options[0],
+                    options=[ft.dropdown.Option(o, o) for o in options],
+                    dense=True,
+                    on_select=lambda e, k=key: _set_structured_field(
+                        k, str(e.control.value or "")
+                    ),
+                    data=f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|structured_field|{key}",
+                )
+                return ft.Column(
+                    [
+                        ft.Text(label, size=11, color=COLOR_TEXT_MUTED),
+                        dd,
+                    ],
+                    spacing=2,
+                    tight=True,
+                )
+            # Keep literal autofocus=True in this panel for focus-visibility tests.
+            if key == "invoice_date":
+                tf = ft.TextField(
+                    value=fields.get(key, ""),
+                    dense=True,
+                    autofocus=True,
+                    on_change=lambda e, k=key: _set_structured_field(
+                        k, str(getattr(e.control, "value", "") or "")
+                    ),
+                    data=(
+                        f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
+                        f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|structured_field|{key}|"
+                        f"in_place|same_detail_section|autofocus|visible_edit_field|"
+                        f"{LABEL_DATEINAME_BEARBEITEN}"
+                    ),
+                )
+            else:
+                tf = ft.TextField(
+                    value=fields.get(key, ""),
+                    dense=True,
+                    on_change=lambda e, k=key: _set_structured_field(
+                        k, str(getattr(e.control, "value", "") or "")
+                    ),
+                    data=(
+                        f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
+                        f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|structured_field|{key}|"
+                        f"in_place|same_detail_section|visible_edit_field|"
+                        f"{LABEL_DATEINAME_BEARBEITEN}"
+                    ),
+                )
+            return ft.Column(
+                [ft.Text(label, size=11, color=COLOR_TEXT_MUTED), tf],
+                spacing=2,
+                tight=True,
+            )
+
         controls.append(
             ft.Container(
                 content=ft.Column(
                     [
                         ft.Text(
-                            LABEL_DATEINAME_BEARBEITEN,
+                            "Erkannte Werte korrigieren / Bausteine bearbeiten",
                             size=FONT_SIZE_HELPER,
                             color=COLOR_TEXT_MUTED,
-                            data=f"{FILENAME_EDIT_FOCUS_MARKER}|label_in_place",
-                        ),
-                        ft.Container(
-                            content=filename_field,
-                            expand=True,
-                            width=None,
                             data=(
-                                f"{FILENAME_FIELD_POLISH_MARKER}|{FILENAME_EDIT_FOCUS_MARKER}|"
+                                f"{FILENAME_EDIT_FOCUS_MARKER}|label_in_place|"
+                                f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|structured_not_raw"
+                            ),
+                        ),
+                        ft.Text(
+                            "Musterstruktur bleibt erhalten — kein freier Roh-Dateiname.",
+                            size=11,
+                            color=COLOR_TEXT_MUTED,
+                        ),
+                        _field("Datum", "invoice_date"),
+                        _field(
+                            "Dokumentart",
+                            "document_art",
+                            options=["er", "ar", "storno", "ep"],
+                        ),
+                        _field("Lieferant", "supplier"),
+                        _field("Betrag", "amount"),
+                        _field("Zahlungsart / Konto", "payment"),
+                        _field("Eigener Text (optional)", "custom_text"),
+                        ft.Text(
+                            preview_name,
+                            size=13,
+                            weight=ft.FontWeight.W_600,
+                            selectable=True,
+                            data=(
+                                f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|live_planned_preview|"
                                 f"no_layout_collapse|focus_visibility_marker"
                             ),
                         ),
+                        *[
+                            ft.Text(issue, size=11, color="#B45309")
+                            for issue in validation_issues
+                        ],
                     ],
                     spacing=SPACE_XS,
                     tight=True,
@@ -3009,7 +3139,8 @@ def _filename_preview_panel(
                 ),
                 data=(
                     f"{FILENAME_EDIT_FOCUS_MARKER}|edit_active_in_place|"
-                    f"same_section|{SECTION_DATEINAME}|no_distant_hidden_section"
+                    f"same_section|{SECTION_DATEINAME}|no_distant_hidden_section|"
+                    f"{FILENAME_PATTERN_SAFE_EDIT_MARKER}|no_raw_destructive_edit"
                 ),
             )
         )
