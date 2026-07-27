@@ -101,7 +101,7 @@ def test_status_and_schema_copy_in_review_source() -> None:
     assert "REVIEW_CLARIFICATION_MARKER" in src
     assert "CLEAN_USER_FILENAME_MARKER" in src
     assert "FILENAME_EDIT_SECONDARY_MARKER" in src
-    assert MSG_CLARIFICATION_STATUS.startswith("Zur Prüfung")
+    assert MSG_CLARIFICATION_STATUS.startswith("Prüfung")
     assert MSG_FILENAME_FOLLOWS_SCHEMA.startswith("Der Dateiname folgt")
     assert REVIEW_CLARIFICATION_MARKER
     assert CLEAN_USER_FILENAME_MARKER

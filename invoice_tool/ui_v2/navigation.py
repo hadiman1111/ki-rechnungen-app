@@ -1,10 +1,10 @@
 """Navigation definitions for UI-v2 — ids, labels, icons only.
 
 Workflow order (primary):
-  Arbeitsbereich → Profile → Konfigurationen → Zur Prüfung
+  Arbeitsbereich → Profile → Konfigurationen → Prüfung
 
 Developer / diagnosis (not a user settings page):
-  Entwickler / Diagnose — secondary, typically hidden unless dev defaults.
+  Entwickler / Diagnose — secondary, hidden unless Track-B dev defaults.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ DAILY_NAV = (
     (NAV_WORKSPACE, "Arbeitsbereich", ft.Icons.DASHBOARD_OUTLINED),
     (NAV_PROFILES, "Profile", ft.Icons.ACCOUNT_CIRCLE_OUTLINED),
     (NAV_CONFIGURATIONS, "Konfigurationen", ft.Icons.TUNE),
-    (NAV_REVIEW, "Zur Prüfung", ft.Icons.FACT_CHECK_OUTLINED),
+    (NAV_REVIEW, "Prüfung", ft.Icons.FACT_CHECK_OUTLINED),
 )
 
-# Not a normal user settings page — developer/diagnose only.
+# Not a normal user settings page — developer/diagnose only (dev-defaults).
 ADMIN_NAV = (
     (NAV_SETTINGS, "Entwickler / Diagnose", ft.Icons.BUG_REPORT_OUTLINED),
 )

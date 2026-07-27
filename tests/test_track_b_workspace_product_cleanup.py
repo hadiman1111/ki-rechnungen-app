@@ -393,11 +393,15 @@ def test_20_no_empty_erweiterte_einstellungen_as_user_settings() -> None:
 def test_21_developer_diagnosis_dev_advanced_only() -> None:
     assert NAV_SETTINGS not in {i for i, _, _ in DAILY_NAV}
     shell = SHELL.read_text(encoding="utf-8")
-    assert "nav_dev_diagnose_collapsed_secondary" in shell
-    assert "initially_expanded=False" in shell
+    assert "show_dev_nav" in shell
+    assert "is_track_b_dev_defaults_enabled" in shell
+    assert "if show_dev_nav:" in shell
     assert "dev_advanced_only" in shell or "not_erweiterte_einstellungen" in shell
+    assert "hidden_from_normal_menu" in shell or "dev_defaults_only" in shell
     nav = NAV.read_text(encoding="utf-8")
     assert "Entwickler / Diagnose" in nav
+    # Not in the normal daily menu.
+    assert "Entwickler" not in {label for _, label, _ in DAILY_NAV}
 
 
 # --- Terminology ---
@@ -533,7 +537,7 @@ def test_34_release_tags_unchanged() -> None:
 
 def test_35_eye_and_review_actions_still_present() -> None:
     assert ACTION_SHOW_DOCUMENT == "Dokument anzeigen"
-    assert ACTION_OPEN_REVIEW == "Zur Prüfung öffnen"
+    assert ACTION_OPEN_REVIEW == "Prüfung öffnen"
     assert ACTION_VIEW_PROPOSAL == "Vorschlag ansehen"
     src = _ws_src()
     assert "ACTION_SHOW_DOCUMENT" in src

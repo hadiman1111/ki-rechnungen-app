@@ -131,12 +131,11 @@ def _build_sidebar(
 ) -> tuple[ft.Container, dict[str, ft.Container]]:
     daily_group, daily_items = _nav_group(DAILY_NAV, active_nav=active_nav, on_navigate=on_navigate)
     admin_group, admin_items = _nav_group(ADMIN_NAV, active_nav=active_nav, on_navigate=on_navigate)
-    nav_items = {**daily_items, **admin_items}
+    # Normal product menu: only DAILY_NAV. Entwickler / Diagnose is never a
+    # primary menu item — shown only when Track-B dev defaults are active.
+    show_dev_nav = bool(is_track_b_dev_defaults_enabled())
+    nav_items = {**daily_items, **(admin_items if show_dev_nav else {})}
 
-    # Developer diagnosis is never primary — always collapsed/secondary.
-    # Not a user "Erweiterte Einstellungen" page; honest label: Entwickler / Diagnose.
-    # Remains in the tree so advanced access stays possible without looking like settings.
-    _ = is_track_b_dev_defaults_enabled  # reserved for future stricter gating
     column_controls: list[ft.Control] = [
         ft.Container(
             padding=ft.Padding.symmetric(horizontal=8),
@@ -144,27 +143,33 @@ def _build_sidebar(
         ),
         ft.Container(height=2),
         daily_group,
-        ft.Container(height=10),
-        make_expansion_tile(
-            title=ft.Text(
-                NAV_GROUP_ADVANCED,
-                size=10,
-                weight=ft.FontWeight.W_600,
-                color=COLOR_SIDEBAR_GROUP,
-            ),
-            initially_expanded=False,
-            controls=[
-                ft.Container(
-                    padding=ft.Padding.only(left=4, right=4, bottom=4),
-                    content=admin_group,
-                )
-            ],
-            data=(
-                "nav_dev_diagnose_collapsed_secondary|"
-                "not_erweiterte_einstellungen|dev_advanced_only"
-            ),
-        ),
     ]
+    if show_dev_nav:
+        column_controls.extend(
+            [
+                ft.Container(height=10),
+                make_expansion_tile(
+                    title=ft.Text(
+                        NAV_GROUP_ADVANCED,
+                        size=10,
+                        weight=ft.FontWeight.W_600,
+                        color=COLOR_SIDEBAR_GROUP,
+                    ),
+                    initially_expanded=False,
+                    controls=[
+                        ft.Container(
+                            padding=ft.Padding.only(left=4, right=4, bottom=4),
+                            content=admin_group,
+                        )
+                    ],
+                    data=(
+                        "nav_dev_diagnose_collapsed_secondary|"
+                        "not_erweiterte_einstellungen|dev_advanced_only|"
+                        "dev_defaults_only|hidden_from_normal_menu"
+                    ),
+                ),
+            ]
+        )
 
     sidebar = ft.Container(
         key="ui-v2-sidebar",

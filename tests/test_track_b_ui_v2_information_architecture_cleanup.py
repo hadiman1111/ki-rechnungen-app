@@ -269,7 +269,7 @@ def test_18_run_result_links_to_review() -> None:
     assert "ACTION_OPEN_REVIEW" in src
     assert "_navigate_to_review" in src
     assert "workspace_result_summary" in src
-    assert ACTION_OPEN_REVIEW == "Zur Prüfung öffnen"
+    assert ACTION_OPEN_REVIEW == "Prüfung öffnen"
 
 
 def test_19_running_state_activity_on_folders() -> None:
@@ -397,7 +397,7 @@ def test_36_status_separate_from_filename() -> None:
     src = REVIEW.read_text(encoding="utf-8")
     assert "MSG_CLARIFICATION_STATUS" in src
     assert "review_status_separate" in src
-    assert MSG_CLARIFICATION_STATUS.startswith("Zur Prüfung")
+    assert MSG_CLARIFICATION_STATUS.startswith("Prüfung")
 
 
 def test_37_missing_payment_guidance() -> None:

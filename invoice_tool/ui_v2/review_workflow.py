@@ -498,7 +498,7 @@ def build_review_queue_view_model(
 
     if not items:
         return ReviewQueueViewModel(
-            title="Zur Prüfung",
+            title="Prüfung",
             subtitle=REVIEW_QUEUE_SUBTITLE,
             empty=True,
             empty_title=EMPTY_REVIEW_TITLE,
@@ -515,7 +515,7 @@ def build_review_queue_view_model(
         )
 
     return ReviewQueueViewModel(
-        title="Zur Prüfung",
+        title="Prüfung",
         subtitle=REVIEW_QUEUE_SUBTITLE,
         empty=False,
         empty_title=None,

@@ -26,7 +26,10 @@ REVIEW_ACCORDION_LAYOUT_MARKER = "track_b_review_accordion_layout_v1"
 REVIEW_GUIDED_LAYOUT_MARKER = "track_b_guided_review_ux_cleanup_v1"
 REVIEW_CLARIFICATION_MARKER = "track_b_review_clarification_mode_v1"
 REVIEW_DETAIL_VISIBILITY_MARKER = "track_b_review_detail_visibility_and_cards_v1"
+REVIEW_PRODUCT_UX_REFINEMENT_MARKER = "track_b_review_product_ux_refinement_v1"
 REVIEW_DETAIL_ANCHOR_MARKER = "review_detail_anchor_selected_top"
+REVIEW_CARD_SCROLL_TARGET_MARKER = "review_card_scroll_target_full_card"
+REVIEW_FILENAME_SCROLL_TARGET_MARKER = "review_filename_section_scroll_target"
 REVIEW_ACTIVE_SECTION_MARKER = "review_active_section_selected"
 COMPACT_DETAIL_CARD_MARKER = "review_compact_detail_card_v1"
 SECTION_HEADER_MARKER = "review_section_header_compact"
@@ -68,7 +71,7 @@ CLEAN_USER_FILENAME_MARKER = "clean_user_facing_filename_no_internal_prefix"
 ACTION_WORKSPACE_EDIT = "Bearbeiten"
 ACTION_CHANGE_PROFILE = ACTION_WORKSPACE_EDIT
 ACTION_EDIT_CONFIGURATIONS = ACTION_WORKSPACE_EDIT
-ACTION_OPEN_REVIEW = "Zur Prüfung öffnen"
+ACTION_OPEN_REVIEW = "Prüfung öffnen"
 ACTION_CREATE_PROFILE = "Profil erstellen"
 ACTION_CREATE_CONFIGURATION = "Konfiguration erstellen"
 ACTION_SAVE_CONFIGURATION = "Konfiguration speichern"
@@ -86,7 +89,7 @@ LABEL_OUTPUT_FOLDER = "Ausgangsordner"
 LABEL_INPUT_FILES = "Eingangsdateien"
 LABEL_PROPOSED_OUTPUT_FILES = "Vorgeschlagene Ausgabedateien"
 LABEL_ORIGINAL_FILE = "Originaldatei"
-LABEL_PROPOSED_FILENAME = "Vorgeschlagener Dateiname"
+LABEL_PROPOSED_FILENAME = "Geplanter Dateiname"
 LABEL_NO_PROPOSAL_YET = "Noch kein Vorschlag"
 MSG_NOT_CHECKED_YET = "Noch nicht geändert"
 MSG_NO_RESULT_YET = "Noch kein Ergebnis vorhanden."
@@ -100,7 +103,10 @@ MSG_RUN_ACTIVITY = "Prüfung läuft…"
 MSG_FILENAME_FOLLOWS_SCHEMA = (
     "Der Dateiname folgt einem festen Schema. Bitte ergänze fehlende Merkmale."
 )
-MSG_CLARIFICATION_STATUS = "Zur Prüfung · Vorschlag · Nicht final geschrieben"
+MSG_CLARIFICATION_STATUS = "Prüfung · Vorschlag · Nicht final geschrieben"
+MSG_PLANNED_FILENAME_HELPER = (
+    "Die App schlägt diesen geplanten Dateinamen vor."
+)
 SECTION_ADVANCED_HINTS = "Hinweise & Diagnose"
 SECTION_ADVANCED_PROFILE = "Erweiterte Profilinformationen"
 SECTION_ADVANCED_CONFIG = "Erweiterte Hinweise"
@@ -130,7 +136,7 @@ ACTION_DETAILS_CLOSE = "Details schließen"
 LABEL_REVIEW_DOC_NAME = "Dokumentname"
 LABEL_REVIEW_DATE = "Datum"
 LABEL_REVIEW_AMOUNT = "Betrag"
-LABEL_SUGGESTED_FILENAME = "Vorgeschlagener Dateiname"
+LABEL_SUGGESTED_FILENAME = "Geplanter Dateiname"
 ACTION_EDIT_FILENAME = "Dateiname bearbeiten"
 ACTION_SAVE_FILENAME = "Speichern"
 ACTION_CANCEL_FILENAME = "Abbrechen"
@@ -143,8 +149,12 @@ SECTION_EMPFEHLUNG = "Empfehlung"
 SECTION_GUIDED_STATUS = "Status & Empfehlung"
 SECTION_TEST_TOOLS = "Test & Nachweis"
 # Scroll/anchor keys for inline review detail visibility (Flet Column.scroll_to).
+# Card click → full file card; filename edit → Dateiname section (separate targets).
 REVIEW_PAGE_SCROLL_KEY = "review_page_scroll_column"
-REVIEW_ITEM_ANCHOR_PREFIX = "review-detail-anchor-"
+REVIEW_CARD_ANCHOR_PREFIX = "review-card-anchor-"
+REVIEW_FILENAME_SECTION_ANCHOR_PREFIX = "review-filename-section-anchor-"
+# Compatibility alias: item/detail block still keyed via card anchor prefix.
+REVIEW_ITEM_ANCHOR_PREFIX = REVIEW_CARD_ANCHOR_PREFIX
 MSG_GUIDED_SAFETY_LINE = "Nur Vorschau — Originale bleiben unverändert."
 MSG_GUIDED_STATUS_REVIEW = "Dieses Dokument bleibt zur Prüfung."
 MSG_GUIDED_REC_NOT_AMEX = "Nicht als American Express zuordnen."
@@ -189,16 +199,16 @@ MSG_USER_REVIEW_SUBTITLE = "Dokumente prüfen und entscheiden."
 MSG_REVIEW_SAFETY_ONCE = "Nur Vorschau — Originale bleiben unverändert."
 
 # Simple user review questions (primary surface).
-SECTION_ERKANNT = "Was wurde erkannt?"
+SECTION_ERKANNT = "Erkannte Angaben"
 SECTION_UNKLAR = "Was ist unklar?"
-SECTION_DATEINAME = "Was schlägt die App vor?"
+SECTION_DATEINAME = "Dateiname"
 SECTION_ENTSCHEIDEN = "Was muss ich entscheiden?"
 SECTION_FINAL_WRITE_Q = "Finalisierung / Vorschau-Sicherheit"
 SECTION_BEREIT = "Bereite Dokumente"
 SECTION_PRUEFUNG = "Dokumente zur Prüfung"
 SECTION_TECHNISCHE = "Technische Details"
 FILTER_ALL_DOCS = "Alle"
-FILTER_REVIEW_DOCS = "Zur Prüfung"
+FILTER_REVIEW_DOCS = "Prüfung"
 FILTER_READY_DOCS = "Bereit"
 
 # Compatibility aliases for declutter-era imports / tests.
@@ -225,8 +235,8 @@ COMPACT_REVIEW_DETAIL_SECTION_TITLES = (
     SECTION_STATUS,
     SECTION_EMPFEHLUNG,
     SECTION_ENTSCHEIDEN,
-    SECTION_ERKANNT,
     SECTION_DATEINAME,
+    SECTION_ERKANNT,
 )
 
 BADGE_PAYPAL = "PayPal"
@@ -674,48 +684,89 @@ def document_art_display_label(detail: Any) -> str:
     return art or "Rechnung"
 
 
-def derive_recognized_fields(detail: Any) -> tuple[tuple[str, str], ...]:
-    """Fields for „Was wurde erkannt?“ — plain German, no technical keys."""
+def _payment_is_confident(detail: Any) -> bool:
+    """True when Zahlungsart/Konto is safe enough for „Erkannte Angaben“."""
 
-    return (
-        (
-            "Originaldatei",
-            str(
-                _g(detail, "source_filename")
-                or _g(detail, "document_label")
-                or "—"
-            ),
-        ),
-        (
-            "Lieferant / Name",
-            str(
-                _g(detail, "counterparty_name")
-                or _g(detail, "supplier")
-                or "—"
-            ),
-        ),
-        ("Datum", str(_g(detail, "invoice_date") or "—")),
-        (
-            "Betrag",
-            str(
-                _g(detail, "selected_amount")
-                or _g(detail, "amount")
-                or "—"
-            ),
-        ),
-        ("Zahlungsart", payment_display_label(detail)),
-        ("Dokumentart", document_art_display_label(detail)),
-    )
+    payment = _document_payment(detail)
+    if not payment:
+        return False
+    kind = review_case_kind(detail)
+    if kind in {CASE_MISSING_PAYMENT, CASE_CARD_NOT_AMEX}:
+        return False
+    if payment_display_label(detail) in {"", "nicht sicher erkannt", "—"}:
+        return False
+    return True
+
+
+def derive_open_decision_points(detail: Any) -> tuple[str, ...]:
+    """Open / uncertain points only — for „Was muss ich entscheiden?“."""
+
+    kind = review_case_kind(detail)
+    if kind == CASE_MISSING_PAYMENT:
+        return (MSG_REC_MISSING_PAYMENT_PLAIN,)
+    if kind == CASE_CARD_NOT_AMEX:
+        return (
+            "Kartenzahlung erkannt, aber American Express ist nicht belegt. "
+            "Bitte entscheiden Sie, ob der Beleg unklar bleiben oder eine "
+            "Kartenregel angelegt werden soll.",
+        )
+    if kind == CASE_PAYPAL:
+        if paypal_action_relevant(detail):
+            return (
+                "PayPal erkannt, aber keine passende PayPal-Regel vorhanden. "
+                "Bitte entscheiden Sie, ob der Vorschlag akzeptiert oder "
+                "zur Prüfung belassen werden soll.",
+            )
+        return (
+            "PayPal-Vorschlag prüfen und entscheiden, ob er übernommen werden soll.",
+        )
+    if kind == CASE_STORNO:
+        return (
+            "Storno erkannt. Bitte Betrag, Datum und Zahlungsart prüfen und "
+            "entscheiden, wie fortgefahren werden soll.",
+        )
+    why = derive_why_review_plain_german(detail)
+    if why:
+        return why
+    return (MSG_REC_GENERIC,)
+
+
+def derive_recognized_fields(detail: Any) -> tuple[tuple[str, str], ...]:
+    """Safe core values for „Erkannte Angaben“ — no open/uncertain points."""
+
+    fields: list[tuple[str, str]] = []
+    date = str(_g(detail, "invoice_date") or "").strip()
+    if date and date != "—":
+        fields.append(("Datum", date))
+    supplier = str(
+        _g(detail, "counterparty_name") or _g(detail, "supplier") or ""
+    ).strip()
+    if supplier and supplier != "—":
+        fields.append(("Lieferant", supplier))
+    amount = str(
+        _g(detail, "selected_amount") or _g(detail, "amount") or ""
+    ).strip()
+    if amount and amount != "—":
+        fields.append(("Betrag", amount))
+    if _payment_is_confident(detail):
+        fields.append(("Zahlungsart", payment_display_label(detail)))
+    art = document_art_display_label(detail)
+    if art:
+        fields.append(("Belegart", art))
+    return tuple(fields)
 
 
 def derive_decision_prompt(detail: Any) -> str:
     """Single plain-German decision question for the selected case."""
 
+    points = derive_open_decision_points(detail)
+    if points:
+        return points[0]
     kind = review_case_kind(detail)
     if kind == CASE_PAYPAL:
         return "Was möchten Sie mit diesem PayPal-Vorschlag tun?"
     if kind == CASE_MISSING_PAYMENT:
-        return "Zahlungsart fehlt — wie möchten Sie fortfahren?"
+        return MSG_REC_MISSING_PAYMENT_PLAIN
     if kind == CASE_CARD_NOT_AMEX:
         return (
             "Kartenzahlung ohne belegte AMEX — als unklar lassen "
@@ -975,10 +1026,15 @@ __all__ = (
     "INLINE_DETAIL_UNDER_SELECTED_CARD",
     "INTERNAL_FILENAME_PREFIXES",
     "REVIEW_ACTIVE_SECTION_MARKER",
+    "REVIEW_CARD_ANCHOR_PREFIX",
+    "REVIEW_CARD_SCROLL_TARGET_MARKER",
     "REVIEW_DETAIL_ANCHOR_MARKER",
     "REVIEW_DETAIL_VISIBILITY_MARKER",
+    "REVIEW_FILENAME_SCROLL_TARGET_MARKER",
+    "REVIEW_FILENAME_SECTION_ANCHOR_PREFIX",
     "REVIEW_ITEM_ANCHOR_PREFIX",
     "REVIEW_PAGE_SCROLL_KEY",
+    "REVIEW_PRODUCT_UX_REFINEMENT_MARKER",
     "SECTION_HEADER_MARKER",
     "SECTION_EMPFEHLUNG",
     "SECTION_STATUS",
@@ -1017,6 +1073,7 @@ __all__ = (
     "MSG_FILENAME_FOLLOWS_SCHEMA",
     "MSG_FILENAME_PREVIEW_HELPER",
     "MSG_FILENAME_PREVIEW_ONLY",
+    "MSG_PLANNED_FILENAME_HELPER",
     "MSG_FINAL_WRITE_USER_ANSWER",
     "MSG_GUIDED_SAFETY_LINE",
     "MSG_GUIDED_STATUS_REVIEW",
@@ -1109,6 +1166,7 @@ __all__ = (
     "truncate_filename_display",
     "derive_decision_prompt",
     "derive_guided_status_lines",
+    "derive_open_decision_points",
     "derive_primary_decision_action",
     "derive_primary_list_action",
     "derive_recognized_fields",

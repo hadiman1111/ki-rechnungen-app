@@ -379,6 +379,13 @@ def test_13_test_tools_collapsed_by_default() -> None:
     assert "initially_expanded=False" in tools_fn or "expanded=False" in tools_fn
     assert "_finalization_dry_run_panel" in tools_fn
     assert "_sandbox_final_write_panel" in tools_fn
+    # Normal product review gates Test & Nachweis behind Track-B dev defaults.
+    detail_fn = src.split("def _selected_detail_section_controls")[1].split(
+        "def build_review_page("
+    )[0]
+    assert "is_track_b_dev_defaults_enabled()" in detail_fn
+    gated = detail_fn.split("if is_track_b_dev_defaults_enabled():")[1]
+    assert "_test_tools_collapsed" in gated
 
 
 def test_14_safety_line_visible() -> None:

@@ -239,8 +239,8 @@ def test_04_compact_detail_sections_present() -> None:
     detail_fn = _detail_controls_src()
     assert "_guided_status_panel" in detail_fn
     assert detail_fn.index("_guided_status_panel") < detail_fn.index("SECTION_ENTSCHEIDEN")
-    assert detail_fn.index("SECTION_ENTSCHEIDEN") < detail_fn.index("SECTION_ERKANNT")
-    assert detail_fn.index("SECTION_ERKANNT") < detail_fn.index("_filename_preview_panel")
+    assert detail_fn.index("SECTION_ENTSCHEIDEN") < detail_fn.index("_filename_preview_panel")
+    assert detail_fn.index("_filename_preview_panel") < detail_fn.index("SECTION_ERKANNT")
 
 
 def test_05_section_headers_marked() -> None:

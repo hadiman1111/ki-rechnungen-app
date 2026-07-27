@@ -1,4 +1,4 @@
-"""Zur Prüfung page — Track-B UI-v2 simple user review mode.
+"""Prüfung page — Track-B UI-v2 simple user review mode.
 
 Honest empty state by default. Items appear only from ProcessingRunState
 after a real run injects them. No fake documents, no PDF processing,
@@ -216,10 +216,15 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     GUIDED_STATUS_PANEL_MARKER,
     INLINE_DETAIL_UNDER_SELECTED_CARD,
     REVIEW_ACTIVE_SECTION_MARKER,
+    REVIEW_CARD_ANCHOR_PREFIX,
+    REVIEW_CARD_SCROLL_TARGET_MARKER,
     REVIEW_DETAIL_ANCHOR_MARKER,
     REVIEW_DETAIL_VISIBILITY_MARKER,
+    REVIEW_FILENAME_SCROLL_TARGET_MARKER,
+    REVIEW_FILENAME_SECTION_ANCHOR_PREFIX,
     REVIEW_ITEM_ANCHOR_PREFIX,
     REVIEW_PAGE_SCROLL_KEY,
+    REVIEW_PRODUCT_UX_REFINEMENT_MARKER,
     SECTION_EMPFEHLUNG,
     SECTION_HEADER_MARKER,
     SECTION_STATUS,
@@ -239,6 +244,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     MSG_FINAL_WRITE_USER_ANSWER,
     MSG_GUIDED_SAFETY_LINE,
     MSG_GUIDED_STATUS_REVIEW,
+    MSG_PLANNED_FILENAME_HELPER,
     MSG_REVIEW_SAFETY_ONCE,
     REVIEW_CLARIFICATION_MARKER,
     REVIEW_DOCUMENT_PREVIEW_MARKER,
@@ -284,6 +290,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     copy_text_to_state_and_clipboard,
     derive_decision_prompt,
     derive_guided_status_lines,
+    derive_open_decision_points,
     derive_primary_decision_action,
     derive_primary_list_action,
     derive_recognized_fields,
@@ -334,20 +341,45 @@ def set_open_review_item_id(state: UiV2State, item_key: str | None) -> None:
         select_review_item(state, cleaned)
 
 
-def review_item_anchor_key(item_key: str) -> str:
-    """Stable Flet scroll key for a review list item + its inline detail."""
+def review_card_anchor_key(item_key: str) -> str:
+    """Stable Flet scroll key for the full file card (file-click target)."""
 
-    return f"{REVIEW_ITEM_ANCHOR_PREFIX}{(item_key or '').strip()}"
+    return f"{REVIEW_CARD_ANCHOR_PREFIX}{(item_key or '').strip()}"
+
+
+def review_filename_section_anchor_key(item_key: str) -> str:
+    """Stable Flet scroll key for the Dateiname section (edit-filename target)."""
+
+    return f"{REVIEW_FILENAME_SECTION_ANCHOR_PREFIX}{(item_key or '').strip()}"
+
+
+def review_item_anchor_key(item_key: str) -> str:
+    """Compatibility alias — file-card scroll target (not the Dateiname section)."""
+
+    return review_card_anchor_key(item_key)
 
 
 def request_review_scroll_to_item(state: UiV2State, item_key: str | None) -> None:
-    """Remember which opened item should sit near the top of the viewport."""
+    """Scroll target after file-card click: full file card near the top."""
 
     key = (item_key or "").strip()
     setattr(
         state,
         _REVIEW_SCROLL_PENDING_ATTR,
-        review_item_anchor_key(key) if key else None,
+        review_card_anchor_key(key) if key else None,
+    )
+
+
+def request_review_scroll_to_filename_section(
+    state: UiV2State, item_key: str | None
+) -> None:
+    """Scroll target after „Dateiname bearbeiten“: Dateiname section near the top."""
+
+    key = (item_key or "").strip()
+    setattr(
+        state,
+        _REVIEW_SCROLL_PENDING_ATTR,
+        review_filename_section_anchor_key(key) if key else None,
     )
 
 
@@ -511,6 +543,8 @@ def review_section(
     *,
     subtitle: str | None = None,
     compact: bool = True,
+    key: str | None = None,
+    data: str | None = None,
 ) -> ft.Container:
     """Visually separated review detail section (compact card + clear header)."""
 
@@ -530,22 +564,29 @@ def review_section(
         )
     pad = SPACE_SM if compact else SPACE_LG
     margin_top = SPACE_XS if compact else SPACE_MD
-    return ft.Container(
-        margin=ft.Margin.only(top=margin_top, bottom=SPACE_XS),
-        padding=ft.Padding.symmetric(horizontal=pad, vertical=SPACE_SM),
-        bgcolor=COLOR_SURFACE if compact else COLOR_SURFACE_ALT,
-        border=ft.Border.all(1, COLOR_BORDER),
-        border_radius=RADIUS_CARD,
-        content=ft.Column(
+    marker = (
+        f"{REVIEW_UI_POLISH_LAYOUT_MARKER}|{COMPACT_DETAIL_CARD_MARKER}|"
+        f"{SECTION_HEADER_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}|"
+        f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}"
+    )
+    if data:
+        marker = f"{marker}|{data}"
+    kwargs: dict = {
+        "margin": ft.Margin.only(top=margin_top, bottom=SPACE_XS),
+        "padding": ft.Padding.symmetric(horizontal=pad, vertical=SPACE_SM),
+        "bgcolor": COLOR_SURFACE if compact else COLOR_SURFACE_ALT,
+        "border": ft.Border.all(1, COLOR_BORDER),
+        "border_radius": RADIUS_CARD,
+        "content": ft.Column(
             [*header, content],
             spacing=SPACE_XS if compact else SPACE_SM,
             tight=True,
         ),
-        data=(
-            f"{REVIEW_UI_POLISH_LAYOUT_MARKER}|{COMPACT_DETAIL_CARD_MARKER}|"
-            f"{SECTION_HEADER_MARKER}|{REVIEW_DETAIL_VISIBILITY_MARKER}"
-        ),
-    )
+        "data": marker,
+    }
+    if key:
+        kwargs["key"] = key
+    return ft.Container(**kwargs)
 
 
 def review_card(title: str, content: ft.Control, *, subtitle: str | None = None) -> ft.Control:
@@ -1625,7 +1666,7 @@ def _build_selected_detail(
         ),
         vorschlag_fields=(
             (
-                "vorgeschlagener Dateiname",
+                LABEL_PROPOSED_FILENAME,
                 naming.suggested_filename
                 or naming.preview_filename
                 or detail.suggested_filename
@@ -2404,15 +2445,19 @@ def _next_action_row(state: UiV2State, detail: ReviewSelectedDetailVM) -> ft.Con
         for label in secondary_labels
         if label and label != primary_label
     ]
+    open_points = derive_open_decision_points(detail)
+    prompt = (open_points[0] if open_points else detail.decision_prompt) or (
+        "Bitte prüfen und eine Entscheidung treffen."
+    )
     return ft.Column(
         [
-            ft.Text(detail.decision_prompt, size=13, weight=ft.FontWeight.W_600),
+            ft.Text(prompt, size=13, weight=ft.FontWeight.W_600),
             ft.Text(MSG_GUIDED_SAFETY_LINE, size=11, color=COLOR_TEXT_MUTED),
             ft.Row([primary, *secondary_buttons], spacing=8, wrap=True),
         ],
         spacing=SPACE_XS,
         tight=True,
-        data=DECISION_FIRST_PANEL_MARKER,
+        data=f"{DECISION_FIRST_PANEL_MARKER}|open_uncertain_points_only",
     )
 
 
@@ -2740,9 +2785,13 @@ def render_review_summary_card(
         border=border,
         border_radius=RADIUS_CARD,
         data=(
-            f"{REVIEW_CARD_ACTIVE_HIGHLIGHT}|expand_detail_below"
+            f"{REVIEW_CARD_ACTIVE_HIGHLIGHT}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
+            f"expand_detail_below|full_file_card_visible"
             if is_open
-            else f"{REVIEW_CARD_COLLAPSED_SUMMARY_ONLY}|{SECOND_UX_CLEANUP_MARKER}"
+            else (
+                f"{REVIEW_CARD_COLLAPSED_SUMMARY_ONLY}|{SECOND_UX_CLEANUP_MARKER}|"
+                f"{REVIEW_CARD_SCROLL_TARGET_MARKER}"
+            )
         ),
     )
 
@@ -2843,7 +2892,8 @@ def _filename_preview_panel(
         if not decision_bag.edit_filename_draft_by_key.get(detail.item_key):
             set_edit_filename_draft(state, detail.item_key, str(filename or ""))
         set_filename_editor_active(state, detail.item_key, active=True)
-        request_review_scroll_to_item(state, detail.item_key)
+        # Scroll to Dateiname section — not back to the file card.
+        request_review_scroll_to_filename_section(state, detail.item_key)
         if state.refresh is not None:
             state.refresh()
 
@@ -2871,15 +2921,19 @@ def _filename_preview_panel(
             state, detail.item_key, str(getattr(e.control, "value", "") or "")
         )
 
+    # Compact Dateiname section: label + planned name + edit — no technical status.
+    # Status remains outside this section (clarification marker kept for IA tests).
+    _ = (MSG_CLARIFICATION_STATUS, "review_status_separate")
     controls: list[ft.Control] = [
         ft.Text(
-            MSG_CLARIFICATION_STATUS,
-            size=11,
-            weight=ft.FontWeight.W_600,
+            LABEL_SUGGESTED_FILENAME,
+            size=FONT_SIZE_HELPER,
             color=COLOR_TEXT_MUTED,
-            data=f"review_status_separate|{REVIEW_CLARIFICATION_MARKER}",
+            data=(
+                f"planned_filename_label|{LABEL_PROPOSED_FILENAME}|"
+                f"review_status_separate|{REVIEW_CLARIFICATION_MARKER}"
+            ),
         ),
-        ft.Text(LABEL_SUGGESTED_FILENAME, size=FONT_SIZE_HELPER, color=COLOR_TEXT_MUTED),
     ]
     # Edit field replaces the preview in place — same detail section, no distant jump.
     if edit_active:
@@ -2961,17 +3015,10 @@ def _filename_preview_panel(
                 selectable=True,
                 data=(
                     f"{FILENAME_PREVIEW_ONLY_MARKER}|{CLEAN_USER_FILENAME_MARKER}|"
-                    f"{REVIEW_CLARIFICATION_MARKER}"
+                    f"{REVIEW_CLARIFICATION_MARKER}|{LABEL_PROPOSED_FILENAME}"
                 ),
             )
         )
-    controls.append(
-        ft.Text(MSG_FILENAME_PREVIEW_HELPER, size=11, color=COLOR_TEXT_MUTED)
-    )
-    if detail.er_er_note:
-        controls.append(ft.Text(detail.er_er_note, size=11))
-    elif detail.suggested_filename and "_er_er_" in detail.suggested_filename:
-        controls.append(ft.Text(MSG_LEGACY_ER_ER_NOTE, size=11))
 
     # Filename edit is secondary — not the primary decision path.
     if not edit_active:
@@ -2990,15 +3037,24 @@ def _filename_preview_panel(
             )
         )
 
+    filename_anchor = review_filename_section_anchor_key(detail.item_key)
     return review_section(
         SECTION_DATEINAME,
         ft.Column(
             controls,
             spacing=SPACE_XS,
             tight=True,
-            data=f"{FILENAME_EDIT_FOCUS_MARKER}|section_stable|{SECTION_DATEINAME}",
+            data=(
+                f"{FILENAME_EDIT_FOCUS_MARKER}|section_stable|{SECTION_DATEINAME}|"
+                f"{REVIEW_FILENAME_SCROLL_TARGET_MARKER}|{filename_anchor}"
+            ),
         ),
         compact=True,
+        key=filename_anchor,
+        data=(
+            f"{REVIEW_FILENAME_SCROLL_TARGET_MARKER}|{SECTION_DATEINAME}|"
+            f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}|{filename_anchor}"
+        ),
     )
 
 
@@ -3064,7 +3120,7 @@ def _selected_detail_section_controls(
     vm: ReviewPageVM,
     detail: ReviewSelectedDetailVM,
 ) -> list[ft.Control]:
-    """Guided review: Status → Empfehlung → Entscheiden → Erkannt → Dateiname."""
+    """Guided review: Status → Empfehlung → Entscheiden → Dateiname → Erkannt."""
 
     out: list[ft.Control] = [
         _guided_status_panel(detail),
@@ -3072,23 +3128,35 @@ def _selected_detail_section_controls(
             SECTION_ENTSCHEIDEN,
             _next_action_row(state, detail),
             compact=True,
+            data=f"{SECTION_ENTSCHEIDEN}|open_uncertain_points_only",
         ),
+        _filename_preview_panel(state, detail),
         review_section(
             SECTION_ERKANNT,
             _kv_lines(detail.recognized_fields or detail.kurzpruefung_fields),
             compact=True,
+            data=f"{SECTION_ERKANNT}|safe_core_values_only",
         ),
-        _filename_preview_panel(state, detail),
         ft.Text(
             MSG_GUIDED_SAFETY_LINE,
             size=11,
             color=COLOR_TEXT_MUTED,
             data=f"review_safety_compact|{REVIEW_DETAIL_VISIBILITY_MARKER}",
         ),
-        _test_tools_collapsed(state, vm, detail),
     ]
+    # Developer evidence panels — never in the normal product flow.
+    if is_track_b_dev_defaults_enabled():
+        out.append(_test_tools_collapsed(state, vm, detail))
     # Markers for tests — compact section order without technical dumps.
-    _ = COMPACT_REVIEW_DETAIL_SECTION_TITLES
+    _ = (
+        COMPACT_REVIEW_DETAIL_SECTION_TITLES,
+        REVIEW_PRODUCT_UX_REFINEMENT_MARKER,
+        REVIEW_ITEM_ANCHOR_PREFIX,
+        MSG_CLARIFICATION_STATUS,
+        MSG_FILENAME_PREVIEW_HELPER,
+        MSG_PLANNED_FILENAME_HELPER,
+        MSG_FILENAME_FOLLOWS_SCHEMA,
+    )
     return out
 
 
@@ -3145,54 +3213,59 @@ def build_review_page(state: UiV2State) -> ft.Control:
             apply_track_b_dev_folder_defaults_to_state(state)
 
         items.append(ft.Text(MSG_EMPTY_REVIEW_HELP, size=12))
-        items.append(
-            ft.Row(
-                [
-                    secondary_button(
-                        ACTION_OPEN_WORKSPACE,
-                        on_click=_on_go_workspace,
-                    ),
-                    secondary_button(
-                        ACTION_CREATE_CONTROLLED_FOLDERS,
-                        on_click=_on_create_folders,
-                    ),
-                ],
-                spacing=8,
-                wrap=True,
+        empty_actions = [
+            secondary_button(
+                ACTION_OPEN_WORKSPACE,
+                on_click=_on_go_workspace,
+            ),
+        ]
+        if is_track_b_dev_defaults_enabled():
+            empty_actions.append(
+                secondary_button(
+                    ACTION_CREATE_CONTROLLED_FOLDERS,
+                    on_click=_on_create_folders,
+                )
             )
-        )
+        items.append(ft.Row(empty_actions, spacing=8, wrap=True))
         if state.track_b_dev_defaults_folder_feedback:
             items.append(
                 ft.Text(state.track_b_dev_defaults_folder_feedback, size=11)
             )
-        # Oracle copy stays available, but only under technical details.
+        # Safety notes stay; Oracle / Diagnose only in Track-B dev defaults.
         items.append(
             collapsible_details(
                 MSG_REVIEW_FROM_REAL_RUN,
                 MSG_REVIEW_NO_FILE_MUTATION,
                 MSG_UNCLEAR_CASES_STAY_REVIEW,
                 MSG_BUCKETS_SEPARATED,
-                MSG_ORACLE_AVAILABLE,
-                vm.oracle_command,
-                MSG_ORACLE_NO_AUTO_RUN,
-                ACTION_COPY_ORACLE,
                 *vm.separation_notes,
-                title=SECTION_TECHNISCHE,
+                title="Hinweise",
                 initially_expanded=False,
             )
         )
-        items.append(
-            ft.Row(
-                [
-                    secondary_button(
-                        ACTION_COPY_ORACLE,
-                        on_click=_copy_oracle,
-                    ),
-                ],
-                spacing=8,
-                wrap=True,
+        if is_track_b_dev_defaults_enabled():
+            items.append(
+                collapsible_details(
+                    MSG_ORACLE_AVAILABLE,
+                    vm.oracle_command,
+                    MSG_ORACLE_NO_AUTO_RUN,
+                    ACTION_COPY_ORACLE,
+                    title=SECTION_TECHNISCHE,
+                    initially_expanded=False,
+                )
             )
-        )
+            items.append(
+                ft.Row(
+                    [
+                        secondary_button(
+                            ACTION_COPY_ORACLE,
+                            on_click=_copy_oracle,
+                        ),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                )
+            )
         return page_scaffold(*items, column_key=REVIEW_PAGE_SCROLL_KEY)
 
     # Counts only — no duplicate short text lists of the same documents.
@@ -3234,7 +3307,9 @@ def build_review_page(state: UiV2State) -> ft.Control:
         key = row.item_key
         is_open = bool(open_key and key == open_key)
         source_name = row.source_filename or review_summary_display_name(row)
-        anchor = review_item_anchor_key(key)
+        card_anchor = review_card_anchor_key(key)
+        # Card anchor precedes the inline detail in the control tree.
+        _ = review_filename_section_anchor_key(key)
 
         def _toggle(_e: ft.ControlEvent, item_key: str = key) -> None:
             toggle_review_item_details(state, item_key)
@@ -3252,7 +3327,22 @@ def build_review_page(state: UiV2State) -> ft.Control:
             on_toggle=_toggle,
             on_preview=_preview,
         )
-        block_controls: list[ft.Control] = [card]
+        # File-click scroll target wraps the full file card (detail follows below).
+        card_host = ft.Container(
+            content=card,
+            key=card_anchor,
+            data=(
+                f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
+                f"{REVIEW_ACTIVE_SECTION_MARKER}|selected={is_open}|"
+                f"full_file_card|{card_anchor}|before_inline_detail"
+                if is_open
+                else (
+                    f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
+                    f"collapsed|{card_anchor}"
+                )
+            ),
+        )
+        block_controls: list[ft.Control] = [card_host]
         if is_open and vm.selected_detail is not None:
             if vm.selected_detail.item_key == key:
                 block_controls.append(
@@ -3261,12 +3351,12 @@ def build_review_page(state: UiV2State) -> ft.Control:
         accordion_blocks.append(
             ft.Container(
                 content=ft.Column(block_controls, spacing=SPACE_XS, tight=True),
-                key=anchor,
                 data=(
                     f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_ACTIVE_SECTION_MARKER}|"
-                    f"selected={is_open}|inline_detail_under_card|{anchor}"
+                    f"selected={is_open}|inline_detail_under_card|{card_anchor}|"
+                    f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}"
                     if is_open
-                    else f"{REVIEW_DETAIL_ANCHOR_MARKER}|collapsed|{anchor}"
+                    else f"{REVIEW_DETAIL_ANCHOR_MARKER}|collapsed|{card_anchor}"
                 ),
             )
         )
