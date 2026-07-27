@@ -20,6 +20,7 @@ import flet as ft
 from invoice_tool.ui_v2.components import (
     collapsible_details,
     compact_entry_row,
+    document_status_marker,
     empty_state,
     make_expansion_tile,
     page_header,
@@ -33,8 +34,11 @@ from invoice_tool.ui_v2.components import (
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
     COLOR_BORDER_STRONG,
+    COLOR_ERROR,
+    COLOR_ERROR_SOFT,
     COLOR_PRIMARY,
     COLOR_PRIMARY_SUBTLE,
+    COLOR_SUCCESS,
     COLOR_SURFACE,
     COLOR_SURFACE_ALT,
     COLOR_TEXT_MUTED,
@@ -211,9 +215,14 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     COLLAPSIBLE_CHEVRON_MARKER,
     COMPACT_DETAIL_CARD_MARKER,
     FILENAME_SECTION_EDITING_ACTIVE_MARKER,
+    DOCUMENT_STATUS_NEEDS_REVIEW_MARKER,
+    MSG_ALL_CHECKS_SUCCESSFUL,
     MSG_DECISION_CHOOSE_NEXT,
     PRODUCT_UI_MODE_CLEANUP_MARKER,
+    REVIEW_DECISION_LIST_FILTER_MARKER,
     REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER,
+    REVIEW_FOCUS_AND_STATUS_COLORS_MARKER,
+    REVIEW_TOP_FOCUS_MARKER,
     COMPACT_REVIEW_DETAIL_SECTION_TITLES,
     DECISION_FIRST_PANEL_MARKER,
     DETAIL_PANEL_DISTINCT_BACKGROUND,
@@ -316,6 +325,7 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     payment_display_label,
     paypal_action_relevant,
     review_case_kind,
+    review_item_needs_open_decision,
     split_ready_and_review_cases,
 )
 
@@ -1076,6 +1086,13 @@ class ReviewPageVM:
     accordion_single_open: bool = True
     details_open_action_label: str = ACTION_DETAILS_OPEN
     details_close_action_label: str = ACTION_DETAILS_CLOSE
+    # Status colors + top-focus review UX (Track-B hotfix).
+    all_checks_successful: bool = False
+    all_checks_successful_message: str = MSG_ALL_CHECKS_SUCCESSFUL
+    top_focus_marker: str = REVIEW_TOP_FOCUS_MARKER
+    decision_list_filter_marker: str = REVIEW_DECISION_LIST_FILTER_MARKER
+    status_colors_marker: str = REVIEW_FOCUS_AND_STATUS_COLORS_MARKER
+    primary_decision_item_count: int = 0
 
 
 def _suggested_rule_draft_fields(
@@ -1798,21 +1815,59 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         selected_key = open_key
         bag.selected_item_key = open_key
 
+    # Primary Prüfung list: only items that still need a user decision.
+    decision_detail_items: list[ReviewDetailItemVM] = []
+    for detail in detail_items:
+        key = detail.item_key or detail.document_id
+        decision = decision_bag.decisions_by_item_key.get(key)
+        readiness = decision_bag.readiness_by_item_key.get(key)
+        if review_item_needs_open_decision(
+            checked_preview=key in bag.checked_preview_keys,
+            excluded_from_export=key in bag.excluded_from_export_preview_keys,
+            finalization_ready=bool(getattr(readiness, "ready", False)),
+            decision_type=(
+                decision.decision_type if decision is not None else None
+            ),
+        ):
+            decision_detail_items.append(detail)
+    decision_keys = {
+        (d.item_key or d.document_id) for d in decision_detail_items
+    }
+    if open_key and open_key not in decision_keys:
+        set_open_review_item_id(state, None)
+        open_key = None
+    if open_key:
+        selected_key = open_key
+        bag.selected_item_key = open_key
+    elif selected_key and selected_key not in decision_keys:
+        selected_key = (
+            (decision_detail_items[0].item_key or decision_detail_items[0].document_id)
+            if decision_detail_items
+            else None
+        )
+        bag.selected_item_key = selected_key
     list_items = _build_list_items(
-        detail_items,
+        tuple(decision_detail_items),
         selected_key=selected_key,
         checked_keys=bag.checked_preview_keys,
         excluded_keys=bag.excluded_from_export_preview_keys,
         readiness_by_key=dict(decision_bag.readiness_by_item_key),
         open_key=open_key,
     )
+    all_checks_successful = (not list_items) and (
+        bool(detail_items)
+        or bool(getattr(flow, "recognized_count", 0))
+        or bool(getattr(flow, "result_count", 0))
+        or bool(getattr(run_state, "run_id", None))
+        or str(getattr(run_state, "status", "") or "") == "completed"
+    )
     selected_detail = None
     coverage_action_labels: tuple[str, ...] = ()
     draft_available = False
-    if selected_key:
+    if open_key:
         for detail in detail_items:
             key = detail.item_key or detail.document_id
-            if key == selected_key:
+            if key == open_key:
                 decision = decision_bag.decisions_by_item_key.get(key)
                 readiness = decision_bag.readiness_by_item_key.get(key)
                 selected_detail = _build_selected_detail(
@@ -1866,16 +1921,24 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
     return ReviewPageVM(
         title=queue.title,
         subtitle=queue.subtitle,
-        empty=flow.empty,
-        empty_title=queue.empty_title,
-        empty_detail=queue.empty_detail,
+        empty=bool(flow.empty and not all_checks_successful),
+        empty_title=(
+            MSG_ALL_CHECKS_SUCCESSFUL
+            if all_checks_successful
+            else queue.empty_title
+        ),
+        empty_detail=(
+            MSG_ALL_CHECKS_SUCCESSFUL
+            if all_checks_successful
+            else queue.empty_detail
+        ),
         items=raw_items,
         detail_items=detail_items,
         honest_copy=flow.honest_copy,
         mutates_files=False,
         error_count=flow.error_count,
         result_count=flow.recognized_count,
-        review_count=flow.review_count,
+        review_count=len(list_items),
         separation_notes=flow.separation_notes,
         actions_disabled=True,
         action_labels=action_labels,
@@ -2007,6 +2070,12 @@ def build_review_page_vm(state: UiV2State) -> ReviewPageVM:
         accordion_single_open=True,
         details_open_action_label=ACTION_DETAILS_OPEN,
         details_close_action_label=ACTION_DETAILS_CLOSE,
+        all_checks_successful=all_checks_successful,
+        all_checks_successful_message=MSG_ALL_CHECKS_SUCCESSFUL,
+        top_focus_marker=REVIEW_TOP_FOCUS_MARKER,
+        decision_list_filter_marker=REVIEW_DECISION_LIST_FILTER_MARKER,
+        status_colors_marker=REVIEW_FOCUS_AND_STATUS_COLORS_MARKER,
+        primary_decision_item_count=len(list_items),
     )
 
 
@@ -2768,15 +2837,33 @@ def render_review_summary_card(
     ) if on_preview is not None else ft.Container(height=0)
     border = ft.Border.all(
         2 if is_open else 1,
-        COLOR_PRIMARY if is_open else COLOR_BORDER,
+        COLOR_PRIMARY if is_open else COLOR_ERROR,
     )
     accent = ft.Container(
         width=4,
-        bgcolor=COLOR_PRIMARY if is_open else COLOR_BORDER,
+        bgcolor=COLOR_PRIMARY if is_open else COLOR_ERROR,
         border_radius=RADIUS_CARD,
     )
     body = ft.Column(
         [
+            ft.Row(
+                [
+                    document_status_marker("needs_review", size=18),
+                    ft.Text(
+                        truncate_filename_display(source_full),
+                        size=14,
+                        weight=ft.FontWeight.W_600,
+                        color=COLOR_ERROR,
+                        expand=True,
+                        data=(
+                            f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}|"
+                            f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}"
+                        ),
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
             mapping,
             ft.Text(
                 f"{LABEL_REVIEW_DOC_NAME}: {truncate_filename_display(source_full)}",
@@ -2814,16 +2901,22 @@ def render_review_summary_card(
         on_click=on_toggle,
         ink=True,
         padding=SPACE_MD,
-        bgcolor=COLOR_PRIMARY_SUBTLE if is_open else COLOR_SURFACE,
+        bgcolor=(
+            COLOR_PRIMARY_SUBTLE
+            if is_open
+            else COLOR_ERROR_SOFT
+        ),
         border=border,
         border_radius=RADIUS_CARD,
         data=(
             f"{REVIEW_CARD_ACTIVE_HIGHLIGHT}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
-            f"expand_detail_below|full_file_card_visible"
+            f"expand_detail_below|full_file_card_visible|"
+            f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}"
             if is_open
             else (
                 f"{REVIEW_CARD_COLLAPSED_SUMMARY_ONLY}|{SECOND_UX_CLEANUP_MARKER}|"
-                f"{REVIEW_CARD_SCROLL_TARGET_MARKER}"
+                f"{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
+                f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}"
             )
         ),
     )
@@ -3345,6 +3438,48 @@ def build_review_page(state: UiV2State) -> ft.Control:
         ),
     ]
 
+    if vm.all_checks_successful and not vm.list_items:
+        items.append(
+            ft.Container(
+                content=ft.Row(
+                    [
+                        document_status_marker("ok", size=22),
+                        ft.Text(
+                            MSG_ALL_CHECKS_SUCCESSFUL,
+                            size=16,
+                            weight=ft.FontWeight.W_600,
+                            color=COLOR_SUCCESS,
+                        ),
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=SPACE_MD,
+                bgcolor=COLOR_SURFACE,
+                border=ft.Border.all(1, COLOR_BORDER),
+                border_radius=RADIUS_CARD,
+                data=(
+                    f"review_all_checks_successful|{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|"
+                    f"{REVIEW_DECISION_LIST_FILTER_MARKER}|positive_empty_state|"
+                    f"no_dev_oracle_text"
+                ),
+            )
+        )
+
+        def _on_go_workspace_success(_e: ft.ControlEvent) -> None:
+            if state.navigate is not None:
+                state.navigate(NAV_WORKSPACE)
+            elif state.refresh is not None:
+                state.refresh()
+
+        items.append(
+            secondary_button(
+                ACTION_OPEN_WORKSPACE,
+                on_click=_on_go_workspace_success,
+            )
+        )
+        return page_scaffold(*items, column_key=REVIEW_PAGE_SCROLL_KEY)
+
     if vm.empty:
         items.append(
             empty_state(
@@ -3473,12 +3608,72 @@ def build_review_page(state: UiV2State) -> ft.Control:
 
     accordion_blocks: list[ft.Control] = []
     open_key = vm.open_review_item_id
+    focus_row: ReviewListItemVM | None = None
+    for row in vm.list_items:
+        if open_key and row.item_key == open_key:
+            focus_row = row
+            break
+
+    # Top-focus: selected file + detail rendered at the visible top (not mid-list).
+    if focus_row is not None and vm.selected_detail is not None:
+        focus_key = focus_row.item_key
+        focus_source = focus_row.source_filename or review_summary_display_name(focus_row)
+        focus_anchor = review_card_anchor_key(focus_key)
+        _ = review_filename_section_anchor_key(focus_key)
+
+        def _toggle_focus(_e: ft.ControlEvent, item_key: str = focus_key) -> None:
+            toggle_review_item_details(state, item_key)
+            if state.refresh is not None:
+                state.refresh()
+
+        def _preview_focus(_e: ft.ControlEvent, filename: str = focus_source) -> None:
+            open_review_document_preview(state, filename)
+            if state.refresh is not None:
+                state.refresh()
+
+        focus_card = render_review_summary_card(
+            focus_row,
+            is_open=True,
+            on_toggle=_toggle_focus,
+            on_preview=_preview_focus,
+        )
+        focus_card_host = ft.Container(
+            content=focus_card,
+            key=focus_anchor,
+            data=(
+                f"{REVIEW_TOP_FOCUS_MARKER}|{REVIEW_DETAIL_ANCHOR_MARKER}|"
+                f"{REVIEW_CARD_SCROLL_TARGET_MARKER}|{REVIEW_ACTIVE_SECTION_MARKER}|"
+                f"selected=True|full_file_card|{focus_anchor}|before_inline_detail|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}"
+            ),
+        )
+        block_controls: list[ft.Control] = [focus_card_host]
+        block_controls.append(
+            render_review_inline_detail(state, vm, vm.selected_detail)
+        )
+        items.append(
+            ft.Container(
+                content=ft.Column(block_controls, spacing=SPACE_XS, tight=True),
+                key=f"review-top-focus-{focus_key}",
+                data=(
+                    f"{REVIEW_TOP_FOCUS_MARKER}|{REVIEW_DETAIL_ANCHOR_MARKER}|"
+                    f"{REVIEW_ACTIVE_SECTION_MARKER}|selected=True|"
+                    f"inline_detail_under_card|{focus_anchor}|"
+                    f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}|"
+                    f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|top_focus_not_list_position"
+                ),
+                margin=ft.Margin.only(bottom=SPACE_MD),
+            )
+        )
+
     for row in vm.list_items:
         key = row.item_key
         is_open = bool(open_key and key == open_key)
+        # Avoid duplicating the selected file under the top-focus block.
+        if is_open:
+            continue
         source_name = row.source_filename or review_summary_display_name(row)
         card_anchor = review_card_anchor_key(key)
-        # Card anchor precedes the inline detail in the control tree.
         _ = review_filename_section_anchor_key(key)
 
         def _toggle(_e: ft.ControlEvent, item_key: str = key) -> None:
@@ -3493,51 +3688,62 @@ def build_review_page(state: UiV2State) -> ft.Control:
 
         card = render_review_summary_card(
             row,
-            is_open=is_open,
+            is_open=False,
             on_toggle=_toggle,
             on_preview=_preview,
         )
-        # File-click scroll target wraps the full file card (detail follows below).
         card_host = ft.Container(
             content=card,
             key=card_anchor,
             data=(
                 f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
-                f"{REVIEW_ACTIVE_SECTION_MARKER}|selected={is_open}|"
-                f"full_file_card|{card_anchor}|before_inline_detail"
-                if is_open
-                else (
-                    f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_CARD_SCROLL_TARGET_MARKER}|"
-                    f"collapsed|{card_anchor}"
-                )
+                f"collapsed|{card_anchor}|{REVIEW_DECISION_LIST_FILTER_MARKER}"
             ),
         )
-        block_controls: list[ft.Control] = [card_host]
-        if is_open and vm.selected_detail is not None:
-            if vm.selected_detail.item_key == key:
-                block_controls.append(
-                    render_review_inline_detail(state, vm, vm.selected_detail)
-                )
         accordion_blocks.append(
             ft.Container(
-                content=ft.Column(block_controls, spacing=SPACE_XS, tight=True),
+                content=ft.Column([card_host], spacing=SPACE_XS, tight=True),
                 data=(
-                    f"{REVIEW_DETAIL_ANCHOR_MARKER}|{REVIEW_ACTIVE_SECTION_MARKER}|"
-                    f"selected={is_open}|inline_detail_under_card|{card_anchor}|"
-                    f"{REVIEW_PRODUCT_UX_REFINEMENT_MARKER}"
-                    if is_open
-                    else f"{REVIEW_DETAIL_ANCHOR_MARKER}|collapsed|{card_anchor}"
+                    f"{REVIEW_DETAIL_ANCHOR_MARKER}|collapsed|{card_anchor}|"
+                    f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}"
                 ),
             )
         )
 
-    items.append(
-        section_block(
-            f"{SECTION_PRUEFUNG}: {vm.review_count} Dokument(e)",
-            stacked_list(*accordion_blocks),
-            subtitle="Datei anklicken — Detailfeld öffnet sich direkt darunter",
-        )
+    list_title = (
+        f"{SECTION_PRUEFUNG}: {vm.primary_decision_item_count} Dokument(e)"
+        if not open_key
+        else f"Weitere Prüffälle: {max(0, vm.primary_decision_item_count - 1)}"
     )
+    if accordion_blocks or not open_key:
+        list_body = (
+            stacked_list(*accordion_blocks)
+            if accordion_blocks
+            else ft.Text(
+                MSG_ALL_CHECKS_SUCCESSFUL
+                if not vm.list_items
+                else "Keine weiteren offenen Dateien.",
+                size=12,
+                color=COLOR_TEXT_MUTED,
+            )
+        )
+        items.append(
+            ft.Container(
+                content=section_block(
+                    list_title,
+                    list_body,
+                    subtitle=(
+                        "Datei anklicken — Detail erscheint oben im Prüfungsbereich"
+                        if not open_key
+                        else "Weitere Dateien zur Prüfung"
+                    ),
+                ),
+                data=(
+                    f"{REVIEW_DECISION_LIST_FILTER_MARKER}|"
+                    f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|decision_needed_only"
+                ),
+            )
+        )
 
     items.append(
         collapsible_details(

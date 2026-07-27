@@ -21,6 +21,7 @@ from invoice_tool.ui_v2.components import (
     dense_card,
     display_path_value,
     divider,
+    document_status_marker,
     empty_state,
     form_field_group,
     inline_warning,
@@ -106,6 +107,9 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     LABEL_PROPOSED_OUTPUT_FILES,
     LABEL_WORKSPACE_CONFIGURATION,
     LABEL_WORKSPACE_PROFILE,
+    DOCUMENT_STATUS_NEEDS_REVIEW_MARKER,
+    DOCUMENT_STATUS_OK_MARKER,
+    MSG_ALL_CHECKS_SUCCESSFUL,
     MSG_MISSING_TARGETS_CONFIG,
     MSG_NO_RESULT_YET,
     MSG_NOT_CHECKED_YET,
@@ -120,7 +124,12 @@ from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
     PICK_OUTPUT_FOLDER_CHOOSE,
     PRODUCT_UI_MODE_CLEANUP_MARKER,
     PRODUCT_UX_CLEANUP_MARKER,
+    REVIEW_FOCUS_AND_STATUS_COLORS_MARKER,
     SECOND_UX_CLEANUP_MARKER,
+    STATUS_UI_NEEDS_REVIEW,
+    STATUS_UI_NEUTRAL,
+    STATUS_UI_OK,
+    map_output_status_to_ui_kind,
     SECTION_DEV_DIAGNOSE,
     SECTION_TEST_NACHWEIS_COLLAPSED,
     START_CTA_HEIGHT_PX,
@@ -168,6 +177,8 @@ from invoice_tool.ui_v2.workspace_file_pairs import (
 )
 from invoice_tool.ui_v2.theme import (
     COLOR_BORDER,
+    COLOR_ERROR,
+    COLOR_ERROR_SOFT,
     COLOR_PRIMARY,
     COLOR_PRIMARY_SUBTLE,
     COLOR_SUCCESS,
@@ -879,6 +890,14 @@ def _workspace_file_pair_rows(
                 on_open_review()
 
         output_status = str(getattr(row_vm, "output_status", "") or "")
+        status_kind = map_output_status_to_ui_kind(output_status)
+        status_marker = document_status_marker(status_kind, size=16)
+        row_bg = COLOR_ERROR_SOFT if status_kind == STATUS_UI_NEEDS_REVIEW else None
+        name_color = (
+            COLOR_ERROR
+            if status_kind == STATUS_UI_NEEDS_REVIEW
+            else (COLOR_TEXT_PRIMARY if status_kind == STATUS_UI_OK else COLOR_TEXT_MUTED)
+        )
         actionable = output_row_is_actionable(
             output_status=output_status,
             output_display=target_full,
@@ -929,16 +948,18 @@ def _workspace_file_pair_rows(
         source_row = ft.Container(
             content=ft.Row(
                 [
+                    status_marker,
                     ft.Text(
                         truncate_filename_display(source_full),
                         size=PAIR_ROW_FONT_SIZE,
                         weight=ft.FontWeight.W_500,
+                        color=name_color if status_kind != STATUS_UI_NEUTRAL else COLOR_TEXT_PRIMARY,
                         tooltip=source_full,
                         expand=True,
                         no_wrap=True,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
-                        data=f"file_pair_source_full|{source_full}",
+                        data=f"file_pair_source_full|{source_full}|status={status_kind}",
                     ),
                     eye_control,
                 ],
@@ -951,11 +972,15 @@ def _workspace_file_pair_rows(
                 horizontal=PAIR_ROW_PADDING_H,
             ),
             alignment=ft.Alignment.CENTER_LEFT,
+            bgcolor=row_bg,
             border=row_border,
             data=(
                 f"workspace_file_pair_row|{index}|input|nav_review|"
                 f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
-                f"{shared_row_style}|source={source_full}|same_row|stable_order"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
+                f"{DOCUMENT_STATUS_OK_MARKER if status_kind == STATUS_UI_OK else ''}"
+                f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER if status_kind == STATUS_UI_NEEDS_REVIEW else ''}"
+                f"|{shared_row_style}|source={source_full}|same_row|stable_order"
             ),
         )
         # Single-line status/name keeps output rows aligned with input rows.
@@ -969,7 +994,7 @@ def _workspace_file_pair_rows(
                 content=ft.Icon(
                     ft.Icons.FACT_CHECK_OUTLINED,
                     size=EYE_ICON_SIZE,
-                    color=COLOR_TEXT_MUTED,
+                    color=COLOR_ERROR if status_kind == STATUS_UI_NEEDS_REVIEW else COLOR_TEXT_MUTED,
                 ),
                 width=EYE_ICON_HIT_SIZE,
                 height=EYE_ICON_HIT_SIZE,
@@ -986,9 +1011,13 @@ def _workspace_file_pair_rows(
             def _on_output_hover(e: ft.HoverEvent) -> None:
                 control = e.control
                 if getattr(e, "data", None) == "true":
-                    control.bgcolor = _OUTPUT_ROW_HOVER_BG
+                    control.bgcolor = (
+                        COLOR_ERROR_SOFT
+                        if status_kind == STATUS_UI_NEEDS_REVIEW
+                        else _OUTPUT_ROW_HOVER_BG
+                    )
                 else:
-                    control.bgcolor = None
+                    control.bgcolor = row_bg
                 try:
                     control.update()
                 except Exception:
@@ -997,9 +1026,11 @@ def _workspace_file_pair_rows(
             target_row = ft.Container(
                 content=ft.Row(
                     [
+                        document_status_marker(status_kind, size=16),
                         ft.Text(
                             truncate_filename_display(target_full),
                             size=PAIR_ROW_FONT_SIZE,
+                            color=name_color,
                             tooltip=f"{target_tooltip} · {action_tooltip}",
                             expand=True,
                             no_wrap=True,
@@ -1007,7 +1038,7 @@ def _workspace_file_pair_rows(
                             overflow=ft.TextOverflow.ELLIPSIS,
                             data=(
                                 f"file_pair_target_full|{target_full}|proposed={proposed}|"
-                                f"file_pair_row_status|{status_label}|"
+                                f"file_pair_row_status|{status_label}|status={status_kind}|"
                                 f"{OUTPUT_ROW_ACTIONABLE_MARKER}"
                             ),
                         ),
@@ -1025,12 +1056,14 @@ def _workspace_file_pair_rows(
                 on_click=_on_target_click,
                 on_hover=_on_output_hover,
                 ink=True,
+                bgcolor=row_bg,
                 border=row_border,
                 # Flet 0.85 Container: no cursor kwarg — hover via on_hover only.
                 data=(
                     f"workspace_file_pair_row|{index}|output|nav_review|clickable|"
                     f"{OUTPUT_ROW_ACTIONABLE_MARKER}|{OUTPUT_ACTION_ICON_MARKER}|"
                     f"{PRODUCT_UX_CLEANUP_MARKER}|{SECOND_UX_CLEANUP_MARKER}|"
+                    f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
                     f"{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|{shared_row_style}|"
                     f"source={source_full}|same_row|stable_order|hover_bg"
                 ),
@@ -1045,6 +1078,7 @@ def _workspace_file_pair_rows(
             target_row = ft.Container(
                 content=ft.Row(
                     [
+                        document_status_marker(status_kind, size=16),
                         ft.Text(
                             truncate_filename_display(target_full),
                             size=PAIR_ROW_FONT_SIZE,
@@ -1056,7 +1090,7 @@ def _workspace_file_pair_rows(
                             color=COLOR_TEXT_MUTED,
                             data=(
                                 f"file_pair_target_full|{target_full}|proposed={proposed}|"
-                                f"file_pair_row_status|{status_label}|"
+                                f"file_pair_row_status|{status_label}|status={status_kind}|"
                                 f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|non_clickable"
                             ),
                         ),
@@ -1072,11 +1106,13 @@ def _workspace_file_pair_rows(
                 ),
                 alignment=ft.Alignment.CENTER_LEFT,
                 # No on_click / ink / hover — placeholders are not actionable.
+                bgcolor=row_bg,
                 border=row_border,
                 data=(
                     f"workspace_file_pair_row|{index}|output|placeholder|non_clickable|"
                     f"{OUTPUT_ROW_PLACEHOLDER_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
                     f"{SECOND_UX_CLEANUP_MARKER}|{WORKSPACE_LIVE_FILE_PAIRS_MARKER}|"
+                    f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|status={status_kind}|"
                     f"{shared_row_style}|source={source_full}|same_row|stable_order|"
                     f"no_dead_end|{MSG_NOT_CHECKED_YET}"
                 ),
@@ -1143,6 +1179,18 @@ def _workspace_compact_status_line(
 ) -> ft.Control:
     """Short operational status — never a dominant results section."""
 
+    if has_run and int(review_count or 0) == 0 and int(checked_count or 0) > 0:
+        return ft.Text(
+            MSG_ALL_CHECKS_SUCCESSFUL,
+            size=13,
+            weight=ft.FontWeight.W_600,
+            color=COLOR_SUCCESS,
+            data=(
+                f"{WORKSPACE_COMPACT_STATUS_MARKER}|{PRODUCT_UX_CLEANUP_MARKER}|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|all_checks_successful|"
+                f"compact_not_dominant|no_letzte_ergebnisse_section"
+            ),
+        )
     if has_run:
         text = (
             f"{input_count} Dokumente geprüft · "
@@ -2878,7 +2926,16 @@ def build_workspace_page(state: UiV2State) -> ft.Control:
     )
 
     checked = live_vm.checked_count or readiness.result_count or len(display_results)
-    review_n = live_vm.review_count or readiness.review_count or run_shell.review.count
+    row_needs_review = sum(
+        1
+        for row in (live_vm.rows or ())
+        if map_output_status_to_ui_kind(getattr(row, "output_status", ""))
+        == STATUS_UI_NEEDS_REVIEW
+    )
+    review_n = row_needs_review or live_vm.review_count or readiness.review_count or run_shell.review.count
+    if live_vm.has_proposals:
+        # After proposals exist, row statuses are the truthful open-review count.
+        review_n = row_needs_review
     ready_n = ok_count if ok_count is not None else None
     if show_result:
         # Counts for advanced summary only — compact status is the product surface.

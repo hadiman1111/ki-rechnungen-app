@@ -37,6 +37,17 @@ IA_CLEANUP_LAYOUT_MARKER = "track_b_ui_v2_information_architecture_cleanup_v1"
 SECOND_UX_CLEANUP_MARKER = "track_b_ui_v2_second_ux_cleanup_v1"
 PRODUCT_UX_CLEANUP_MARKER = "track_b_ui_v2_product_ux_audit_workspace_cleanup_v1"
 PRODUCT_UI_MODE_CLEANUP_MARKER = "track_b_product_ui_mode_cleanup_v1"
+REVIEW_FOCUS_AND_STATUS_COLORS_MARKER = "track_b_review_focus_and_status_colors_v1"
+REVIEW_TOP_FOCUS_MARKER = "review_top_focus_selected_file_and_detail_v1"
+REVIEW_DECISION_LIST_FILTER_MARKER = "review_primary_list_decision_needed_only_v1"
+DOCUMENT_STATUS_OK_MARKER = "document_status_ok_green_check_v1"
+DOCUMENT_STATUS_NEEDS_REVIEW_MARKER = "document_status_needs_review_red_v1"
+DOCUMENT_STATUS_NEUTRAL_MARKER = "document_status_neutral_v1"
+DOCUMENT_STATUS_NON_INTERACTIVE_MARKER = "document_status_non_interactive_no_checkbox_v1"
+MSG_ALL_CHECKS_SUCCESSFUL = "Alle Prüfungen erfolgreich."
+STATUS_UI_OK = "ok"
+STATUS_UI_NEEDS_REVIEW = "needs_review"
+STATUS_UI_NEUTRAL = "neutral"
 WORKSPACE_CLICKABLE_TITLE_MARKER = "workspace_clickable_profile_config_title_v1"
 COLLAPSIBLE_CHEVRON_MARKER = "ui_v2_collapsible_chevron_right_down_v1"
 REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER = "review_detail_card_full_width_v1"
@@ -839,6 +850,56 @@ def split_ready_and_review_cases(
     return tuple(ready), tuple(review)
 
 
+def map_output_status_to_ui_kind(output_status: str | None) -> str:
+    """Shared workspace/review status kind — OK green vs decision-needed red.
+
+    Warning/yellow is intentionally unused unless a future status is cleanly
+    separable; today only ok / needs_review / neutral are returned.
+    """
+
+    status = str(output_status or "").strip().casefold()
+    if status in {"proposed", "ok", "ready", "checked", "success", "completed"}:
+        return STATUS_UI_OK
+    if status in {
+        "review",
+        "error",
+        "needs_review",
+        "unklar",
+        "blocked",
+        "failed",
+        "missing",
+    }:
+        return STATUS_UI_NEEDS_REVIEW
+    return STATUS_UI_NEUTRAL
+
+
+def review_item_needs_open_decision(
+    *,
+    checked_preview: bool = False,
+    excluded_from_export: bool = False,
+    finalization_ready: bool = False,
+    decision_type: str | None = None,
+) -> bool:
+    """Conservative primary-list filter: hide only clearly resolved OK items.
+
+    Everything else stays visible (open / unclear / incomplete / conflict).
+    """
+
+    decision = str(decision_type or "").strip().casefold()
+    if checked_preview:
+        return False
+    if excluded_from_export or decision in {
+        "accept_suggestion",
+        "ignore_for_export",
+    }:
+        return False
+    if decision in {"keep_review_required", "defer", "needs_configuration_change"}:
+        return True
+    if finalization_ready:
+        return False
+    return True
+
+
 def build_prueffall_copy_text(
     detail: Any,
     *,
@@ -1139,12 +1200,25 @@ __all__ = (
     "OUTPUT_ROW_PLACEHOLDER_MARKER",
     "PRODUCT_UX_CLEANUP_MARKER",
     "PRODUCT_UI_MODE_CLEANUP_MARKER",
+    "REVIEW_FOCUS_AND_STATUS_COLORS_MARKER",
+    "REVIEW_TOP_FOCUS_MARKER",
+    "REVIEW_DECISION_LIST_FILTER_MARKER",
+    "DOCUMENT_STATUS_OK_MARKER",
+    "DOCUMENT_STATUS_NEEDS_REVIEW_MARKER",
+    "DOCUMENT_STATUS_NEUTRAL_MARKER",
+    "DOCUMENT_STATUS_NON_INTERACTIVE_MARKER",
+    "MSG_ALL_CHECKS_SUCCESSFUL",
+    "STATUS_UI_OK",
+    "STATUS_UI_NEEDS_REVIEW",
+    "STATUS_UI_NEUTRAL",
     "WORKSPACE_CLICKABLE_TITLE_MARKER",
     "COLLAPSIBLE_CHEVRON_MARKER",
     "REVIEW_DETAIL_CARD_FULL_WIDTH_MARKER",
     "FILENAME_SECTION_EDITING_ACTIVE_MARKER",
     "MSG_DECISION_CHOOSE_NEXT",
     "SECOND_UX_CLEANUP_MARKER",
+    "map_output_status_to_ui_kind",
+    "review_item_needs_open_decision",
     "START_CTA_HEIGHT_PX",
     "START_CTA_STRONG",
     "WORKSPACE_COMPACT_STATUS_MARKER",

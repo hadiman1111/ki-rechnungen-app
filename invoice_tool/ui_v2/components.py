@@ -1368,6 +1368,77 @@ def make_workspace_run_panel(
     )
 
 
+def document_status_marker(
+    kind: str,
+    *,
+    size: int = 18,
+) -> ft.Container:
+    """Non-interactive status stamp — green check / red hint, never a Checkbox."""
+
+    from invoice_tool.ui_v2.track_b_smoke_debug_copy import (
+        DOCUMENT_STATUS_NEEDS_REVIEW_MARKER,
+        DOCUMENT_STATUS_NEUTRAL_MARKER,
+        DOCUMENT_STATUS_NON_INTERACTIVE_MARKER,
+        DOCUMENT_STATUS_OK_MARKER,
+        REVIEW_FOCUS_AND_STATUS_COLORS_MARKER,
+        STATUS_UI_NEEDS_REVIEW,
+        STATUS_UI_NEUTRAL,
+        STATUS_UI_OK,
+        map_output_status_to_ui_kind,
+    )
+
+    raw_kind = str(kind or "").strip().casefold()
+    ui_kind = kind if kind in {STATUS_UI_OK, STATUS_UI_NEEDS_REVIEW, STATUS_UI_NEUTRAL} else (
+        map_output_status_to_ui_kind(kind)
+    )
+    icon_size = max(10, int(size * 0.55))
+    if ui_kind == STATUS_UI_OK:
+        return ft.Container(
+            width=size,
+            height=size,
+            border_radius=size // 2,
+            bgcolor=COLOR_SUCCESS_SOFT,
+            alignment=ft.Alignment.CENTER,
+            content=ft.Icon(ft.Icons.CHECK, size=icon_size, color=COLOR_SUCCESS),
+            data=(
+                f"{DOCUMENT_STATUS_OK_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|green_check"
+            ),
+        )
+    if ui_kind == STATUS_UI_NEEDS_REVIEW:
+        review_icon = (
+            ft.Icons.CLOSE
+            if raw_kind in {"error", "failed", "fehlgeschlagen"}
+            else ft.Icons.PRIORITY_HIGH
+        )
+        return ft.Container(
+            width=size,
+            height=size,
+            border_radius=size // 2,
+            bgcolor=COLOR_ERROR_SOFT,
+            border=ft.Border.all(1, COLOR_ERROR),
+            alignment=ft.Alignment.CENTER,
+            content=ft.Icon(review_icon, size=icon_size, color=COLOR_ERROR),
+            data=(
+                f"{DOCUMENT_STATUS_NEEDS_REVIEW_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
+                f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|red_marker"
+            ),
+        )
+    return ft.Container(
+        width=size,
+        height=size,
+        border_radius=size // 2,
+        bgcolor=COLOR_SURFACE_ALT,
+        border=ft.Border.all(1, COLOR_BORDER),
+        alignment=ft.Alignment.CENTER,
+        content=ft.Icon(ft.Icons.REMOVE, size=icon_size, color=COLOR_TEXT_MUTED),
+        data=(
+            f"{DOCUMENT_STATUS_NEUTRAL_MARKER}|{DOCUMENT_STATUS_NON_INTERACTIVE_MARKER}|"
+            f"{REVIEW_FOCUS_AND_STATUS_COLORS_MARKER}|no_checkbox|neutral"
+        ),
+    )
+
+
 def make_ergebnis_row(
     *,
     result_id: str,
@@ -1384,15 +1455,7 @@ def make_ergebnis_row(
 ) -> ft.Column:
     """Figma ErgebnisRow — success two-line layout, failure with expandable suggestion."""
     if failed:
-        status_icon = ft.Container(
-            width=18,
-            height=18,
-            border_radius=9,
-            bgcolor=COLOR_ERROR_SOFT,
-            border=ft.Border.all(1, COLOR_ERROR),
-            alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.CLOSE, size=10, color=COLOR_ERROR),
-        )
+        status_icon = document_status_marker("error")
         filename_control = ft.Text(
             source_filename,
             size=12,
@@ -1418,14 +1481,7 @@ def make_ergebnis_row(
         )
         row_bg = COLOR_ERROR_SOFT
     else:
-        status_icon = ft.Container(
-            width=18,
-            height=18,
-            border_radius=9,
-            bgcolor=COLOR_SUCCESS_SOFT,
-            alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.CHECK, size=10, color=COLOR_SUCCESS),
-        )
+        status_icon = document_status_marker("ok")
         filename_control = ft.Column(
             [
                 ft.Text(
