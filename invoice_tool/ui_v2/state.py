@@ -87,6 +87,8 @@ class UiV2State:
     config_feedback: str = ""
     config_feedback_error: bool = False
     config_field_errors: dict[str, str] = field(default_factory=dict)
+    # Product recognition group logic (UI-v2 only; flattens to MatchingRule).
+    config_recognition_logic: str = "any"
 
     # In-memory generic SaaS drafts (no cloud persistence; no private defaults).
     saas_draft_store: SaasProfileStateStore = field(default_factory=new_saas_profile_state_store)
