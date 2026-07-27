@@ -24,9 +24,61 @@ from invoice_tool.ui_v2.dev_defaults import (
     is_track_b_dev_defaults_enabled,
 )
 from invoice_tool.ui_v2.processing_contract import make_local_processing_adapter
+from invoice_tool.ui_v2.control_tree import collect_labels
 from invoice_tool.ui_v2.shell import ShellHandles, build_shell, replace_content, set_active_nav
-from invoice_tool.ui_v2.state import UiV2State
+from invoice_tool.ui_v2.state import UiV2State, is_track_b_show_dev_surfaces_enabled
 from invoice_tool.ui_v2.theme import APP_MIN_WIDTH, COLOR_PAGE_BG
+
+# Labels that must be present after a successful product-shell mount.
+_REQUIRED_PRODUCT_NAV_LABELS = frozenset(
+    {"Arbeitsbereich", "Profile", "Konfigurationen", "Prüfung", "NAME.IT PRO"}
+)
+_FORBIDDEN_NORMAL_NAV_LABELS = frozenset(
+    {"Entwickler / Diagnose", "Oracle", "Test & Nachweis", "Dry Run", "Sandbox"}
+)
+
+
+def _assert_visible_product_shell(page: ft.Page, shell: ShellHandles) -> None:
+    """Fail loud if mount produced an empty / non-product surface (blank window risk)."""
+
+    if not getattr(page, "controls", None):
+        raise RuntimeError("UI-v2 mount failed: page.controls is empty")
+    if shell.root is None or shell.content_host is None:
+        raise RuntimeError("UI-v2 mount failed: shell root/content host missing")
+    if shell.content_host.content is None:
+        raise RuntimeError("UI-v2 mount failed: content host has no page content")
+    if not shell.nav_items:
+        raise RuntimeError("UI-v2 mount failed: navigation items missing")
+    for nav_id in (NAV_WORKSPACE, NAV_PROFILES, NAV_CONFIGURATIONS, NAV_REVIEW):
+        if nav_id not in shell.nav_items:
+            raise RuntimeError(f"UI-v2 mount failed: nav item missing: {nav_id}")
+
+    labels = collect_labels(shell.root)
+    missing = _REQUIRED_PRODUCT_NAV_LABELS - labels
+    if missing:
+        raise RuntimeError(
+            "UI-v2 mount failed: required product labels missing: "
+            + ", ".join(sorted(missing))
+        )
+    content_labels = collect_labels(shell.content_host.content)
+    if not content_labels:
+        raise RuntimeError(
+            "UI-v2 mount failed: default Arbeitsbereich content is empty"
+        )
+    if "Arbeitsbereich" not in content_labels:
+        raise RuntimeError(
+            "UI-v2 mount failed: default page is not Arbeitsbereich"
+        )
+
+    if not is_track_b_show_dev_surfaces_enabled():
+        # Normal mode: sidebar must not expose developer / diagnosis entries.
+        sidebar_labels = collect_labels(shell.sidebar)
+        leaked_sidebar = _FORBIDDEN_NORMAL_NAV_LABELS & sidebar_labels
+        if leaked_sidebar:
+            raise RuntimeError(
+                "UI-v2 mount failed: developer surfaces leaked into normal nav: "
+                + ", ".join(sorted(leaked_sidebar))
+            )
 
 
 def _render_page(state: UiV2State, nav_id: str) -> ft.Control:
@@ -156,3 +208,4 @@ def build_ui_v2(page: ft.Page) -> None:
     handles[0] = shell
     page.add(shell.root)
     page.update()
+    _assert_visible_product_shell(page, shell)

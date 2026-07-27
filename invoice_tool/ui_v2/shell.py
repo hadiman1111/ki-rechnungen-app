@@ -220,31 +220,26 @@ def build_shell(
     )
     content_host = build_content_host(content)
 
-    layout = ft.Stack(
+    # Row (not Stack+absolute) — Stack with left/top/right/bottom children can
+    # collapse to zero size in Flet 0.85 and leave only the empty client blue.
+    layout = ft.Row(
         [
-            ft.Container(
-                left=NAV_WIDTH,
-                top=0,
-                right=0,
-                bottom=0,
-                content=content_host,
-            ),
-            ft.Container(
-                left=0,
-                top=0,
-                bottom=0,
-                width=NAV_WIDTH,
-                content=sidebar,
-            ),
+            sidebar,
+            content_host,
         ],
         expand=True,
+        spacing=0,
+        tight=True,
+        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
     )
 
     root = ft.Container(
         key="ui-v2-shell",
         expand=True,
         bgcolor=COLOR_CANVAS,
+        alignment=ft.Alignment.TOP_LEFT,
         content=layout,
+        data="shell_row_layout|visible_nav_and_workspace|no_blank_blue_stack",
     )
     return ShellHandles(root=root, sidebar=sidebar, content_host=content_host, nav_items=nav_items)
 

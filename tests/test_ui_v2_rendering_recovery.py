@@ -9,14 +9,15 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from invoice_tool.ui_v2.app import build_ui_v2
-from invoice_tool.ui_v2.navigation import ALL_NAV_ITEMS
+from invoice_tool.ui_v2.navigation import DAILY_NAV
 from invoice_tool.ui_v2.rendering_checks import audit_all_pages, has_full_page_overlay
 from invoice_tool.ui_v2.state import UiV2State
 from invoice_tool.ui_v2.adapters.read_only_backend import load_read_only_snapshot
 from invoice_tool.ui_v2.control_tree import collect_labels, find_nav_handler, iter_controls
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-NAV_LABELS = tuple(label for _, label, _ in ALL_NAV_ITEMS)
+# Normal product shell — Entwickler / Diagnose requires SHOW_DEV_SURFACES.
+NAV_LABELS = tuple(label for _, label, _ in DAILY_NAV)
 RESPONSIVE_SIZES = ((1280, 720), (1440, 900), (1728, 1117))
 
 
@@ -197,10 +198,20 @@ class UiV2RenderingRecoveryTests(unittest.TestCase):
         page, _ = _build_test_page()
         build_ui_v2(page)
         root = page.controls[0]
-        stacks = [ctrl for ctrl in iter_controls(root) if ctrl.__class__.__name__ == "Stack"]
-        self.assertTrue(stacks, "Shell muss Stack-Layout nutzen (Sidebar über Content)")
-        for _, label, _ in ALL_NAV_ITEMS:
+        rows = [ctrl for ctrl in iter_controls(root) if ctrl.__class__.__name__ == "Row"]
+        self.assertTrue(rows, "Shell muss Row-Layout nutzen (Sidebar + Content, kein Stack-Blank)")
+        self.assertIsNotNone(
+            next((c for c in iter_controls(root) if getattr(c, "key", None) == "ui-v2-sidebar"), None)
+        )
+        self.assertIsNotNone(
+            next((c for c in iter_controls(root) if getattr(c, "key", None) == "ui-v2-content-host"), None)
+        )
+        for _, label, _ in DAILY_NAV:
             self.assertIsNotNone(find_nav_handler(root, label), f"Nav-Handler fehlt: {label}")
+        self.assertIsNone(
+            find_nav_handler(root, "Entwickler / Diagnose"),
+            "Entwickler / Diagnose muss aus der normalen Navigation entfernt bleiben",
+        )
 
     def test_page_scaffold_must_not_overflow_sidebar(self) -> None:
         from invoice_tool.ui_v2.control_tree import iter_controls
